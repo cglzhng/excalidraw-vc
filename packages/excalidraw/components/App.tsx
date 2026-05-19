@@ -360,6 +360,7 @@ import Library, { distributeLibraryItemsOnSquareGrid } from "../data/library";
 import { restoreAppState, restoreElements } from "../data/restore";
 import { getCenter, getDistance } from "../gesture";
 import { History } from "../history";
+import { VersionLog } from "../versionLog/VersionLog";
 import { defaultLang, getLanguage, languages, setLanguage, t } from "../i18n";
 
 import {
@@ -641,6 +642,7 @@ class App extends React.Component<AppProps, AppState> {
   public id: string;
   private store: Store;
   private history: History;
+  public versionLog: VersionLog;
   public excalidrawContainerValue: {
     container: HTMLDivElement | null;
     id: string;
@@ -832,6 +834,7 @@ class App extends React.Component<AppProps, AppState> {
 
     this.store = new Store(this);
     this.history = new History(this.store);
+    this.versionLog = new VersionLog();
 
     this.excalidrawContainerValue = {
       container: this.excalidrawContainerRef.current,
@@ -3136,6 +3139,35 @@ class App extends React.Component<AppProps, AppState> {
       this.history.record(increment.delta);
     });
 
+    // [version-log] real audit-log subscriber. See packages/excalidraw/versionLog.
+    this.versionLog.subscribe(this.store.onDurableIncrementEmitter);
+
+    // [version-log] temporary console logger for inspecting delta shape.
+    // Kept for debugging; safe to remove once the feature is stable.
+    this.store.onDurableIncrementEmitter.on((increment) => {
+      const { added, removed, updated } = increment.delta.elements;
+      const addedIds = Object.keys(added);
+      const removedIds = Object.keys(removed);
+      const updatedIds = Object.keys(updated);
+      if (addedIds.length === 0 && removedIds.length === 0 && updatedIds.length === 0) {
+        return;
+      }
+      // eslint-disable-next-line no-console
+      console.groupCollapsed(
+        `[version-log] +${addedIds.length} ~${updatedIds.length} -${removedIds.length} @ ${new Date().toISOString()}`,
+      );
+      // eslint-disable-next-line no-console
+      console.log("added:", added);
+      // eslint-disable-next-line no-console
+      console.log("updated:", updated);
+      // eslint-disable-next-line no-console
+      console.log("removed:", removed);
+      // eslint-disable-next-line no-console
+      console.log("full increment:", increment);
+      // eslint-disable-next-line no-console
+      console.groupEnd();
+    });
+
     // per. optimmisation, only subscribe if there is the `onIncrement` prop registered, to avoid unnecessary computation
     if (this.props.onIncrement) {
       this.store.onStoreIncrementEmitter.on((increment) => {
@@ -3226,6 +3258,7 @@ class App extends React.Component<AppProps, AppState> {
     this.onChangeEmitter.clear();
     this.store.onStoreIncrementEmitter.clear();
     this.store.onDurableIncrementEmitter.clear();
+    this.versionLog.destroy();
     this.appStateObserver.clear();
     this.editorLifecycleEvents.clear();
     ShapeCache.destroy();
