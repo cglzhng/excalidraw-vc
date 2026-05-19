@@ -4,6 +4,7 @@ import {
   CANVAS_SEARCH_TAB,
   DEFAULT_SIDEBAR,
   LIBRARY_SIDEBAR_TAB,
+  VERSION_LOG_SIDEBAR_TAB,
   composeEventHandlers,
 } from "@excalidraw/common";
 
@@ -14,12 +15,13 @@ import { useUIAppState } from "../context/ui-appState";
 
 import "../components/dropdownMenu/DropdownMenu.scss";
 
-import { useExcalidrawSetAppState } from "./App";
+import { useApp, useExcalidrawSetAppState } from "./App";
 import { LibraryMenu } from "./LibraryMenu";
 import { SearchMenu } from "./SearchMenu";
 import { Sidebar } from "./Sidebar/Sidebar";
+import { VersionLogPanel } from "./VersionLogPanel";
 import { withInternalFallback } from "./hoc/withInternalFallback";
-import { LibraryIcon, searchIcon } from "./icons";
+import { LibraryIcon, historyIcon, searchIcon } from "./icons";
 
 import type { SidebarProps, SidebarTriggerProps } from "./Sidebar/common";
 
@@ -71,6 +73,7 @@ export const DefaultSidebar = Object.assign(
     >) => {
       const appState = useUIAppState();
       const setAppState = useExcalidrawSetAppState();
+      const app = useApp();
 
       const { DefaultSidebarTabTriggersTunnel } = useTunnels();
 
@@ -105,6 +108,9 @@ export const DefaultSidebar = Object.assign(
                 <Sidebar.TabTrigger tab={LIBRARY_SIDEBAR_TAB}>
                   {LibraryIcon}
                 </Sidebar.TabTrigger>
+                <Sidebar.TabTrigger tab={VERSION_LOG_SIDEBAR_TAB}>
+                  {historyIcon}
+                </Sidebar.TabTrigger>
                 <DefaultSidebarTabTriggersTunnel.Out />
               </Sidebar.TabTriggers>
             </Sidebar.Header>
@@ -113,6 +119,9 @@ export const DefaultSidebar = Object.assign(
             </Sidebar.Tab>
             <Sidebar.Tab tab={CANVAS_SEARCH_TAB}>
               <SearchMenu />
+            </Sidebar.Tab>
+            <Sidebar.Tab tab={VERSION_LOG_SIDEBAR_TAB}>
+              <VersionLogPanel log={app.versionLog} />
             </Sidebar.Tab>
             {children}
           </Sidebar.Tabs>

@@ -1140,6 +1140,7 @@ export type AppClassProperties = {
 
   isInteractionEnabled: App["isInteractionEnabled"];
   isNavigationEnabled: App["isNavigationEnabled"];
+  versionLog: App["versionLog"];
 };
 
 export type PointerDownState = Readonly<{
