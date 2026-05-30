@@ -1688,6 +1688,36 @@ const _renderInteractiveScene = ({
     renderElementsBoxHighlight(context, appState, appState.elementsToHighlight);
   }
 
+  // version-log hover: render a per-element outline that ignores group
+  // membership (the standard `renderElementsBoxHighlight` collapses
+  // grouped elements up to their groups, which we don't want here).
+  // Distinct color so it's not confused with selection / link-selector.
+  if (appState.versionLogHighlightedElementIds) {
+    const ids = Object.keys(appState.versionLogHighlightedElementIds);
+    if (ids.length > 0) {
+      const vlColor = "rgb(255,140,0)"; // orange, distinct from selection blue
+      for (const id of ids) {
+        const element = allElementsMap.get(id);
+        if (!element) {
+          continue;
+        }
+        const [x1, y1, x2, y2] = getCommonBounds([element]);
+        renderSelectionBorder(context, appState, {
+          angle: 0,
+          x1,
+          x2,
+          y1,
+          y2,
+          selectionColors: [vlColor],
+          dashed: false,
+          cx: x1 + (x2 - x1) / 2,
+          cy: y1 + (y2 - y1) / 2,
+          activeEmbeddable: false,
+        });
+      }
+    }
+  }
+
   if (appState.activeLockedId) {
     const element = allElementsMap.get(appState.activeLockedId);
     const elements = element
