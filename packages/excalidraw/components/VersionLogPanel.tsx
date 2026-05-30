@@ -1,19 +1,13 @@
 import React, { useEffect, useState } from "react";
 
 import type { VersionLog } from "../versionLog/VersionLog";
-import type {
-  LogEntry,
-  LogEntryType,
-  LogIncrement,
-} from "../versionLog/types";
+import type { LogEntry, LogEntryType, LogIncrement } from "../versionLog/types";
 
 /**
  * Subscribes a component to a `VersionLog` instance and returns the
  * current increments (newest-first). Re-renders on each ingest.
  */
-const useVersionLogIncrements = (
-  log: VersionLog,
-): readonly LogIncrement[] => {
+const useVersionLogIncrements = (log: VersionLog): readonly LogIncrement[] => {
   const [increments, setIncrements] = useState<readonly LogIncrement[]>(() =>
     log.getIncrements(),
   );
@@ -142,10 +136,21 @@ const ChangedProperties: React.FC<{ entry: LogEntry }> = ({ entry }) => {
   );
 };
 
-const VersionLogEntryRow: React.FC<{ entry: LogEntry }> = ({ entry }) => {
+const VersionLogEntryRow: React.FC<{
+  entry: LogEntry;
+  onHighlightElement?: (elementId: string | null) => void;
+}> = ({ entry, onHighlightElement }) => {
+  const handleMouseEnter = () => {
+    onHighlightElement?.(entry.elementId);
+  };
+  const handleMouseLeave = () => {
+    onHighlightElement?.(null);
+  };
   return (
     <li
       className="VersionLogPanel__entry"
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
       style={{
         borderLeft: `3px solid ${TYPE_COLOR[entry.type]}`,
         padding: "6px 8px",
@@ -200,7 +205,8 @@ const VersionLogIncrementCard: React.FC<{
   /** True when this is the newest increment in the log — revert is a no-op there. */
   isCurrent: boolean;
   onRevert?: (incrementId: string) => void;
-}> = ({ increment, isCurrent, onRevert }) => {
+  onHighlightElement?: (elementId: string | null) => void;
+}> = ({ increment, isCurrent, onRevert, onHighlightElement }) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const toggle = () => setIsExpanded((v) => !v);
@@ -318,7 +324,11 @@ const VersionLogIncrementCard: React.FC<{
       {isExpanded && (
         <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
           {increment.entries.map((entry) => (
-            <VersionLogEntryRow key={entry.id} entry={entry} />
+            <VersionLogEntryRow
+              key={entry.id}
+              entry={entry}
+              onHighlightElement={onHighlightElement}
+            />
           ))}
         </ul>
       )}
@@ -334,11 +344,18 @@ export interface VersionLogPanelProps {
    * `App.revertToVersionLogIncrement`).
    */
   onRevert?: (incrementId: string) => void;
+  /**
+   * Called on entry mouse-enter (with the element id) and mouse-leave
+   * (with `null`). Owners typically write this into
+   * `appState.hoveredElementIds` to draw a highlight on the canvas.
+   */
+  onHighlightElement?: (elementId: string | null) => void;
 }
 
 export const VersionLogPanel: React.FC<VersionLogPanelProps> = ({
   log,
   onRevert,
+  onHighlightElement,
 }) => {
   const increments = useVersionLogIncrements(log);
 
@@ -370,8 +387,7 @@ export const VersionLogPanel: React.FC<VersionLogPanelProps> = ({
       >
         <h3 style={{ margin: 0, fontSize: 13 }}>Version log</h3>
         <span style={{ fontSize: 11, opacity: 0.6 }}>
-          {increments.length}{" "}
-          {increments.length === 1 ? "change" : "changes"}
+          {increments.length} {increments.length === 1 ? "change" : "changes"}
         </span>
       </div>
       {increments.length === 0 ? (
@@ -399,6 +415,7 @@ export const VersionLogPanel: React.FC<VersionLogPanelProps> = ({
               // newest-first ordering: index 0 == current state
               isCurrent={i === 0}
               onRevert={onRevert}
+              onHighlightElement={onHighlightElement}
             />
           ))}
         </ul>

@@ -241,6 +241,7 @@ export type InteractiveCanvasAppState = Readonly<
     textToolHover: AppState["textToolHover"];
     isRotating: AppState["isRotating"];
     elementsToHighlight: AppState["elementsToHighlight"];
+    versionLogHighlightedElementIds: AppState["versionLogHighlightedElementIds"];
     // Collaborators
     collaborators: AppState["collaborators"];
     // SnapLines
@@ -421,6 +422,15 @@ export interface AppState {
    * would get added to a frame being dragged/resized.
    */
   elementsToHighlight: readonly NonDeletedExcalidrawElement[] | null;
+  /**
+   * Per-element highlight driven by the version-log sidebar hover.
+   * Unlike `elementsToHighlight`, this renders each element's box
+   * individually and does NOT expand to its containing group(s) —
+   * we want to point at a specific element, even if it's part of a
+   * group. Rendered in a distinct color from selection so the two
+   * are visually unambiguous. See renderer/interactiveScene.ts.
+   */
+  versionLogHighlightedElementIds: { [id: string]: true } | null;
   /**
    * set when a new text is created or when an existing text is being edited
    */
