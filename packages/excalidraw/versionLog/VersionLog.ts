@@ -130,6 +130,8 @@ export class VersionLog {
       timestamp: Date.now(),
       entries,
       counts,
+      // retained for revert / branch — see VERSION_CONTROL_PLAN.md.
+      delta: increment.delta,
     };
 
     // newest first

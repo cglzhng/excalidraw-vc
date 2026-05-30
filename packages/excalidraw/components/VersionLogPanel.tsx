@@ -60,7 +60,10 @@ const formatValue = (v: unknown): string => {
   if (typeof v === "string") {
     return v.length > 40 ? `${v.slice(0, 37)}…` : v;
   }
-  if (typeof v === "number" || typeof v === "boolean") {
+  if (typeof v === "number") {
+    return v.toFixed(2);
+  }
+  if (typeof v === "boolean") {
     return String(v);
   }
   try {
@@ -117,7 +120,7 @@ const ChangedProperties: React.FC<{ entry: LogEntry }> = ({ entry }) => {
   // update — union of keys from both sides, in case the shape differs
   const keys = Array.from(
     new Set([...Object.keys(before), ...Object.keys(after)]),
-  );
+  ).filter((key) => key !== "version" && key !== "versionNonce");
   if (keys.length === 0) {
     return null;
   }
@@ -192,9 +195,22 @@ const CountChip: React.FC<{
   );
 };
 
-const VersionLogIncrementCard: React.FC<{ increment: LogIncrement }> = ({
-  increment,
-}) => {
+const VersionLogIncrementCard: React.FC<{
+  increment: LogIncrement;
+  /** True when this is the newest increment in the log — revert is a no-op there. */
+  isCurrent: boolean;
+  onRevert?: (incrementId: string) => void;
+}> = ({ increment, isCurrent, onRevert }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const toggle = () => setIsExpanded((v) => !v);
+
+  const handleRevert = (e: React.MouseEvent) => {
+    // don't toggle the card when clicking the button
+    e.stopPropagation();
+    onRevert?.(increment.id);
+  };
+
   return (
     <li
       className="VersionLogPanel__increment"
@@ -207,41 +223,123 @@ const VersionLogIncrementCard: React.FC<{ increment: LogIncrement }> = ({
         background: "var(--island-bg-color, rgba(0, 0, 0, 0.02))",
       }}
     >
-      <div
+      <button
+        type="button"
         className="VersionLogPanel__incrementHeader"
+        aria-expanded={isExpanded}
+        onClick={toggle}
         style={{
+          // reset native button look
+          all: "unset",
+          cursor: "pointer",
+          // layout
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
-          marginBottom: 6,
-          padding: "0 2px",
+          gap: 8,
+          width: "100%",
+          marginBottom: isExpanded ? 6 : 0,
+          padding: "2px 4px",
           fontSize: 11,
           fontWeight: 600,
+          // a11y focus ring
+          borderRadius: 4,
+          boxSizing: "border-box",
+        }}
+        onKeyDown={(e) => {
+          // make Space toggle too (Enter already fires onClick on buttons)
+          if (e.key === " ") {
+            e.preventDefault();
+            toggle();
+          }
         }}
       >
-        <span style={{ display: "flex", gap: 8 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span
+            aria-hidden="true"
+            style={{
+              display: "inline-block",
+              width: 10,
+              textAlign: "center",
+              transition: "transform 120ms ease",
+              transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
+              opacity: 0.6,
+            }}
+          >
+            ▸
+          </span>
           <CountChip n={increment.counts.create} type="create" symbol="+" />
           <CountChip n={increment.counts.update} type="update" symbol="~" />
           <CountChip n={increment.counts.delete} type="delete" symbol="−" />
         </span>
-        <span style={{ opacity: 0.6, fontWeight: 400 }}>
-          {formatTimestamp(increment.timestamp)}
+        <span
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            opacity: 0.6,
+            fontWeight: 400,
+          }}
+        >
+          <span>{formatTimestamp(increment.timestamp)}</span>
+          {onRevert && (
+            <button
+              type="button"
+              onClick={handleRevert}
+              disabled={isCurrent}
+              title={
+                isCurrent
+                  ? "This is the current state"
+                  : "Revert the document to this point"
+              }
+              // keep the parent header button from also receiving the click
+              onMouseDown={(e) => e.stopPropagation()}
+              style={{
+                all: "unset",
+                cursor: isCurrent ? "default" : "pointer",
+                padding: "2px 6px",
+                fontSize: 10,
+                fontWeight: 600,
+                color: isCurrent ? "inherit" : "var(--color-primary, #5b57d1)",
+                border: `1px solid ${
+                  isCurrent
+                    ? "var(--sidebar-border-color, #d0d0d0)"
+                    : "var(--color-primary, #5b57d1)"
+                }`,
+                borderRadius: 4,
+                opacity: isCurrent ? 0.4 : 1,
+              }}
+            >
+              Revert
+            </button>
+          )}
         </span>
-      </div>
-      <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-        {increment.entries.map((entry) => (
-          <VersionLogEntryRow key={entry.id} entry={entry} />
-        ))}
-      </ul>
+      </button>
+      {isExpanded && (
+        <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+          {increment.entries.map((entry) => (
+            <VersionLogEntryRow key={entry.id} entry={entry} />
+          ))}
+        </ul>
+      )}
     </li>
   );
 };
 
 export interface VersionLogPanelProps {
   log: VersionLog;
+  /**
+   * Called when the user clicks "Revert" on a card. The panel itself does
+   * not perform the revert — App owns that side-effect (see
+   * `App.revertToVersionLogIncrement`).
+   */
+  onRevert?: (incrementId: string) => void;
 }
 
-export const VersionLogPanel: React.FC<VersionLogPanelProps> = ({ log }) => {
+export const VersionLogPanel: React.FC<VersionLogPanelProps> = ({
+  log,
+  onRevert,
+}) => {
   const increments = useVersionLogIncrements(log);
 
   return (
@@ -294,10 +392,13 @@ export const VersionLogPanel: React.FC<VersionLogPanelProps> = ({ log }) => {
             padding: 0,
           }}
         >
-          {increments.map((increment) => (
+          {increments.map((increment, i) => (
             <VersionLogIncrementCard
               key={increment.id}
               increment={increment}
+              // newest-first ordering: index 0 == current state
+              isCurrent={i === 0}
+              onRevert={onRevert}
             />
           ))}
         </ul>

@@ -121,7 +121,10 @@ export const DefaultSidebar = Object.assign(
               <SearchMenu />
             </Sidebar.Tab>
             <Sidebar.Tab tab={VERSION_LOG_SIDEBAR_TAB}>
-              <VersionLogPanel log={app.versionLog} />
+              <VersionLogPanel
+                log={app.versionLog}
+                onRevert={app.revertToVersionLogIncrement}
+              />
             </Sidebar.Tab>
             {children}
           </Sidebar.Tabs>
