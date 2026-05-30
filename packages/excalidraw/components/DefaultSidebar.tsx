@@ -124,6 +124,15 @@ export const DefaultSidebar = Object.assign(
               <VersionLogPanel
                 log={app.versionLog}
                 onRevert={app.revertToVersionLogIncrement}
+                onHighlightElement={(id) => {
+                  // Custom per-element highlight that bypasses group
+                  // expansion (the standard `elementsToHighlight` path
+                  // resolves grouped elements up to their groups).
+                  // Render path: renderer/interactiveScene.ts.
+                  setAppState({
+                    versionLogHighlightedElementIds: id ? { [id]: true } : null,
+                  });
+                }}
               />
             </Sidebar.Tab>
             {children}
