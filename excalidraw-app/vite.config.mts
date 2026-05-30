@@ -17,6 +17,15 @@ export default defineConfig(({ mode }) => {
       port: Number(envVars.VITE_APP_PORT || 3000),
       // open the browser
       open: true,
+      // Polling-based file watching. On Windows, chokidar's native
+      // fs.watch frequently misses edits made via "atomic save" (write
+      // temp file → rename), which breaks HMR. Polling is reliable at
+      // the cost of slightly higher CPU and ~100ms change-detection
+      // latency.
+      watch: {
+        usePolling: true,
+        interval: 100,
+      },
     },
     // We need to specify the envDir since now there are no
     //more located in parallel with the vite.config.ts file but in parent dir
