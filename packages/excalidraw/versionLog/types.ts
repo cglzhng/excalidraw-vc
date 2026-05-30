@@ -7,6 +7,8 @@
  * drag, a paste) bound together for display, revert, branching, etc.
  */
 
+import type { StoreDelta } from "@excalidraw/element";
+
 export type LogEntryType = "create" | "update" | "delete";
 
 /**
@@ -53,6 +55,13 @@ export interface LogIncrement {
   entries: LogEntry[];
   /** Pre-computed entry-type tallies — handy for headers and filtering. */
   counts: { create: number; update: number; delete: number };
+  /**
+   * The original store delta this increment was derived from. Retained so
+   * we can `StoreDelta.inverse(...)` it later for revert / branch. Not
+   * serialized when we add IndexedDB persistence — will need re-hydration
+   * via `StoreDelta.restore()` at load time.
+   */
+  delta: StoreDelta;
 }
 
 /** Reserved for future filtering UI; unused in v1. */

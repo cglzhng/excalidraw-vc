@@ -4652,6 +4652,50 @@ class App extends React.Component<AppProps, AppState> {
     },
   );
 
+  /**
+   * Revert the scene to the state immediately *after* the given version-log
+   * increment was applied. Undoes every increment newer than the target by
+   * inverting and squashing their deltas.
+   *
+   * Applied with `CaptureUpdateAction.NEVER` so this reapplication does
+   * NOT re-enter the durable-increment emitter — without that guard the
+   * `VersionLog` subscriber would log our own revert and loop. See
+   * `VERSION_CONTROL_PLAN.md` § "Avoiding the feedback loop".
+   *
+   * Note: under NEVER, the revert is NOT visible to undo/redo or collab
+   * peers via the durable channel. v3 (branching / multiplayer) will
+   * need a `VersionLogDelta` tagging approach instead.
+   */
+  public revertToVersionLogIncrement = (targetIncrementId: string): boolean => {
+    const increments = this.versionLog.getIncrements();
+    const targetIdx = increments.findIndex((inc) => inc.id === targetIncrementId);
+    if (targetIdx < 0) {
+      return false;
+    }
+
+    // increments are newest-first. Everything from index 0 up to (but not
+    // including) the target is "newer than target" and must be undone.
+    const newer = increments.slice(0, targetIdx);
+    if (newer.length === 0) {
+      // already at the target state — no-op
+      return false;
+    }
+
+    // Squash applies left-to-right; passing inverses in newest-first order
+    // is the same as undoing them in reverse-chronological order, which is
+    // what we want.
+    const inverses = newer.map((inc) => StoreDelta.inverse(inc.delta));
+    const [nextElementsMap, nextAppState] = this.applyDeltas(inverses);
+
+    this.updateScene({
+      elements: Array.from(nextElementsMap.values()),
+      appState: nextAppState,
+      captureUpdate: CaptureUpdateAction.NEVER,
+    });
+
+    return true;
+  };
+
   public applyDeltas = (
     deltas: StoreDelta[],
     options?: ApplyToOptions,

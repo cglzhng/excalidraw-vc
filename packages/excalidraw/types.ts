@@ -856,6 +856,7 @@ export type AppClassProperties = {
   setAppState: App["setAppState"];
 
   versionLog: App["versionLog"];
+  revertToVersionLogIncrement: App["revertToVersionLogIncrement"];
 };
 
 export type PointerDownState = Readonly<{
