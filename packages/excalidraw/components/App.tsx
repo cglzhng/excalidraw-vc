@@ -3140,7 +3140,12 @@ class App extends React.Component<AppProps, AppState> {
     });
 
     // [version-log] real audit-log subscriber. See packages/excalidraw/versionLog.
-    this.versionLog.subscribe(this.store.onDurableIncrementEmitter);
+    // Scene context is used at ingest time for semantic classification
+    // (e.g. group-move detection needs to know full group membership).
+    this.versionLog.subscribe(this.store.onDurableIncrementEmitter, {
+      getElement: (id) => this.scene.getNonDeletedElementsMap().get(id),
+      getAllElements: () => this.scene.getNonDeletedElements(),
+    });
 
     // [version-log] temporary console logger for inspecting delta shape.
     // Kept for debugging; safe to remove once the feature is stable.
