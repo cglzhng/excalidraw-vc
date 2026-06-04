@@ -1,4 +1,7 @@
-import type { ExcalidrawElement } from "@excalidraw/element/types";
+import type {
+  ExcalidrawElement,
+  OrderedExcalidrawElement,
+} from "@excalidraw/element/types";
 
 import {
   composeMatrix,
@@ -35,36 +38,23 @@ const STYLE_PROPS: readonly string[] = [
   "opacity",
 ];
 
-/**
- * Read-only view of the post-change scene needed for group-move
- * detection. Keeping this narrow so the classifier doesn't depend on
- * the full `Scene` API.
- */
-export interface ClassifyContext {
-  /**
-   * Returns the post-change element by id, or `undefined` if the element
-   * isn't in the scene any more (e.g. it was deleted in this increment).
-   */
-  getElement: (id: string) => ExcalidrawElement | undefined;
-  /**
-   * Total count of non-deleted elements that have the given group id.
-   * Used to verify a group is "fully moved" — i.e. every member moved.
-   */
-  getGroupSize: (groupId: string) => number;
-}
-
 // Assumption: Only ONE LogEntry per element
 export const classifyEntries = (
   entries: readonly LogEntry[],
-  ctx: ClassifyContext,
+  changedElements: Record<string, OrderedExcalidrawElement>,
+  groupSizeCache: Map<string, number>,
 ): LogOperation[] => {
   const ops: LogOperation[] = [];
 
   for (const entry of entries) {
-    ops.push(classifyEntry(entry, ctx));
+    ops.push(classifyEntry(entry, changedElements));
   }
 
-  const { groupOps, consumed } = detectGroups(ops, ctx);
+  const { groupOps, consumed } = detectGroups(
+    ops,
+    changedElements,
+    groupSizeCache,
+  );
 
   return groupOps.concat(ops.filter((o) => !consumed.has(o)));
 };
@@ -99,16 +89,8 @@ type GeometryKey = "x" | "y" | "width" | "height" | "angle";
  */
 const buildEntryGeometryMatrix = (
   entry: LogEntry,
-  ctx: ClassifyContext,
+  current: OrderedExcalidrawElement,
 ): TransformMatrix | null => {
-  // We need the full current geometry so we can fill in unchanged
-  // values. The entry only has the keys that changed; for keys it
-  // doesn't touch, the current scene value is the same on both sides.
-  const current = ctx.getElement(entry.elementId);
-  if (!current) {
-    return null;
-  }
-
   const beforeOf = (key: GeometryKey): number =>
     key in entry.before
       ? (entry.before[key] as number)
@@ -156,7 +138,10 @@ const buildEntryGeometryMatrix = (
 };
 
 // A single entry represent a SINGLE operation on one element
-const classifyEntry = (entry: LogEntry, ctx: ClassifyContext): LogOperation => {
+const classifyEntry = (
+  entry: LogEntry,
+  changedElements: Record<string, OrderedExcalidrawElement>,
+): LogOperation => {
   if (entry.type === "create") {
     return {
       kind: "create",
@@ -174,7 +159,7 @@ const classifyEntry = (entry: LogEntry, ctx: ClassifyContext): LogOperation => {
     };
   }
 
-  const current = ctx.getElement(entry.elementId);
+  const current = changedElements[entry.elementId];
   const changed = getChangedKeys(entry);
 
   // It's impossible to detect what kind of change it is based on
@@ -191,8 +176,8 @@ const classifyEntry = (entry: LogEntry, ctx: ClassifyContext): LogOperation => {
   changed.delete("x");
   changed.delete("y");
 
-  if (hasGeometryChange && changed.size === 0) {
-    const transform = buildEntryGeometryMatrix(entry, ctx);
+  if (hasGeometryChange && current && changed.size === 0) {
+    const transform = buildEntryGeometryMatrix(entry, current);
 
     // Resize: width and/or height changed; angle unchanged. x/y may
     // also have changed if the user dragged from a corner that isn't
@@ -305,7 +290,6 @@ const classifyEntry = (entry: LogEntry, ctx: ClassifyContext): LogOperation => {
   };
 };
 
-
 /**
  * Return the set of changed property keys on an entry, excluding noise
  * (`version`, `versionNonce`).
@@ -337,7 +321,7 @@ const numericDiff = (
 
 // ------------------------- Group detector ----------------------
 
-interface MoveCandidate {
+interface GroupCandidate {
   op: LogOperation;
   element: ExcalidrawElement;
   transform: TransformMatrix;
@@ -355,12 +339,13 @@ interface MoveCandidate {
  */
 const detectGroups = (
   ops: readonly LogOperation[],
-  ctx: ClassifyContext,
+  changedElements: Record<string, OrderedExcalidrawElement>,
+  groupSizeCache: Map<string, number>,
 ): { groupOps: LogOperation[]; consumed: Set<LogOperation> } => {
-  const candidates: MoveCandidate[] = [];
+  const candidates: GroupCandidate[] = [];
   for (const op of ops) {
     if (op.kind === "move" || op.kind === "resize" || op.kind === "rotate") {
-      const element = ctx.getElement(op.elementId);
+      const element = changedElements[op.elementId];
       if (!element || element.groupIds.length === 0) {
         continue;
       }
@@ -377,7 +362,7 @@ const detectGroups = (
   }
 
   // Bucket candidates by every group they belong to.
-  const byGroupId = new Map<string, MoveCandidate[]>();
+  const byGroupId = new Map<string, GroupCandidate[]>();
   for (const cand of candidates) {
     for (const gid of cand.element.groupIds) {
       let bucket = byGroupId.get(gid);
@@ -393,7 +378,7 @@ const detectGroups = (
   // matches scene-wide group size) AND (b) they all had the same transform
   const validGroups = new Set<string>();
   for (const [gid, bucket] of byGroupId) {
-    if (bucket.length !== ctx.getGroupSize(gid)) {
+    if (bucket.length !== groupSizeCache.get(gid)) {
       continue;
     }
     const { transform } = bucket[0];
@@ -408,7 +393,7 @@ const detectGroups = (
 
   // Assign each candidate to its INNERMOST valid group (groupIds is
   // ordered innermost-first per Excalidraw's convention).
-  const candsByGid = new Map<string, MoveCandidate[]>();
+  const candsByGid = new Map<string, GroupCandidate[]>();
   const consumed = new Set<LogOperation>();
   for (const cand of candidates) {
     const targetGid = cand.element.groupIds.find((gid) => validGroups.has(gid));
@@ -427,7 +412,7 @@ const detectGroups = (
   const groupOps: LogOperation[] = [];
   for (const [groupId, cands] of candsByGid) {
     const op = cands[0].op;
-    const elementIds = cands.map(c => c.element.id);
+    const elementIds = cands.map((c) => c.element.id);
     if (op.kind === "move") {
       groupOps.push({
         kind: "move-group",
