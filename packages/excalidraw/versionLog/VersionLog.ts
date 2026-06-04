@@ -5,7 +5,6 @@ import type { ExcalidrawElement } from "@excalidraw/element/types";
 
 import { classifyEntries } from "./classify";
 
-import type { ClassifyContext } from "./classify";
 import type {
   LogEntry,
   LogIncrement,
@@ -60,8 +59,8 @@ export class VersionLog {
 
   /**
    * Wire this log to a store's durable-increment emitter. The `scene`
-   * context is used at ingest time for group-move detection (we need to
-   * know how many elements belong to a group, not just how many moved).
+   * context is used at ingest time for group detection (we need to
+   * know how many elements belong to a group, not just how many changed).
    */
   public subscribe(
     emitter: DurableIncrementEmitter,
@@ -98,6 +97,7 @@ export class VersionLog {
    */
   private ingest(increment: DurableIncrement, scene: VersionLogSceneContext) {
     const { added, removed, updated } = increment.delta.elements;
+    const changedElements = increment.change.elements;
 
     const rawEntries: LogEntry[] = [];
     const counts = { create: 0, update: 0, delete: 0 };
@@ -140,9 +140,17 @@ export class VersionLog {
       return;
     }
 
+    const groupSizeCache: Map<string, number> = new Map();
+    for (const el of scene.getAllElements()) {
+      for (const gid of el.groupIds) {
+        groupSizeCache.set(gid, (groupSizeCache.get(gid) ?? 0) + 1);
+      }
+    }
+
     const operations = classifyEntries(
       rawEntries,
-      this.buildClassifyContext(scene),
+      changedElements,
+      groupSizeCache,
     );
 
     const logIncrement: LogIncrement = {
@@ -161,29 +169,6 @@ export class VersionLog {
     }
 
     this.onChangeEmitter.trigger();
-  }
-
-  /**
-   * Adapt a `VersionLogSceneContext` to the narrower `ClassifyContext`
-   * the classifier wants. Group-size totals are computed lazily and
-   * cached per-ingest so we don't walk the scene N times.
-   */
-  private buildClassifyContext(scene: VersionLogSceneContext): ClassifyContext {
-    let groupSizeCache: Map<string, number> | null = null;
-    return {
-      getElement: (id) => scene.getElement(id),
-      getGroupSize: (groupId) => {
-        if (!groupSizeCache) {
-          groupSizeCache = new Map();
-          for (const el of scene.getAllElements()) {
-            for (const gid of el.groupIds) {
-              groupSizeCache.set(gid, (groupSizeCache.get(gid) ?? 0) + 1);
-            }
-          }
-        }
-        return groupSizeCache.get(groupId) ?? 0;
-      },
-    };
   }
 
   private makeEntry(
