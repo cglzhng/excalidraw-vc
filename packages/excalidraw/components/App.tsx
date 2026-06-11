@@ -3147,32 +3147,6 @@ class App extends React.Component<AppProps, AppState> {
       getAllElements: () => this.scene.getNonDeletedElements(),
     });
 
-    // [version-log] temporary console logger for inspecting delta shape.
-    // Kept for debugging; safe to remove once the feature is stable.
-    this.store.onDurableIncrementEmitter.on((increment) => {
-      const { added, removed, updated } = increment.delta.elements;
-      const addedIds = Object.keys(added);
-      const removedIds = Object.keys(removed);
-      const updatedIds = Object.keys(updated);
-      if (addedIds.length === 0 && removedIds.length === 0 && updatedIds.length === 0) {
-        return;
-      }
-      // eslint-disable-next-line no-console
-      console.groupCollapsed(
-        `[version-log] +${addedIds.length} ~${updatedIds.length} -${removedIds.length} @ ${new Date().toISOString()}`,
-      );
-      // eslint-disable-next-line no-console
-      console.log("added:", added);
-      // eslint-disable-next-line no-console
-      console.log("updated:", updated);
-      // eslint-disable-next-line no-console
-      console.log("removed:", removed);
-      // eslint-disable-next-line no-console
-      console.log("full increment:", increment);
-      // eslint-disable-next-line no-console
-      console.groupEnd();
-    });
-
     // per. optimmisation, only subscribe if there is the `onIncrement` prop registered, to avoid unnecessary computation
     if (this.props.onIncrement) {
       this.store.onStoreIncrementEmitter.on((increment) => {
