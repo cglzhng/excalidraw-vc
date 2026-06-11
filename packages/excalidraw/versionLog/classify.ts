@@ -1,5 +1,6 @@
 import type {
   ExcalidrawElement,
+  FixedPointBinding,
   OrderedExcalidrawElement,
 } from "@excalidraw/element/types";
 
@@ -14,7 +15,12 @@ import {
   matricesEqual,
 } from "./transform";
 
-import type { LogEntry, LogOperation, LogPropertyMap } from "./types";
+import type {
+  ArrowBinding,
+  LogEntry,
+  LogOperation,
+  LogPropertyMap,
+} from "./types";
 
 import type { TransformMatrix } from "./transform";
 
@@ -22,7 +28,7 @@ import type { TransformMatrix } from "./transform";
  * Properties Excalidraw uses for change tracking that are noise for
  * semantic classification. Ignore them throughout.
  */
-const TRACKING_PROPS = new Set(["version", "versionNonce"]);
+const TRACKING_PROPS = new Set(["version", "versionNonce", "index"]);
 
 /**
  * Style properties that, when changed in isolation, become a `restyle`
@@ -44,19 +50,33 @@ export const classifyEntries = (
   changedElements: Record<string, OrderedExcalidrawElement>,
   groupSizeCache: Map<string, number>,
 ): LogOperation[] => {
-  const ops: LogOperation[] = [];
+  // Pre-pass: detect group / ungroup events. These are inherently
+  // multi-entry (the same gid is added to / removed from N members
+  // in one user action), so they don't fit the per-entry classifier.
+  const { groupingOps, consumed: groupingConsumed } = detectGroupChange(entries);
 
+  // Per-entry classification for everything the pre-pass didn't claim.
+  const ops: LogOperation[] = [];
   for (const entry of entries) {
+    if (groupingConsumed.has(entry)) {
+      continue;
+    }
     ops.push(classifyEntry(entry, changedElements));
   }
 
-  const { groupOps, consumed } = detectGroups(
+  // Post-pass: detect generic group-transform events (move-group,
+  // resize-group, rotate-group) across the per-entry ops.
+  const { groupOps, consumed: geometricConsumed } = detectGroups(
     ops,
     changedElements,
     groupSizeCache,
   );
 
-  return groupOps.concat(ops.filter((o) => !consumed.has(o)));
+  return [
+    ...groupingOps,
+    ...groupOps,
+    ...ops.filter((o) => !geometricConsumed.has(o)),
+  ];
 };
 
 /**
@@ -161,6 +181,18 @@ const classifyEntry = (
 
   const current = changedElements[entry.elementId];
   const changed = getChangedKeys(entry);
+
+  // Arrows have derived geometry (x/y/width/height computed from
+  // points) and structural properties (`startBinding`, `endBinding`)
+  // that don't fit the generic geometry/style classifier. Dispatch to
+  // arrow-specific detection first; if nothing matches, fall through
+  // and let the generic paths handle simple cases like translation.
+  if (current?.type === "arrow") {
+    const arrowOp = classifyArrowEntry(entry, current, changed);
+    if (arrowOp) {
+      return arrowOp;
+    }
+  }
 
   // It's impossible to detect what kind of change it is based on
   // the transform, so just use the properties from the delta.
@@ -319,6 +351,375 @@ const numericDiff = (
   return (a as number) - (b as number);
 };
 
+// ------------------------- Arrow classifier --------------------------
+
+type ArrowPoint = readonly [number, number];
+
+const EPS = 1e-3;
+
+const pointsAlmostEqual = (a: ArrowPoint, b: ArrowPoint, eps: number = EPS) =>
+  Math.abs(a[0] - b[0]) <= eps && Math.abs(a[1] - b[1]) <= eps;
+
+// Check if two bindings are equal or "close enough"
+// Sometimes a binding is emitted even if the user did not make a change
+const bindingsEqual = (a: ArrowBinding, b: ArrowBinding): boolean => {
+  if (a === b) {
+    return true;
+  }
+  if (a == null || b == null) {
+    return false;
+  }
+  return (
+    a.elementId === b.elementId &&
+    a.mode === b.mode &&
+    pointsAlmostEqual(a.fixedPoint, b.fixedPoint)
+  );
+};
+
+/**
+ * True iff the change between `before` and `after` is "structural" — a
+ * bind (null → value), unbind (value → null), or rebind that points at
+ * a different element.
+ * Caller is responsible for first establishing that the change is
+ * real.
+ */
+const isStructuralBindingChange = (
+  before: ArrowBinding,
+  after: ArrowBinding,
+): boolean => {
+  if (before == null || after == null) {
+    return true;
+  }
+  return before.elementId !== after.elementId;
+};
+
+/**
+ * Check if `after` is `before` scaled by `(scaleX, scaleY)` per-point.
+ * Used to decide whether a `points` change that accompanies a width /
+ * height change is a bbox resize or an independent waypoint edit
+ * that just happens to alter the bbox.
+ */
+const pointsAreScaledBy = (
+  before: readonly ArrowPoint[],
+  after: readonly ArrowPoint[],
+  scaleX: number,
+  scaleY: number,
+): boolean => {
+  if (before.length !== after.length) {
+    return false;
+  }
+  for (let i = 0; i < before.length; i++) {
+    const expected: ArrowPoint = [before[i][0] * scaleX, before[i][1] * scaleY];
+    if (!pointsAlmostEqual(after[i], expected)) {
+      return false;
+    }
+  }
+  return true;
+};
+
+/**
+ * Try to classify an arrow-specific operation. Returns `null` to
+ * indicate "fall back to generic classification" (e.g. a pure move of
+ * the arrow body — translation only — which the standard `move` path
+ * handles correctly).
+ */
+const classifyArrowEntry = (
+  entry: LogEntry,
+  current: OrderedExcalidrawElement,
+  changed: Set<string>,
+): LogOperation | null => {
+  const beforeStart = (entry.before.startBinding ?? null) as ArrowBinding;
+  const afterStart = (entry.after.startBinding ?? null) as ArrowBinding;
+  const beforeEnd = (entry.before.endBinding ?? null) as ArrowBinding;
+  const afterEnd = (entry.after.endBinding ?? null) as ArrowBinding;
+
+  const hasStartChange =
+    changed.has("startBinding") && !bindingsEqual(beforeStart, afterStart);
+  const hasEndChange =
+    changed.has("endBinding") && !bindingsEqual(beforeEnd, afterEnd);
+  changed.delete("startBinding");
+  changed.delete("endBinding");
+
+  const hasPointsChange = changed.has("points");
+  const hasAngleChange = changed.has("angle");
+  const hasSizeChange = changed.has("width") || changed.has("height");
+
+  changed.delete("points");
+  changed.delete("x");
+  changed.delete("y");
+  changed.delete("width");
+  changed.delete("height");
+
+  // ----- 1. arrow-bind: a binding actually changed value -----------
+  //
+  // Permits points + bbox residue (binding may shift an endpoint and
+  // thus the bbox). Rejected if any unrelated property also changed.
+
+  if (hasStartChange || hasEndChange) {
+    if (changed.size === 0) {
+      const startStructural =
+        hasStartChange && isStructuralBindingChange(beforeStart, afterStart);
+      const endStructural =
+        hasEndChange && isStructuralBindingChange(beforeEnd, afterEnd);
+
+      if (startStructural || endStructural) {
+        const op: Extract<LogOperation, { kind: "arrow-bind" }> = {
+          kind: "arrow-bind",
+          elementId: entry.elementId,
+          elementType: current.type,
+        };
+        if (hasStartChange) {
+          op.start = { before: beforeStart, after: afterStart };
+        }
+        if (hasEndChange) {
+          op.end = { before: beforeEnd, after: afterEnd };
+        }
+        return op;
+      }
+
+      // No structural changes, so the change is a same-element
+      // anchor move. Since isStructuralBindingChange
+      // returned false, both before and after are
+      // non-null with the same `elementId`.
+      const op: Extract<LogOperation, { kind: "arrow-move-binding" }> = {
+        kind: "arrow-move-binding",
+        elementId: entry.elementId,
+        elementType: current.type,
+      };
+      if (hasStartChange && beforeStart != null && afterStart != null) {
+        op.start = {
+          boundElementId: afterStart.elementId,
+          before: beforeStart,
+          after: afterStart,
+        };
+      }
+      if (hasEndChange && beforeEnd != null && afterEnd != null) {
+        op.end = {
+          boundElementId: afterEnd.elementId,
+          before: beforeEnd,
+          after: afterEnd,
+        };
+      }
+      if (op.start || op.end) {
+        return op;
+      }
+    }
+  }
+
+  // ----- 2. arrow-rotate: only `angle` (+ derived bbox) ------------
+  //
+  // Excalidraw rotates at render time around the element's center, so
+  // local `points` should NOT change for a pure rotation.
+  if (hasAngleChange && !hasPointsChange) {
+    if (changed.size === 0) {
+      const transform = buildEntryGeometryMatrix(entry, current);
+      if (transform) {
+        const from =
+          "angle" in entry.before
+            ? (entry.before.angle as number)
+            : (current.angle as number);
+        const to =
+          "angle" in entry.after
+            ? (entry.after.angle as number)
+            : (current.angle as number);
+        return {
+          kind: "arrow-rotate",
+          elementId: entry.elementId,
+          elementType: current.type,
+          from,
+          to,
+          angle: to - from,
+          center: fixedPoint(transform),
+          transform,
+        };
+      }
+    }
+  }
+
+  // ----- 3. arrow-resize: bbox change with consistent points scaling -
+  //
+  // For arrows, `points` changes during a corner-drag resize.
+  // We only treat it as a resize when the
+  // points change matches the bbox scale; otherwise the user dragged
+  // a waypoint and the bbox change is the derived consequence.
+  if (hasSizeChange && !hasAngleChange) {
+    if (changed.size === 0) {
+      const fromW =
+        "width" in entry.before
+          ? (entry.before.width as number)
+          : (current.width as number);
+      const fromH =
+        "height" in entry.before
+          ? (entry.before.height as number)
+          : (current.height as number);
+      const toW =
+        "width" in entry.after
+          ? (entry.after.width as number)
+          : (current.width as number);
+      const toH =
+        "height" in entry.after
+          ? (entry.after.height as number)
+          : (current.height as number);
+      const scaleX = fromW === 0 ? 1 : toW / fromW;
+      const scaleY = fromH === 0 ? 1 : toH / fromH;
+
+      const beforePts =
+        (entry.before.points as readonly ArrowPoint[] | undefined) ?? [];
+      const afterPts =
+        (entry.after.points as readonly ArrowPoint[] | undefined) ?? [];
+      const pointsConsistent = pointsAreScaledBy(
+        beforePts,
+        afterPts,
+        scaleX,
+        scaleY,
+      );
+
+      if (pointsConsistent) {
+        const transform = buildEntryGeometryMatrix(entry, current);
+        if (transform) {
+          return {
+            kind: "arrow-resize",
+            elementId: entry.elementId,
+            elementType: current.type,
+            from: { width: fromW, height: fromH },
+            to: { width: toW, height: toH },
+            scaleX,
+            scaleY,
+            center: fixedPoint(transform),
+            transform,
+          };
+        }
+      }
+      // Inconsistent points → not a resize → try edit-points below.
+    }
+  }
+
+  // ----- 4. arrow-edit-points: any points change ------------------
+  //
+  // Permitted residue: derived bbox geometry. Anything else is "edit
+  // + something" and falls through.
+  if (hasPointsChange) {
+    if (changed.size === 0) {
+      const before =
+        (entry.before.points as readonly ArrowPoint[] | undefined) ?? [];
+      const after =
+        (entry.after.points as readonly ArrowPoint[] | undefined) ?? [];
+      return {
+        kind: "arrow-edit-points",
+        elementId: entry.elementId,
+        elementType: current.type,
+        before,
+        after,
+      };
+    }
+  }
+
+  // Couldn't classify as arrow-specific — let the generic paths try.
+  return null;
+};
+
+// ------------------------- Group / ungroup detector ------------------
+
+/**
+ * Detect `group` / `ungroup` events by looking at `groupIds` deltas
+ * across entries. A group / ungroup event = N (≥ 2) entries that all
+ * gained / lost the SAME group id in this increment.
+ *
+ * Runs as a pre-pass before per-entry classification. Entries
+ * consumed by a detected event are skipped by the per-entry
+ * classifier so they don't appear as `raw` ops too.
+ *
+ * Residue check: only `groupIds` (and our usual tracking noise) may
+ * have changed on each participating entry. If an entry's
+ * `groupIds` changed alongside other properties, we don't consume
+ * it — the per-entry classifier handles it as best it can.
+ */
+const detectGroupChange = (
+  entries: readonly LogEntry[],
+): { groupingOps: LogOperation[]; consumed: Set<LogEntry> } => {
+  // gid → entries that added it / removed it (only entries with a
+  // clean residue — `groupIds` is the only thing they changed).
+  const addedBy = new Map<string, LogEntry[]>();
+  const removedBy = new Map<string, LogEntry[]>();
+
+  for (const entry of entries) {
+    if (entry.type !== "update") {
+      continue;
+    }
+    const changed = getChangedKeys(entry);
+    if (!changed.has("groupIds")) {
+      continue;
+    }
+    changed.delete("groupIds");
+    if (changed.size > 0) {
+      // groupIds changed alongside other properties — skip.
+      continue;
+    }
+
+    const beforeArr =
+      (entry.before.groupIds as readonly string[] | undefined) ?? [];
+    const afterArr =
+      (entry.after.groupIds as readonly string[] | undefined) ?? [];
+    const beforeSet = new Set(beforeArr);
+    const afterSet = new Set(afterArr);
+
+    for (const gid of afterArr) {
+      if (!beforeSet.has(gid)) {
+        let bucket = addedBy.get(gid);
+        if (!bucket) {
+          bucket = [];
+          addedBy.set(gid, bucket);
+        }
+        bucket.push(entry);
+      }
+    }
+    for (const gid of beforeArr) {
+      if (!afterSet.has(gid)) {
+        let bucket = removedBy.get(gid);
+        if (!bucket) {
+          bucket = [];
+          removedBy.set(gid, bucket);
+        }
+        bucket.push(entry);
+      }
+    }
+  }
+
+  const groupingOps: LogOperation[] = [];
+  const consumed = new Set<LogEntry>();
+
+  // Need ≥ 2 members to be a real group operation; a singleton
+  // groupIds tweak isn't a "group" event semantically.
+  for (const [gid, members] of addedBy) {
+    if (members.length < 2) {
+      continue;
+    }
+    groupingOps.push({
+      kind: "group",
+      groupId: gid,
+      elementIds: members.map((e) => e.elementId),
+    });
+    for (const e of members) {
+      consumed.add(e);
+    }
+  }
+  for (const [gid, members] of removedBy) {
+    if (members.length < 2) {
+      continue;
+    }
+    groupingOps.push({
+      kind: "ungroup",
+      groupId: gid,
+      elementIds: members.map((e) => e.elementId),
+    });
+    for (const e of members) {
+      consumed.add(e);
+    }
+  }
+
+  return { groupingOps, consumed };
+};
+
 // ------------------------- Group detector ----------------------
 
 interface GroupCandidate {
@@ -344,17 +745,28 @@ const detectGroups = (
 ): { groupOps: LogOperation[]; consumed: Set<LogOperation> } => {
   const candidates: GroupCandidate[] = [];
   for (const op of ops) {
-    if (op.kind === "move" || op.kind === "resize" || op.kind === "rotate") {
-      const element = changedElements[op.elementId];
-      if (!element || element.groupIds.length === 0) {
-        continue;
-      }
-      candidates.push({
-        op,
-        element,
-        transform: op.transform,
-      });
+    // Generic and arrow-specific resize/rotate ops bucket together —
+    // a mixed group (arrows + non-arrows) being transformed as a unit
+    // should produce a single `resize-group` or `rotate-group`, not
+    // one per element kind.
+    const isCandidate =
+      op.kind === "move" ||
+      op.kind === "resize" ||
+      op.kind === "rotate" ||
+      op.kind === "arrow-resize" ||
+      op.kind === "arrow-rotate";
+    if (!isCandidate) {
+      continue;
     }
+    const element = changedElements[op.elementId];
+    if (!element || element.groupIds.length === 0) {
+      continue;
+    }
+    candidates.push({
+      op,
+      element,
+      transform: op.transform,
+    });
   }
 
   if (candidates.length === 0) {
@@ -423,7 +835,7 @@ const detectGroups = (
         transform: op.transform,
       });
     }
-    if (op.kind === "resize") {
+    if (op.kind === "resize" || op.kind === "arrow-resize") {
       groupOps.push({
         kind: "resize-group",
         groupId,
@@ -434,7 +846,7 @@ const detectGroups = (
         transform: op.transform,
       });
     }
-    if (op.kind === "rotate") {
+    if (op.kind === "rotate" || op.kind === "arrow-rotate") {
       groupOps.push({
         kind: "rotate-group",
         groupId,

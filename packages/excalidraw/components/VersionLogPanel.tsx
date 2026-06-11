@@ -49,8 +49,20 @@ const OP_COLOR: Record<LogOperation["kind"], string> = {
   move: "#1971c2",
   "move-group": "#1864ab",
   resize: "#7048e8",
+  "resize-group": "#5f3dc4",
   rotate: "#9c36b5",
+  "rotate-group": "#862e9c",
   restyle: "#d9480f",
+  // Arrow-specific shades — kept in the warm/orange family so they
+  // sit visually next to restyle but stay distinguishable.
+  "arrow-edit-points": "#e8590c",
+  "arrow-bind": "#0ca678",
+  "arrow-move-binding": "#37b24d",
+  "arrow-resize": "#7048e8",
+  "arrow-rotate": "#9c36b5",
+  // Grouping ops — teal/cyan family, distinct from any other op group.
+  group: "#0b7285",
+  ungroup: "#15aabf",
   raw: "#868e96",
 };
 
@@ -215,7 +227,8 @@ const renderOpContent = (op: LogOperation): React.ReactNode => {
         <>
           <strong>Resized group</strong> of {op.elementIds.length} by (
           {formatValue(op.scaleX)}, {formatValue(op.scaleY)})
-          <br />Center: ({formatValue(op.center[0])}, {formatValue(op.center[1])})
+          <br />
+          Center: ({formatValue(op.center[0])}, {formatValue(op.center[1])})
         </>
       );
 
@@ -224,7 +237,8 @@ const renderOpContent = (op: LogOperation): React.ReactNode => {
         <>
           <strong>Rotated</strong> {formatElementLabel(op.elementType)}{" "}
           {Math.round(radToDeg(op.from))}° → {Math.round(radToDeg(op.to))}°
-          <br />Center: ({formatValue(op.center[0])}, {formatValue(op.center[1])})
+          <br />
+          Center: ({formatValue(op.center[0])}, {formatValue(op.center[1])})
         </>
       );
     case "rotate-group":
@@ -232,14 +246,133 @@ const renderOpContent = (op: LogOperation): React.ReactNode => {
         <>
           <strong>Rotated group</strong> of {op.elementIds.length} by{" "}
           {formatValue(op.angle)}
-          <br />Center: ({formatValue(op.center[0])}, {formatValue(op.center[1])})
+          <br />
+          Center: ({formatValue(op.center[0])}, {formatValue(op.center[1])})
         </>
-      );    case "restyle":
+      );
+    case "restyle":
       return (
         <>
           <strong>Restyled</strong> {formatElementLabel(op.elementType)}{" "}
           {op.property}: <code>{formatValue(op.from)}</code> →{" "}
           <code>{formatValue(op.to)}</code>
+        </>
+      );
+    case "arrow-edit-points": {
+      const before = op.before;
+      const after = op.after;
+      // Headline depends on the kind of edit: count change, single
+      // point moved, or general reshape.
+      if (before.length !== after.length) {
+        const delta = after.length - before.length;
+        return (
+          <>
+            <strong>{delta > 0 ? "Added" : "Removed"} arrow waypoint</strong> (
+            {before.length} → {after.length} points)
+          </>
+        );
+      }
+      // Same length: count which points differ.
+      let differing = 0;
+      let lastChangedIdx = -1;
+      for (let i = 0; i < before.length; i++) {
+        if (before[i][0] !== after[i][0] || before[i][1] !== after[i][1]) {
+          differing += 1;
+          lastChangedIdx = i;
+        }
+      }
+      if (differing === 1) {
+        const isEndpoint =
+          lastChangedIdx === 0 || lastChangedIdx === before.length - 1;
+        return (
+          <>
+            <strong>
+              {isEndpoint ? "Moved arrow endpoint" : "Moved arrow waypoint"}
+            </strong>{" "}
+            ({formatValue(before[lastChangedIdx][0])},{" "}
+            {formatValue(before[lastChangedIdx][1])}) → (
+            {formatValue(after[lastChangedIdx][0])},{" "}
+            {formatValue(after[lastChangedIdx][1])})
+          </>
+        );
+      }
+      return (
+        <>
+          <strong>Reshaped arrow</strong> ({differing} of {before.length} points
+          changed)
+        </>
+      );
+    }
+    case "arrow-bind": {
+      // Describe each affected side as bind / unbind / rebind based
+      // on the null-vs-value shape of before/after.
+      const describe = (
+        side: "start" | "end",
+        change: { before: unknown; after: unknown },
+      ): string => {
+        if (change.before == null && change.after != null) {
+          return `Bound ${side}`;
+        }
+        if (change.before != null && change.after == null) {
+          return `Unbound ${side}`;
+        }
+        return `Rebound ${side}`;
+      };
+      const parts: string[] = [];
+      if (op.start) {
+        parts.push(describe("start", op.start));
+      }
+      if (op.end) {
+        parts.push(describe("end", op.end));
+      }
+      return (
+        <>
+          <strong>{parts.join(" + ")}</strong> on arrow
+        </>
+      );
+    }
+    case "arrow-move-binding": {
+      // List which sides had their anchor moved, with the bound
+      // element id for context.
+      const parts: string[] = [];
+      if (op.start) {
+        parts.push(`start on ${op.start.boundElementId.slice(0, 6)}…`);
+      }
+      if (op.end) {
+        parts.push(`end on ${op.end.boundElementId.slice(0, 6)}…`);
+      }
+      return (
+        <>
+          <strong>Moved arrow anchor</strong> ({parts.join(" + ")})
+        </>
+      );
+    }
+    case "arrow-resize":
+      return (
+        <>
+          <strong>Resized arrow</strong> {Math.round(op.from.width)}×
+          {Math.round(op.from.height)} → {Math.round(op.to.width)}×
+          {Math.round(op.to.height)}
+          <br />({formatValue(op.scaleX)}, {formatValue(op.scaleY)})
+        </>
+      );
+    case "arrow-rotate":
+      return (
+        <>
+          <strong>Rotated arrow</strong> {Math.round(radToDeg(op.from))}° →{" "}
+          {Math.round(radToDeg(op.to))}°
+        </>
+      );
+    case "group":
+      return (
+        <>
+          <strong>Grouped</strong> {op.elementIds.length} elements
+        </>
+      );
+    case "ungroup":
+      return (
+        <>
+          <strong>Ungrouped</strong> {op.elementIds.length} elements
         </>
       );
     case "raw":

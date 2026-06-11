@@ -91,11 +91,45 @@ export class VersionLog {
     this.onChangeEmitter.trigger();
   }
 
+  private printIncrement(increment: DurableIncrement) {
+    const { added, removed, updated } = increment.delta.elements;
+    const addedIds = Object.keys(added);
+    const removedIds = Object.keys(removed);
+    const updatedIds = Object.keys(updated);
+    if (
+      addedIds.length === 0 &&
+      removedIds.length === 0 &&
+      updatedIds.length === 0
+    ) {
+      return;
+    }
+    // eslint-disable-next-line no-console
+    console.groupCollapsed(
+      `[version-log] +${addedIds.length} ~${updatedIds.length} -${
+        removedIds.length
+      } @ ${new Date().toISOString()}`,
+    );
+    // eslint-disable-next-line no-console
+    console.log("added:", added);
+    // eslint-disable-next-line no-console
+    console.log("updated:", updated);
+    // eslint-disable-next-line no-console
+    console.log("removed:", removed);
+    // eslint-disable-next-line no-console
+    console.log("full increment:", JSON.stringify(increment));
+    // eslint-disable-next-line no-console
+    console.groupEnd();
+  }
+
   /**
    * Convert a single durable increment into a `LogIncrement` (with
    * semantic operations) and prepend it. Skips empty deltas.
    */
   private ingest(increment: DurableIncrement, scene: VersionLogSceneContext) {
+    // [version-log] temporary console logger for inspecting delta shape.
+    // Kept for debugging; safe to remove once the feature is stable.
+    this.printIncrement(increment);
+
     const { added, removed, updated } = increment.delta.elements;
     const changedElements = increment.change.elements;
 
