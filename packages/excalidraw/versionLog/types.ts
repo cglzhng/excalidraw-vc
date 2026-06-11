@@ -15,8 +15,19 @@
  */
 
 import type { StoreDelta } from "@excalidraw/element";
+import type { FixedPointBinding } from "@excalidraw/element/types";
 
 import type { TransformMatrix } from "./transform";
+
+/**
+ * The shape of `startBinding` / `endBinding` on an arrow element.
+ * Re-exported from Excalidraw so the rest of the version-log code can
+ * stay free of `unknown` casts.
+ *
+ * `null` represents "not bound" — both endpoints are independently
+ * bindable, and either may be unset.
+ */
+export type ArrowBinding = FixedPointBinding | null;
 
 export type LogEntryType = "create" | "update" | "delete";
 
@@ -149,6 +160,102 @@ export type LogOperation =
       from: unknown;
       to: unknown;
     }
+  // Arrow-specific ---------------------------------------------------
+  //
+  // Arrows have derived geometry (x / y / width / height are computed
+  // from `points`) and structural properties (`startBinding`,
+  // `endBinding`) that don't fit the generic geometry/style classifier.
+  //
+  // For arrows we emit dedicated ops; the regular `move`, `restyle`,
+  // `create`, `delete` still apply where appropriate. `arrow-resize`
+  // and `arrow-rotate` mirror the shapes of `resize` and `rotate` but
+  // exist as distinct kinds so the classifier can permit `points`
+  // residue without weakening the generic resize/rotate paths.
+  | {
+      kind: "arrow-edit-points";
+      elementId: string;
+      elementType?: string;
+      /** Local-space waypoints before the edit. `[0,0]` is always the start. */
+      before: ReadonlyArray<readonly [number, number]>;
+      after: ReadonlyArray<readonly [number, number]>;
+    }
+  | {
+      kind: "arrow-bind";
+      elementId: string;
+      elementType?: string;
+      /**
+       * Per-side binding change for STRUCTURAL changes: bind (null →
+       * value), unbind (value → null), or rebind to a different
+       * element (different `elementId`). Anchor moves within the same
+       * element are reported as `arrow-move-binding` instead.
+       */
+      start?: { before: ArrowBinding; after: ArrowBinding };
+      end?: { before: ArrowBinding; after: ArrowBinding };
+    }
+  | {
+      kind: "arrow-move-binding";
+      elementId: string;
+      elementType?: string;
+      /**
+       * Per-side anchor move within the SAME bound element.
+       * `boundElementId` is the (unchanging) element the arrow is
+       * anchored to; `before` and `after` are the full binding
+       * payloads so the panel can show the old / new `fixedPoint`,
+       * `mode`, etc. Both sides are non-null by construction (an
+       * anchor move only makes sense when both states are bound).
+       */
+      start?: {
+        boundElementId: string;
+        before: FixedPointBinding;
+        after: FixedPointBinding;
+      };
+      end?: {
+        boundElementId: string;
+        before: FixedPointBinding;
+        after: FixedPointBinding;
+      };
+    }
+  | {
+      kind: "arrow-resize";
+      elementId: string;
+      elementType?: string;
+      from: { width: number; height: number };
+      to: { width: number; height: number };
+      scaleX: number;
+      scaleY: number;
+      center: readonly [number, number] | null;
+      transform: TransformMatrix;
+    }
+  | {
+      kind: "arrow-rotate";
+      elementId: string;
+      elementType?: string;
+      from: number;
+      to: number;
+      angle: number;
+      center: readonly [number, number] | null;
+      transform: TransformMatrix;
+    }
+  // Grouping ----------------------------------------------------------
+  //
+  // Group / ungroup events are multi-entry by nature: pressing Ctrl+G
+  // on a selection adds the same new `groupId` to every selected
+  // element's `groupIds`. We emit one op per event, listing all
+  // members. Detected as a pre-pass before per-entry classification.
+  | {
+      kind: "group";
+      /** The group id added to every member. */
+      groupId: string;
+      /** Element ids that received the new group id. */
+      elementIds: string[];
+    }
+  | {
+      kind: "ungroup";
+      /** The group id removed from every member. */
+      groupId: string;
+      /** Element ids that lost the group id. */
+      elementIds: string[];
+    }
   // Fallback ----------------------------------------------------------
   | {
       kind: "raw";
@@ -168,10 +275,17 @@ export const getOperationElementIds = (op: LogOperation): string[] => {
     case "resize":
     case "rotate":
     case "restyle":
+    case "arrow-edit-points":
+    case "arrow-bind":
+    case "arrow-move-binding":
+    case "arrow-resize":
+    case "arrow-rotate":
       return [op.elementId];
     case "move-group":
     case "rotate-group":
     case "resize-group":
+    case "group":
+    case "ungroup":
       return op.elementIds;
     case "raw":
       return [op.entry.elementId];
