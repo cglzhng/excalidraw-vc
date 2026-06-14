@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 
 import {
+  collectElementIdsFromGroupNode,
   getOperationElementIds,
   type LogEntry,
   type LogEntryType,
@@ -28,6 +29,27 @@ const useVersionLogIncrements = (log: VersionLog): readonly LogIncrement[] => {
   }, [log]);
 
   return increments;
+};
+
+/**
+ * Subscribe to the cursor (current-increment id) on a `VersionLog`.
+ * The panel uses this both to render the "Current" badge and to
+ * decide whether the Jump button on a row is a no-op.
+ */
+const useVersionLogCursor = (log: VersionLog): string | null => {
+  const [cursor, setCursor] = useState<string | null>(() =>
+    log.getCurrentIncrementId(),
+  );
+
+  useEffect(() => {
+    setCursor(log.getCurrentIncrementId());
+    const off = log.onChangeEmitter.on(() => {
+      setCursor(log.getCurrentIncrementId());
+    });
+    return off;
+  }, [log]);
+
+  return cursor;
 };
 
 // --------------------------- shared helpers --------------------------
@@ -101,6 +123,18 @@ const formatDelta = (n: number) => {
 };
 
 const radToDeg = (rad: number) => (rad * 180) / Math.PI;
+
+/**
+ * Render a (possibly null) world-space pivot point. `null` means
+ * "no unique fixed point" (e.g. an axis-only scale or a degenerate
+ * matrix); we show "—" so the row still parses visually.
+ */
+const formatCenter = (
+  center: readonly [number, number] | null,
+): string =>
+  center == null
+    ? "—"
+    : `(${formatValue(center[0])}, ${formatValue(center[1])})`;
 
 const formatElementLabel = (
   elementType: string | undefined,
@@ -228,7 +262,7 @@ const renderOpContent = (op: LogOperation): React.ReactNode => {
           <strong>Resized group</strong> of {op.elementIds.length} by (
           {formatValue(op.scaleX)}, {formatValue(op.scaleY)})
           <br />
-          Center: ({formatValue(op.center[0])}, {formatValue(op.center[1])})
+          Center: {formatCenter(op.center)}
         </>
       );
 
@@ -238,7 +272,7 @@ const renderOpContent = (op: LogOperation): React.ReactNode => {
           <strong>Rotated</strong> {formatElementLabel(op.elementType)}{" "}
           {Math.round(radToDeg(op.from))}° → {Math.round(radToDeg(op.to))}°
           <br />
-          Center: ({formatValue(op.center[0])}, {formatValue(op.center[1])})
+          Center: {formatCenter(op.center)}
         </>
       );
     case "rotate-group":
@@ -247,7 +281,7 @@ const renderOpContent = (op: LogOperation): React.ReactNode => {
           <strong>Rotated group</strong> of {op.elementIds.length} by{" "}
           {formatValue(op.angle)}
           <br />
-          Center: ({formatValue(op.center[0])}, {formatValue(op.center[1])})
+          Center: {formatCenter(op.center)}
         </>
       );
     case "restyle":
@@ -366,13 +400,15 @@ const renderOpContent = (op: LogOperation): React.ReactNode => {
     case "group":
       return (
         <>
-          <strong>Grouped</strong> {op.elementIds.length} elements
+          <strong>Grouped</strong>{" "}
+          {collectElementIdsFromGroupNode(op.group).length} elements
         </>
       );
     case "ungroup":
       return (
         <>
-          <strong>Ungrouped</strong> {op.elementIds.length} elements
+          <strong>Ungrouped</strong>{" "}
+          {collectElementIdsFromGroupNode(op.group).length} elements
         </>
       );
     case "raw":
@@ -461,19 +497,23 @@ const CountChip: React.FC<{
 
 const VersionLogIncrementCard: React.FC<{
   increment: LogIncrement;
-  /** True when this is the newest increment in the log — revert is a no-op there. */
+  /**
+   * True when this increment is the one the document is currently at
+   * (matches `VersionLog.getCurrentIncrementId()`). Disables the Jump
+   * button and shows a "Current" badge instead.
+   */
   isCurrent: boolean;
-  onRevert?: (incrementId: string) => void;
+  onJump?: (incrementId: string) => void;
   onHighlightElements?: (elementIds: string[] | null) => void;
-}> = ({ increment, isCurrent, onRevert, onHighlightElements }) => {
+}> = ({ increment, isCurrent, onJump, onHighlightElements }) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const toggle = () => setIsExpanded((v) => !v);
 
-  const handleRevert = (e: React.MouseEvent) => {
+  const handleJump = (e: React.MouseEvent) => {
     // don't toggle the card when clicking the button
     e.stopPropagation();
-    onRevert?.(increment.id);
+    onJump?.(increment.id);
   };
 
   return (
@@ -483,9 +523,14 @@ const VersionLogIncrementCard: React.FC<{
         listStyle: "none",
         marginBottom: 10,
         padding: 6,
-        border: "1px solid var(--sidebar-border-color, #d0d0d0)",
+        // Accent the current card so it stands out from the timeline.
+        border: isCurrent
+          ? "1px solid var(--color-primary, #5b57d1)"
+          : "1px solid var(--sidebar-border-color, #d0d0d0)",
         borderRadius: 6,
-        background: "var(--island-bg-color, rgba(0, 0, 0, 0.02))",
+        background: isCurrent
+          ? "var(--color-primary-light, rgba(91, 87, 209, 0.08))"
+          : "var(--island-bg-color, rgba(0, 0, 0, 0.02))",
       }}
     >
       <button
@@ -546,35 +591,43 @@ const VersionLogIncrementCard: React.FC<{
           }}
         >
           <span>{formatTimestamp(increment.timestamp)}</span>
-          {onRevert && (
-            <button
-              type="button"
-              onClick={handleRevert}
-              disabled={isCurrent}
-              title={
-                isCurrent
-                  ? "This is the current state"
-                  : "Revert the document to this point"
-              }
-              onMouseDown={(e) => e.stopPropagation()}
+          {isCurrent ? (
+            <span
+              title="The document is at this point"
               style={{
-                all: "unset",
-                cursor: isCurrent ? "default" : "pointer",
                 padding: "2px 6px",
                 fontSize: 10,
                 fontWeight: 600,
-                color: isCurrent ? "inherit" : "var(--color-primary, #5b57d1)",
-                border: `1px solid ${
-                  isCurrent
-                    ? "var(--sidebar-border-color, #d0d0d0)"
-                    : "var(--color-primary, #5b57d1)"
-                }`,
+                color: "var(--color-primary, #5b57d1)",
+                border: "1px solid var(--color-primary, #5b57d1)",
                 borderRadius: 4,
-                opacity: isCurrent ? 0.4 : 1,
+                background: "var(--default-bg-color, transparent)",
+                opacity: 1,
               }}
             >
-              Revert
-            </button>
+              Current
+            </span>
+          ) : (
+            onJump && (
+              <button
+                type="button"
+                onClick={handleJump}
+                title="Jump the document to this point"
+                onMouseDown={(e) => e.stopPropagation()}
+                style={{
+                  all: "unset",
+                  cursor: "pointer",
+                  padding: "2px 6px",
+                  fontSize: 10,
+                  fontWeight: 600,
+                  color: "var(--color-primary, #5b57d1)",
+                  border: "1px solid var(--color-primary, #5b57d1)",
+                  borderRadius: 4,
+                }}
+              >
+                Jump
+              </button>
+            )
           )}
         </span>
       </button>
@@ -598,11 +651,12 @@ const VersionLogIncrementCard: React.FC<{
 export interface VersionLogPanelProps {
   log: VersionLog;
   /**
-   * Called when the user clicks "Revert" on a card. The panel itself
-   * does not perform the revert — App owns that side-effect (see
-   * `App.revertToVersionLogIncrement`).
+   * Called when the user clicks "Jump" on a non-current card. Works
+   * in both directions: forward (target newer than cursor) and
+   * backward (target older than cursor). App owns the actual scene
+   * change — see `App.jumpToVersionLogIncrement`.
    */
-  onRevert?: (incrementId: string) => void;
+  onJump?: (incrementId: string) => void;
   /**
    * Called on op mouse-enter (with all element ids the op touches) and
    * mouse-leave (with `null`). Owners typically write this into
@@ -613,10 +667,11 @@ export interface VersionLogPanelProps {
 
 export const VersionLogPanel: React.FC<VersionLogPanelProps> = ({
   log,
-  onRevert,
+  onJump,
   onHighlightElements,
 }) => {
   const increments = useVersionLogIncrements(log);
+  const cursorId = useVersionLogCursor(log);
 
   return (
     <div
@@ -667,13 +722,19 @@ export const VersionLogPanel: React.FC<VersionLogPanelProps> = ({
             padding: 0,
           }}
         >
-          {increments.map((increment, i) => (
+          {increments.map((increment) => (
             <VersionLogIncrementCard
               key={increment.id}
               increment={increment}
-              // newest-first ordering: index 0 == current state
-              isCurrent={i === 0}
-              onRevert={onRevert}
+              // Cursor-driven: the increment whose id matches the log's
+              // cursor is "current". Falls back to the head when the
+              // cursor is null (fresh log).
+              isCurrent={
+                cursorId == null
+                  ? increment.id === increments[0]?.id
+                  : increment.id === cursorId
+              }
+              onJump={onJump}
               onHighlightElements={onHighlightElements}
             />
           ))}

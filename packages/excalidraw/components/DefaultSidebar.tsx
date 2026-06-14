@@ -123,7 +123,7 @@ export const DefaultSidebar = Object.assign(
             <Sidebar.Tab tab={VERSION_LOG_SIDEBAR_TAB}>
               <VersionLogPanel
                 log={app.versionLog}
-                onRevert={app.revertToVersionLogIncrement}
+                onJump={app.jumpToVersionLogIncrement}
                 onHighlightElements={(ids) => {
                   // Custom per-element highlight that bypasses group
                   // expansion (the standard `elementsToHighlight` path

@@ -15,6 +15,8 @@ import {
   matricesEqual,
 } from "./transform";
 
+import { buildGroupNodeFromEntries, getParentGroupId } from "./groupTree";
+
 import type {
   ArrowBinding,
   LogEntry,
@@ -211,6 +213,12 @@ const classifyEntry = (
   if (hasGeometryChange && current && changed.size === 0) {
     const transform = buildEntryGeometryMatrix(entry, current);
 
+    // Without an invertible transform (e.g. degenerate before-box) the
+    // geometric op types can't be populated; fall through to raw.
+    if (transform == null) {
+      return { kind: "raw", entry };
+    }
+
     // Resize: width and/or height changed; angle unchanged. x/y may
     // also have changed if the user dragged from a corner that isn't
     // the anchor — that's the normal case.
@@ -247,7 +255,7 @@ const classifyEntry = (
         scaleY,
         // The resize anchor (un-moved point) exists in world space
         // regardless of rotation; read it off the matrix when we can.
-        center: transform ? fixedPoint(transform) : null,
+        center: fixedPoint(transform),
         transform,
       };
     }
@@ -274,18 +282,16 @@ const classifyEntry = (
         // world-frame decomposition for the same reason as above.
         angle: to - from,
         // Rotation pivot in world coords — read off the matrix.
-        center: transform ? fixedPoint(transform) : null,
+        center: fixedPoint(transform),
         transform,
       };
     }
 
     // Move: only x and/or y changed.
     if (hasPosChange && !hasAngleChange && !hasSizeChange) {
-      // If the matrix is unavailable (e.g. degenerate before-box) we
-      // can still read deltas straight from the entry.
       let dx: number;
       let dy: number;
-      if (transform && isPureTranslation(transform)) {
+      if (isPureTranslation(transform)) {
         [dx, dy] = getMatrixTranslation(transform);
       } else {
         dx = changed.has("x") ? numericDiff(entry.before, entry.after, "x") : 0;
@@ -625,9 +631,7 @@ const classifyArrowEntry = (
  * across entries. A group / ungroup event = N (≥ 2) entries that all
  * gained / lost the SAME group id in this increment.
  *
- * Runs as a pre-pass before per-entry classification. Entries
- * consumed by a detected event are skipped by the per-entry
- * classifier so they don't appear as `raw` ops too.
+ * Runs as a pre-pass before per-entry classification
  *
  * Residue check: only `groupIds` (and our usual tracking noise) may
  * have changed on each participating entry. If an entry's
@@ -696,8 +700,10 @@ const detectGroupChange = (
     }
     groupingOps.push({
       kind: "group",
-      groupId: gid,
-      elementIds: members.map((e) => e.elementId),
+      // The new group's tree is built from the AFTER state (the gid
+      // is present there).
+      group: buildGroupNodeFromEntries(gid, members, "after"),
+      parentGroupId: getParentGroupId(gid, members, "after"),
     });
     for (const e of members) {
       consumed.add(e);
@@ -709,8 +715,10 @@ const detectGroupChange = (
     }
     groupingOps.push({
       kind: "ungroup",
-      groupId: gid,
-      elementIds: members.map((e) => e.elementId),
+      // The dissolved group's tree is built from the BEFORE state
+      // (the gid was present there, not after).
+      group: buildGroupNodeFromEntries(gid, members, "before"),
+      parentGroupId: getParentGroupId(gid, members, "before"),
     });
     for (const e of members) {
       consumed.add(e);
