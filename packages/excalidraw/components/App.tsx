@@ -361,6 +361,10 @@ import { restoreAppState, restoreElements } from "../data/restore";
 import { getCenter, getDistance } from "../gesture";
 import { History } from "../history";
 import { VersionLog } from "../versionLog/VersionLog";
+import { applyOpsToScene } from "../versionLog/applyOps";
+
+import type { ApplyDirection, SceneSnapshot } from "../versionLog/applyOps";
+import type { LogIncrement } from "../versionLog/types";
 import { defaultLang, getLanguage, languages, setLanguage, t } from "../i18n";
 
 import {
@@ -4632,45 +4636,93 @@ class App extends React.Component<AppProps, AppState> {
   );
 
   /**
-   * Revert the scene to the state immediately *after* the given version-log
-   * increment was applied. Undoes every increment newer than the target by
-   * inverting and squashing their deltas.
+   * Move the document to the state immediately *after* the given
+   * version-log increment was applied. Works in both directions:
    *
-   * Applied with `CaptureUpdateAction.NEVER` so this reapplication does
-   * NOT re-enter the durable-increment emitter — without that guard the
-   * `VersionLog` subscriber would log our own revert and loop. See
+   * - Target older than cursor (backward / undo): invert each
+   *   increment from cursor up to (not including) target, walking
+   *   ops within each increment in reverse order.
+   * - Target newer than cursor (forward / redo): re-apply each
+   *   increment from target up to (not including) cursor, walking
+   *   ops within each increment in their original order.
+   *
+   * Iteration 2 (current): the scene change is reconstructed from the
+   * semantic `LogOperation` data — `LogIncrement.delta` is no longer
+   * read here. See `versionLog/applyOps.ts` for the per-op handlers
+   * and the known approximations.
+   *
+   * Applied with `CaptureUpdateAction.NEVER` so the reapplication does
+   * NOT re-enter the durable-increment emitter — without that guard
+   * the `VersionLog` subscriber would log our own jump and loop. See
    * `VERSION_CONTROL_PLAN.md` § "Avoiding the feedback loop".
-   *
-   * Note: under NEVER, the revert is NOT visible to undo/redo or collab
-   * peers via the durable channel. v3 (branching / multiplayer) will
-   * need a `VersionLogDelta` tagging approach instead.
    */
-  public revertToVersionLogIncrement = (targetIncrementId: string): boolean => {
+  public jumpToVersionLogIncrement = (targetIncrementId: string): boolean => {
     const increments = this.versionLog.getIncrements();
-    const targetIdx = increments.findIndex((inc) => inc.id === targetIncrementId);
+    const targetIdx = increments.findIndex(
+      (inc) => inc.id === targetIncrementId,
+    );
     if (targetIdx < 0) {
       return false;
     }
 
-    // increments are newest-first. Everything from index 0 up to (but not
-    // including) the target is "newer than target" and must be undone.
-    const newer = increments.slice(0, targetIdx);
-    if (newer.length === 0) {
-      // already at the target state — no-op
+    // increments are newest-first; `cursorIdx` is the index of the
+    // increment whose state the canvas currently shows. If the cursor
+    // is unset (fresh log), treat the head as current.
+    const cursorId = this.versionLog.getCurrentIncrementId();
+    const cursorIdx =
+      cursorId == null ? 0 : increments.findIndex((inc) => inc.id === cursorId);
+    if (cursorIdx < 0) {
+      return false;
+    }
+    if (cursorIdx === targetIdx) {
+      // Already there — no scene change, but make sure the cursor is
+      // recorded in case it was null.
+      this.versionLog.setCurrentIncrementId(targetIncrementId);
       return false;
     }
 
-    // Squash applies left-to-right; passing inverses in newest-first order
-    // is the same as undoing them in reverse-chronological order, which is
-    // what we want.
-    const inverses = newer.map((inc) => StoreDelta.inverse(inc.delta));
-    const [nextElementsMap, nextAppState] = this.applyDeltas(inverses);
+    // Build the increment list to walk, in the order we want to apply
+    // them. `applyOpsToScene` handles the inner op order per direction.
+    let incrementsToApply: readonly LogIncrement[];
+    let direction: ApplyDirection;
+    if (targetIdx > cursorIdx) {
+      // Backward: increments [cursor, target), newest-first order is
+      // already the reverse-chronological order we want to undo in.
+      incrementsToApply = increments.slice(cursorIdx, targetIdx);
+      direction = "backward";
+    } else {
+      // Forward: increments [target, cursor), oldest-first order.
+      incrementsToApply = increments.slice(targetIdx, cursorIdx).reverse();
+      direction = "forward";
+    }
+
+    // Clone the current elements map so we don't mutate the live
+    // SceneElementsMap. Includes deleted elements so soft-delete /
+    // restore work correctly.
+    const sceneSnapshot: SceneSnapshot = new Map(
+      this.scene.getElementsMapIncludingDeleted(),
+    );
+    for (const increment of incrementsToApply) {
+      applyOpsToScene(increment.operations, sceneSnapshot, direction);
+    }
+
+    // `syncInvalidIndices` reassigns any fractional indices that
+    // collide (e.g. when a `delete` op restores an element whose index
+    // overlaps with one created since). Without this step the scene
+    // would auto-heal inside `replaceAllElements`, but the throttled
+    // validator there logs a "Fractional indices invariant has been
+    // compromised" warning before the fix-up runs. Sanitising up front
+    // keeps the dev console clean.
+    const sanitisedElements = syncInvalidIndices(
+      Array.from(sceneSnapshot.values()),
+    );
 
     this.updateScene({
-      elements: Array.from(nextElementsMap.values()),
-      appState: nextAppState,
+      elements: sanitisedElements,
       captureUpdate: CaptureUpdateAction.NEVER,
     });
+
+    this.versionLog.setCurrentIncrementId(targetIncrementId);
 
     return true;
   };
