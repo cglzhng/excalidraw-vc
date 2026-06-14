@@ -1320,7 +1320,7 @@ export type AppClassProperties = {
   isNavigationEnabled: App["isNavigationEnabled"];
   isUIControlEnabled: App["isUIControlEnabled"];
   versionLog: App["versionLog"];
-  revertToVersionLogIncrement: App["revertToVersionLogIncrement"];
+  jumpToVersionLogIncrement: App["jumpToVersionLogIncrement"];
 };
 
 export type PointerDownState = Readonly<{

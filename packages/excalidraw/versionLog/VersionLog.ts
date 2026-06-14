@@ -16,7 +16,7 @@ type DurableIncrementEmitter = Emitter<[DurableIncrement]>;
 
 /**
  * Minimal scene access the log needs at ingest time. Kept narrow so
- * callers (App.tsx today, tests tomorrow) don't have to pass a whole
+ * callers don't have to pass a whole
  * `Scene`. Implementations typically wrap `app.scene`.
  */
 export interface VersionLogSceneContext {
@@ -47,11 +47,24 @@ const DEFAULT_MAX_INCREMENTS = 1000;
 export class VersionLog {
   public readonly onChangeEmitter = new Emitter<[]>();
 
-  /** Newest-first. */
   private increments: LogIncrement[] = [];
   private readonly maxIncrements: number;
   private unsubscribe: (() => void) | null = null;
   private nextEntrySeq = 0;
+  /**
+   * The increment id the document is currently at — i.e. the latest
+   * increment whose effects are visible on the canvas. `null` when
+   * the log is empty.
+   *
+   * Updated by `ingest` (set to the newly-arrived increment's id) and
+   * by `App.jumpToVersionLogIncrement` (set to the navigated target).
+   *
+   * When a new increment arrives while the cursor is not at the head,
+   * every increment newer than the cursor is discarded first — we
+   * model this as "make a new branch and discard the old one." Real
+   * branching is iteration 3+ work.
+   */
+  private currentIncrementId: string | null = null;
 
   constructor(opts: { maxIncrements?: number } = {}) {
     this.maxIncrements = opts.maxIncrements ?? DEFAULT_MAX_INCREMENTS;
@@ -78,16 +91,37 @@ export class VersionLog {
     this.onChangeEmitter.clear();
   }
 
-  /** Returns increments newest-first. */
   public getIncrements(): readonly LogIncrement[] {
     return this.increments;
   }
 
+  /**
+   * Id of the increment the document is currently at. `null` if the
+   * log is empty. The panel uses this to render the "Current" marker
+   * and to disable the Jump button on the matching row.
+   */
+  public getCurrentIncrementId(): string | null {
+    return this.currentIncrementId;
+  }
+
+  /**
+   * Move the cursor to a specific increment. Does not mutate the scene 
+   * but triggers `onChangeEmitter` so the panel re-renders.
+   */
+  public setCurrentIncrementId(id: string | null) {
+    if (this.currentIncrementId === id) {
+      return;
+    }
+    this.currentIncrementId = id;
+    this.onChangeEmitter.trigger();
+  }
+
   public clear() {
-    if (this.increments.length === 0) {
+    if (this.increments.length === 0 && this.currentIncrementId === null) {
       return;
     }
     this.increments = [];
+    this.currentIncrementId = null;
     this.onChangeEmitter.trigger();
   }
 
@@ -196,11 +230,26 @@ export class VersionLog {
       delta: increment.delta,
     };
 
+    // Branch-discard semantics: if the cursor isn't at the head when a
+    // new increment arrives, every increment newer than the cursor is
+    // dropped from the log. Conceptually we're starting a new branch
+    // from the cursor's position and abandoning the old future. (Real
+    // branching: iteration 3+.)
+    if (this.currentIncrementId != null) {
+      const cursorIdx = this.increments.findIndex(
+        (inc) => inc.id === this.currentIncrementId,
+      );
+      if (cursorIdx > 0) {
+        this.increments = this.increments.slice(cursorIdx);
+      }
+    }
+
     // newest first
     this.increments = [logIncrement, ...this.increments];
     if (this.increments.length > this.maxIncrements) {
       this.increments.length = this.maxIncrements;
     }
+    this.currentIncrementId = logIncrement.id;
 
     this.onChangeEmitter.trigger();
   }

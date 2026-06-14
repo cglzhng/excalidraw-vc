@@ -32,6 +32,48 @@ export type ArrowBinding = FixedPointBinding | null;
 export type LogEntryType = "create" | "update" | "delete";
 
 /**
+ * A child of a `GroupNode`: either another group (nested) or a leaf
+ * element id. Groups can contain groups; elements are always leaves.
+ *
+ * This is a tree representation of Excalidraw's flat `groupIds` array
+ * on each element. We use it for `group` / `ungroup` ops because the
+ * tree encodes structure (in particular the position of a group
+ * relative to its siblings and ancestors) that the flat array loses
+ * once a group is dissolved — the "ungroup-redo" problem.
+ */
+export type GroupChild =
+  | { kind: "element"; elementId: string }
+  | { kind: "group"; node: GroupNode };
+
+/** A group with its members, in z-order (only roughly significant). */
+export interface GroupNode {
+  id: string;
+  children: GroupChild[];
+}
+
+/**
+ * Collect every element id (recursively) under a `GroupNode`.
+ * Defined here in `types.ts` so `getOperationElementIds` can use it
+ * without a circular import.
+ */
+export const collectElementIdsFromGroupNode = (
+  node: GroupNode,
+): string[] => {
+  const ids: string[] = [];
+  const walk = (n: GroupNode) => {
+    for (const child of n.children) {
+      if (child.kind === "element") {
+        ids.push(child.elementId);
+      } else {
+        walk(child.node);
+      }
+    }
+  };
+  walk(node);
+  return ids;
+};
+
+/**
  * A shallow snapshot of element property values. Mirrors the shape of
  * `Delta<ElementPartial>.deleted` / `.inserted` — only the keys that
  * actually changed are present.
@@ -240,21 +282,33 @@ export type LogOperation =
   //
   // Group / ungroup events are multi-entry by nature: pressing Ctrl+G
   // on a selection adds the same new `groupId` to every selected
-  // element's `groupIds`. We emit one op per event, listing all
-  // members. Detected as a pre-pass before per-entry classification.
+  // element's `groupIds`. We model the new (or dissolved) group as a
+  // tree — `GroupNode` — rather than a flat element list, so that
+  // nested structure is preserved and ungroup-redo can correctly
+  // recreate the group at its original position relative to any
+  // outer parent.
   | {
       kind: "group";
-      /** The group id added to every member. */
-      groupId: string;
-      /** Element ids that received the new group id. */
-      elementIds: string[];
+      /**
+       * The new group's tree, with its members captured at the moment
+       * of grouping. Member element ids (recursively) are available
+       * via `collectElementIdsFromGroupNode`.
+       */
+      group: GroupNode;
+      /**
+       * Parent group id at the time of grouping, or `null` if the new
+       * group sits at the top level of the scene's group structure.
+       * Used at apply time to place the group's id at the right
+       * position in each affected element's `groupIds`.
+       */
+      parentGroupId: string | null;
     }
   | {
       kind: "ungroup";
-      /** The group id removed from every member. */
-      groupId: string;
-      /** Element ids that lost the group id. */
-      elementIds: string[];
+      /** The dissolved group's tree, with its (former) members. */
+      group: GroupNode;
+      /** Parent group id at the time of dissolution. */
+      parentGroupId: string | null;
     }
   // Fallback ----------------------------------------------------------
   | {
@@ -284,9 +338,10 @@ export const getOperationElementIds = (op: LogOperation): string[] => {
     case "move-group":
     case "rotate-group":
     case "resize-group":
+      return op.elementIds;
     case "group":
     case "ungroup":
-      return op.elementIds;
+      return collectElementIdsFromGroupNode(op.group);
     case "raw":
       return [op.entry.elementId];
   }
