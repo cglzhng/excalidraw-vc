@@ -20,6 +20,7 @@ import { LibraryMenu } from "./LibraryMenu";
 import { SearchMenu } from "./SearchMenu";
 import { Sidebar } from "./Sidebar/Sidebar";
 import { VersionLogPanel } from "./VersionLogPanel";
+import { computeHoverPreview } from "../versionLog/hoverPreview";
 import { withInternalFallback } from "./hoc/withInternalFallback";
 import { LibraryIcon, historyIcon, searchIcon } from "./icons";
 
@@ -124,16 +125,25 @@ export const DefaultSidebar = Object.assign(
               <VersionLogPanel
                 log={app.versionLog}
                 onJump={app.jumpToVersionLogIncrement}
-                onHighlightElements={(ids) => {
-                  // Custom per-element highlight that bypasses group
-                  // expansion (the standard `elementsToHighlight` path
-                  // resolves grouped elements up to their groups).
+                onHoverOperation={(op) => {
+                  // Compute the ghost / bbox preview for this op and
+                  // hand it to the interactive canvas via appState.
+                  // The preview helper replays the log backwards to
+                  // reconstruct the element's state at the moment
+                  // just before the hovered op fired, so the ghost
+                  // doesn't leak in any changes that happened after.
                   // Render path: renderer/interactiveScene.ts.
-                  setAppState({
-                    versionLogHighlightedElementIds: ids
-                      ? Object.fromEntries(ids.map((id) => [id, true as const]))
-                      : null,
-                  });
+                  if (op == null) {
+                    setAppState({ versionLogHoverPreview: null });
+                    return;
+                  }
+                  const elementsMap = app.scene.getElementsMapIncludingDeleted();
+                  const preview = computeHoverPreview(
+                    op,
+                    app.versionLog,
+                    new Map(elementsMap),
+                  );
+                  setAppState({ versionLogHoverPreview: preview });
                 }}
               />
             </Sidebar.Tab>

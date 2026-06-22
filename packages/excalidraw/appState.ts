@@ -120,7 +120,8 @@ export const getDefaultAppState = (): Omit<
     frameToHighlight: null,
     editingFrame: null,
     elementsToHighlight: null,
-    versionLogHighlightedElementIds: null,
+    debugVersionLogHighlightedElementIds: null,
+    versionLogHoverPreview: null,
     toast: null,
     viewBackgroundColor: COLOR_PALETTE.white,
     zenModeEnabled: false,
@@ -278,11 +279,12 @@ const APP_STATE_STORAGE_CONF = (<
   frameToHighlight: { browser: false, export: false, server: false },
   editingFrame: { browser: false, export: false, server: false },
   elementsToHighlight: { browser: false, export: false, server: false },
-  versionLogHighlightedElementIds: {
+  debugVersionLogHighlightedElementIds: {
     browser: false,
     export: false,
     server: false,
   },
+  versionLogHoverPreview: { browser: false, export: false, server: false },
   toast: { browser: false, export: false, server: false },
   viewBackgroundColor: { browser: true, export: true, server: true },
   width: { browser: false, export: false, server: false },
