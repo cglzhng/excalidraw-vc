@@ -65,6 +65,17 @@ export class VersionLog {
    * branching is iteration 3+ work.
    */
   private currentIncrementId: string | null = null;
+  /**
+   * DEBUG: dependency-highlight set, populated by the sidebar's
+   * hover handler via `findDependencies`. The panel reads this to
+   * tint rows that the currently-hovered op depends on. `null` when
+   * nothing is hovered. Not part of the data model proper — purely
+   * a UI affordance for previewing selective-undo blast radius.
+   */
+  private dependencyHighlight: {
+    hard: Set<LogOperation>;
+    soft: Set<LogOperation>;
+  } | null = null;
 
   constructor(opts: { maxIncrements?: number } = {}) {
     this.maxIncrements = opts.maxIncrements ?? DEFAULT_MAX_INCREMENTS;
@@ -108,6 +119,30 @@ export class VersionLog {
    * Move the cursor to a specific increment. Does not mutate the scene 
    * but triggers `onChangeEmitter` so the panel re-renders.
    */
+  /**
+   * Current dependency-highlight set, or `null` if nothing is being
+   * hovered. The sidebar pushes this via `setDependencyHighlight`.
+   */
+  public getDependencyHighlight(): {
+    hard: Set<LogOperation>;
+    soft: Set<LogOperation>;
+  } | null {
+    return this.dependencyHighlight;
+  }
+
+  public setDependencyHighlight(
+    deps: { hard: Set<LogOperation>; soft: Set<LogOperation> } | null,
+  ) {
+    // Cheap pointer equality is fine here — the sidebar always
+    // creates a fresh object per hover, so identity-comparing avoids
+    // a re-render only in the "still null" case.
+    if (this.dependencyHighlight === deps) {
+      return;
+    }
+    this.dependencyHighlight = deps;
+    this.onChangeEmitter.trigger();
+  }
+
   public setCurrentIncrementId(id: string | null) {
     if (this.currentIncrementId === id) {
       return;

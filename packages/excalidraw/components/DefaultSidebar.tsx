@@ -21,6 +21,7 @@ import { SearchMenu } from "./SearchMenu";
 import { Sidebar } from "./Sidebar/Sidebar";
 import { VersionLogPanel } from "./VersionLogPanel";
 import { computeHoverPreview } from "../versionLog/hoverPreview";
+import { findDependencies } from "../versionLog/dependencyAnalysis";
 import { withInternalFallback } from "./hoc/withInternalFallback";
 import { LibraryIcon, historyIcon, searchIcon } from "./icons";
 
@@ -128,13 +129,11 @@ export const DefaultSidebar = Object.assign(
                 onHoverOperation={(op) => {
                   // Compute the ghost / bbox preview for this op and
                   // hand it to the interactive canvas via appState.
-                  // The preview helper replays the log backwards to
-                  // reconstruct the element's state at the moment
-                  // just before the hovered op fired, so the ghost
-                  // doesn't leak in any changes that happened after.
-                  // Render path: renderer/interactiveScene.ts.
+                  // Also (debug) compute the op's dependency set so
+                  // the panel can tint hard / soft dependency rows.
                   if (op == null) {
                     setAppState({ versionLogHoverPreview: null });
+                    app.versionLog.setDependencyHighlight(null);
                     return;
                   }
                   const elementsMap = app.scene.getElementsMapIncludingDeleted();
@@ -144,6 +143,9 @@ export const DefaultSidebar = Object.assign(
                     new Map(elementsMap),
                   );
                   setAppState({ versionLogHoverPreview: preview });
+                  app.versionLog.setDependencyHighlight(
+                    findDependencies(op, app.versionLog),
+                  );
                 }}
               />
             </Sidebar.Tab>

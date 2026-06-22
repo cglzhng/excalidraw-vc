@@ -52,6 +52,26 @@ const useVersionLogCursor = (log: VersionLog): string | null => {
   return cursor;
 };
 
+/**
+ * Subscribe to the debug dependency-highlight set on a `VersionLog`.
+ * Each op in `hard` would become unapplicable if the hovered op were
+ * selectively undone; each op in `soft` would still apply but with
+ * a different baseline. Used by the panel to tint matching rows.
+ */
+const useVersionLogDependencyHighlight = (
+  log: VersionLog,
+): { hard: Set<LogOperation>; soft: Set<LogOperation> } | null => {
+  const [deps, setDeps] = useState(() => log.getDependencyHighlight());
+  useEffect(() => {
+    setDeps(log.getDependencyHighlight());
+    const off = log.onChangeEmitter.on(() => {
+      setDeps(log.getDependencyHighlight());
+    });
+    return off;
+  }, [log]);
+  return deps;
+};
+
 // --------------------------- shared helpers --------------------------
 
 const TYPE_COLOR: Record<LogEntryType, string> = {
@@ -431,13 +451,26 @@ const renderOpContent = (op: LogOperation): React.ReactNode => {
 
 const VersionLogOperationRow: React.FC<{
   op: LogOperation;
+  /** Debug: this op is a HARD dependency of whatever is being hovered. */
+  isHardDep?: boolean;
+  /** Debug: this op is a SOFT dependency of whatever is being hovered. */
+  isSoftDep?: boolean;
   onHoverOperation?: (op: LogOperation | null) => void;
-}> = ({ op, onHoverOperation }) => {
+}> = ({ op, isHardDep, isSoftDep, onHoverOperation }) => {
   const ids = getOperationElementIds(op);
   const color = OP_COLOR[op.kind];
 
   const handleMouseEnter = () => onHoverOperation?.(op);
   const handleMouseLeave = () => onHoverOperation?.(null);
+
+  // Dependency tint — debug-only. Hard deps get a stronger red wash;
+  // soft deps get a lighter amber. If both fire (shouldn't normally),
+  // hard wins.
+  const depBackground = isHardDep
+    ? "rgba(217, 72, 15, 0.18)"
+    : isSoftDep
+    ? "rgba(245, 159, 0, 0.16)"
+    : "var(--default-bg-color, transparent)";
 
   return (
     <li
@@ -450,7 +483,7 @@ const VersionLogOperationRow: React.FC<{
         marginBottom: 4,
         fontSize: 12,
         fontFamily: "var(--ui-font, sans-serif)",
-        background: "var(--default-bg-color, transparent)",
+        background: depBackground,
       }}
     >
       <div
@@ -503,9 +536,20 @@ const VersionLogIncrementCard: React.FC<{
    * button and shows a "Current" badge instead.
    */
   isCurrent: boolean;
+  /** Debug: ops that are HARD dependencies of the hovered op. */
+  hardDeps?: Set<LogOperation>;
+  /** Debug: ops that are SOFT dependencies of the hovered op. */
+  softDeps?: Set<LogOperation>;
   onJump?: (incrementId: string) => void;
   onHoverOperation?: (op: LogOperation | null) => void;
-}> = ({ increment, isCurrent, onJump, onHoverOperation }) => {
+}> = ({
+  increment,
+  isCurrent,
+  hardDeps,
+  softDeps,
+  onJump,
+  onHoverOperation,
+}) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const toggle = () => setIsExpanded((v) => !v);
@@ -637,6 +681,8 @@ const VersionLogIncrementCard: React.FC<{
             <VersionLogOperationRow
               key={i}
               op={op}
+              isHardDep={hardDeps?.has(op)}
+              isSoftDep={softDeps?.has(op)}
               onHoverOperation={onHoverOperation}
             />
           ))}
@@ -673,6 +719,7 @@ export const VersionLogPanel: React.FC<VersionLogPanelProps> = ({
 }) => {
   const increments = useVersionLogIncrements(log);
   const cursorId = useVersionLogCursor(log);
+  const depHighlight = useVersionLogDependencyHighlight(log);
 
   return (
     <div
@@ -735,6 +782,8 @@ export const VersionLogPanel: React.FC<VersionLogPanelProps> = ({
                   ? increment.id === increments[0]?.id
                   : increment.id === cursorId
               }
+              hardDeps={depHighlight?.hard}
+              softDeps={depHighlight?.soft}
               onJump={onJump}
               onHoverOperation={onHoverOperation}
             />
