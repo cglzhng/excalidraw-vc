@@ -44,7 +44,9 @@ import {
   getActiveTextElement,
 } from "@excalidraw/element";
 
-import { renderSelectionElement } from "@excalidraw/element";
+import { renderElement, renderSelectionElement } from "@excalidraw/element";
+
+import rough from "roughjs/bin/rough";
 
 import {
   getElementsInGroup,
@@ -1688,14 +1690,14 @@ const _renderInteractiveScene = ({
     renderElementsBoxHighlight(context, appState, appState.elementsToHighlight);
   }
 
-  // version-log hover: render a per-element outline that ignores group
-  // membership (the standard `renderElementsBoxHighlight` collapses
-  // grouped elements up to their groups, which we don't want here).
-  // Distinct color so it's not confused with selection / link-selector.
-  if (appState.versionLogHighlightedElementIds) {
-    const ids = Object.keys(appState.versionLogHighlightedElementIds);
+  // version-log DEBUG: dashed outlines via a manually-set appState
+  // field. Not wired to any UI today; kept around so we can poke
+  // `debugVersionLogHighlightedElementIds` from DevTools when
+  // diagnosing what `getOperationElementIds` is returning.
+  if (appState.debugVersionLogHighlightedElementIds) {
+    const ids = Object.keys(appState.debugVersionLogHighlightedElementIds);
     if (ids.length > 0) {
-      const vlColor = "rgb(255,140,0)"; // orange, distinct from selection blue
+      const vlColor = "rgb(255,140,0)";
       for (const id of ids) {
         const element = allElementsMap.get(id);
         if (!element) {
@@ -1709,6 +1711,96 @@ const _renderInteractiveScene = ({
           y1,
           y2,
           selectionColors: [vlColor],
+          dashed: false,
+          cx: x1 + (x2 - x1) / 2,
+          cy: y1 + (y2 - y1) / 2,
+          activeEmbeddable: false,
+        });
+      }
+    }
+  }
+
+  // version-log hover preview: ghosts (low-alpha element renders) +
+  // group / ungroup bboxes. Driven by mousing over a row in the
+  // version-log sidebar. See packages/excalidraw/versionLog/hoverPreview.ts.
+  if (appState.versionLogHoverPreview) {
+    const { ghosts, bboxes } = appState.versionLogHoverPreview;
+
+    // Ghost elements: render each at low alpha using the same
+    // per-element renderer the static canvas uses. We translate by
+    // (scrollX, scrollY) to match the canvas coords the static scene
+    // already uses for these renderers.
+    if (ghosts.length > 0) {
+      const rc = rough.canvas(canvas);
+      const ghostRenderConfig = {
+        // Minimal config — most fields are only consulted by code
+        // paths that don't apply to hover (export, eraser tool, etc.).
+        canvasBackgroundColor: "#ffffff" as AppState["viewBackgroundColor"],
+        imageCache: app.imageCache,
+        renderGrid: false,
+        isExporting: false,
+        embedsValidationStatus: new Map(),
+        elementsPendingErasure: new Set<string>(),
+        pendingFlowchartNodes: null,
+        theme: appState.theme,
+      };
+
+      for (const ghost of ghosts) {
+        // Deleted ghost? We still want to draw them (e.g. the
+        // pre-delete preview), so force isDeleted: false on a clone.
+        const drawable =
+          ghost.isDeleted === false
+            ? ghost
+            : ({ ...ghost, isDeleted: false } as typeof ghost);
+        context.save();
+        // `globalAlpha` doesn't work here — `renderElement` resets it
+        // to 1 via `getRenderOpacity` before drawing. CSS-style
+        // `filter` composes at draw time and is not touched by that
+        // path, so the ghost actually comes out translucent.
+        context.filter = "opacity(0.35)";
+        try {
+          renderElement(
+            drawable as NonDeleted<ExcalidrawElement>,
+            elementsMap,
+            allElementsMap,
+            rc,
+            context,
+            ghostRenderConfig,
+            appState,
+          );
+        } catch (e) {
+          // Per-ghost render shouldn't be able to take down the
+          // whole interactive scene.
+          // eslint-disable-next-line no-console
+          console.warn("[version-log] ghost render failed", e);
+        }
+        context.restore();
+      }
+    }
+
+    // Group / ungroup bboxes: one teal box per entry, enclosing every
+    // element in its `elementIds` list.
+    if (bboxes.length > 0) {
+      const bboxColor = "rgb(11,114,133)";
+      for (const { elementIds } of bboxes) {
+        const elements: ExcalidrawElement[] = [];
+        for (const id of elementIds) {
+          const el = allElementsMap.get(id);
+          if (el) {
+            elements.push(el);
+          }
+        }
+        if (elements.length === 0) {
+          continue;
+        }
+        const [x1, y1, x2, y2] = getCommonBounds(elements);
+        renderSelectionBorder(context, appState, {
+          angle: 0,
+          x1,
+          x2,
+          y1,
+          y2,
+          selectionColors: [bboxColor],
           dashed: false,
           cx: x1 + (x2 - x1) / 2,
           cy: y1 + (y2 - y1) / 2,

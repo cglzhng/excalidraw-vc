@@ -227,7 +227,8 @@ export type InteractiveCanvasAppState = Readonly<
     suggestedBinding: AppState["suggestedBinding"];
     isRotating: AppState["isRotating"];
     elementsToHighlight: AppState["elementsToHighlight"];
-    versionLogHighlightedElementIds: AppState["versionLogHighlightedElementIds"];
+    debugVersionLogHighlightedElementIds: AppState["debugVersionLogHighlightedElementIds"];
+    versionLogHoverPreview: AppState["versionLogHoverPreview"];
     // Collaborators
     collaborators: AppState["collaborators"];
     // SnapLines
@@ -334,14 +335,34 @@ export interface AppState {
   editingFrame: string | null;
   elementsToHighlight: NonDeleted<ExcalidrawElement>[] | null;
   /**
-   * Per-element highlight driven by the version-log sidebar hover.
-   * Unlike `elementsToHighlight`, this renders each element's box
-   * individually and does NOT expand to its containing group(s) —
-   * we want to point at a specific element, even if it's part of a
-   * group. Rendered in a distinct color from selection so the two
-   * are visually unambiguous. See renderer/interactiveScene.ts.
+   * DEBUG-ONLY: per-element dashed-outline highlight that bypasses
+   * group expansion. Not used by the version-log hover feature any
+   * more — that's now driven by `versionLogHoverPreview` which
+   * renders full ghost elements. Kept around so we can poke it via
+   * DevTools for diagnostics. Render path: renderer/interactiveScene.ts.
    */
-  versionLogHighlightedElementIds: { [id: string]: true } | null;
+  debugVersionLogHighlightedElementIds: { [id: string]: true } | null;
+  /**
+   * Hover preview driven by mousing over a row in the version-log
+   * sidebar. Carries everything the interactive canvas needs to draw
+   * a low-alpha "ghost" of the change being previewed:
+   *
+   *  - `ghosts`: element-shaped objects to render at low alpha. For
+   *    a move this is the element at its previous (x, y); for a
+   *    rotate it's the element at its previous angle; for a delete
+   *    it's the deleted element rendered as if undeleted; etc.
+   *  - `bboxes`: one or more colored bounding boxes (group / ungroup
+   *    ops). Each bbox encloses every element transitively under one
+   *    `elementIds` entry.
+   *
+   * `null` when no row is hovered. See `versionLog/hoverPreview.ts`
+   * for how this is computed and `renderer/interactiveScene.ts` for
+   * how it's drawn.
+   */
+  versionLogHoverPreview: {
+    ghosts: ExcalidrawElement[];
+    bboxes: { elementIds: string[] }[];
+  } | null;
   /**
    * set when a new text is created or when an existing text is being edited
    */
