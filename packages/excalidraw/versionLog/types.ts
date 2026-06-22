@@ -125,6 +125,14 @@ export type LogOperation =
       kind: "move";
       elementId: string;
       elementType?: string;
+      /**
+       * Absolute element positions before / after the move. Carried
+       * alongside `dx` / `dy` so the dependency analyzer (and a future
+       * selective-undo replay) can detect when the baseline state
+       * doesn't match what this op expected.
+       */
+      from: { x: number; y: number };
+      to: { x: number; y: number };
       dx: number;
       dy: number;
       transform: TransformMatrix;
@@ -135,6 +143,15 @@ export type LogOperation =
       groupId: string;
       /** All element ids that participated in the group move. */
       elementIds: string[];
+      /**
+       * Absolute starting position of each member, keyed by element id.
+       * Each value is the element's `(x, y)` at the moment the move
+       * fired. Used for soft-conflict detection (and eventually for
+       * selective-undo replay).
+       */
+      fromPositions: Record<string, { x: number; y: number }>;
+      /** Absolute ending positions, same shape as `fromPositions`. */
+      toPositions: Record<string, { x: number; y: number }>;
       dx: number;
       dy: number;
       transform: TransformMatrix;
