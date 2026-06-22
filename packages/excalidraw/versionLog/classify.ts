@@ -297,10 +297,31 @@ const classifyEntry = (
         dx = changed.has("x") ? numericDiff(entry.before, entry.after, "x") : 0;
         dy = changed.has("y") ? numericDiff(entry.before, entry.after, "y") : 0;
       }
+      // Absolute before/after positions. Fall back to `current` for
+      // axes the entry didn't touch — that side equals the current
+      // scene value by definition.
+      const fromX =
+        "x" in entry.before
+          ? (entry.before.x as number)
+          : (current?.x as number);
+      const fromY =
+        "y" in entry.before
+          ? (entry.before.y as number)
+          : (current?.y as number);
+      const toX =
+        "x" in entry.after
+          ? (entry.after.x as number)
+          : (current?.x as number);
+      const toY =
+        "y" in entry.after
+          ? (entry.after.y as number)
+          : (current?.y as number);
       return {
         kind: "move",
         elementId: entry.elementId,
         elementType: current?.type,
+        from: { x: fromX, y: fromY },
+        to: { x: toX, y: toY },
         dx,
         dy,
         transform,
@@ -834,10 +855,23 @@ const detectGroups = (
     const op = cands[0].op;
     const elementIds = cands.map((c) => c.element.id);
     if (op.kind === "move") {
+      // Each candidate's per-entry op is a `move` with its own
+      // absolute `from` / `to`; bundle them into Records keyed by
+      // element id so the group op carries per-member snapshots.
+      const fromPositions: Record<string, { x: number; y: number }> = {};
+      const toPositions: Record<string, { x: number; y: number }> = {};
+      for (const c of cands) {
+        if (c.op.kind === "move") {
+          fromPositions[c.op.elementId] = c.op.from;
+          toPositions[c.op.elementId] = c.op.to;
+        }
+      }
       groupOps.push({
         kind: "move-group",
         groupId,
         elementIds,
+        fromPositions,
+        toPositions,
         dx: op.dx,
         dy: op.dy,
         transform: op.transform,
