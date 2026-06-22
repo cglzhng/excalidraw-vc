@@ -431,13 +431,13 @@ const renderOpContent = (op: LogOperation): React.ReactNode => {
 
 const VersionLogOperationRow: React.FC<{
   op: LogOperation;
-  onHighlightElements?: (elementIds: string[] | null) => void;
-}> = ({ op, onHighlightElements }) => {
+  onHoverOperation?: (op: LogOperation | null) => void;
+}> = ({ op, onHoverOperation }) => {
   const ids = getOperationElementIds(op);
   const color = OP_COLOR[op.kind];
 
-  const handleMouseEnter = () => onHighlightElements?.(ids);
-  const handleMouseLeave = () => onHighlightElements?.(null);
+  const handleMouseEnter = () => onHoverOperation?.(op);
+  const handleMouseLeave = () => onHoverOperation?.(null);
 
   return (
     <li
@@ -504,8 +504,8 @@ const VersionLogIncrementCard: React.FC<{
    */
   isCurrent: boolean;
   onJump?: (incrementId: string) => void;
-  onHighlightElements?: (elementIds: string[] | null) => void;
-}> = ({ increment, isCurrent, onJump, onHighlightElements }) => {
+  onHoverOperation?: (op: LogOperation | null) => void;
+}> = ({ increment, isCurrent, onJump, onHoverOperation }) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const toggle = () => setIsExpanded((v) => !v);
@@ -637,7 +637,7 @@ const VersionLogIncrementCard: React.FC<{
             <VersionLogOperationRow
               key={i}
               op={op}
-              onHighlightElements={onHighlightElements}
+              onHoverOperation={onHoverOperation}
             />
           ))}
         </ul>
@@ -658,17 +658,18 @@ export interface VersionLogPanelProps {
    */
   onJump?: (incrementId: string) => void;
   /**
-   * Called on op mouse-enter (with all element ids the op touches) and
-   * mouse-leave (with `null`). Owners typically write this into
-   * `appState.versionLogHighlightedElementIds`.
+   * Called on op mouse-enter (with the op) and mouse-leave (with
+   * `null`). Owners feed the op through `computeHoverPreview` and
+   * write the result into `appState.versionLogHoverPreview` so the
+   * interactive canvas can draw the ghost / bbox.
    */
-  onHighlightElements?: (elementIds: string[] | null) => void;
+  onHoverOperation?: (op: LogOperation | null) => void;
 }
 
 export const VersionLogPanel: React.FC<VersionLogPanelProps> = ({
   log,
   onJump,
-  onHighlightElements,
+  onHoverOperation,
 }) => {
   const increments = useVersionLogIncrements(log);
   const cursorId = useVersionLogCursor(log);
@@ -735,7 +736,7 @@ export const VersionLogPanel: React.FC<VersionLogPanelProps> = ({
                   : increment.id === cursorId
               }
               onJump={onJump}
-              onHighlightElements={onHighlightElements}
+              onHoverOperation={onHoverOperation}
             />
           ))}
         </ul>
