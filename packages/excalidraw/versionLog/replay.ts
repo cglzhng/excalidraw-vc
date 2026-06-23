@@ -9,29 +9,37 @@
  *   2. Walk increments oldest-first, up to AND INCLUDING the cursor.
  *      Skip any whose id is in the inactive set entirely.
  *   3. For each remaining increment, walk its ops in chronological
- *      order. Before applying each op, check whether its referenced
- *      element(s) and group(s) actually exist (and aren't tombstoned).
- *      If any referent is missing, record the op as skipped instead
- *      of applying it — that's a hard conflict caused by an earlier
- *      op having been deactivated.
- *   4. Return the resulting snapshot + the conflict set.
+ *      order. Apply user-supplied remaps; then before applying each
+ *      op, check whether its (possibly-rewritten) referent actually
+ *      exists. If any referent is missing, record the op as skipped
+ *      AND emit a `PendingConflict` so the UI can let the user choose
+ *      a resolution.
+ *   4. Return the resulting snapshot + skipped set + conflicts.
  *
  * The caller (App) hands the snapshot to `updateScene` with
- * `captureUpdate: NEVER` and stores the conflict set on the log for
- * UI consumption.
+ * `captureUpdate: NEVER`, stores the skipped set on the log, and — if
+ * `conflicts` is non-empty — opens the conflict-resolution modal
+ * INSTEAD of committing the snapshot.
  */
 
 import { applyOpsToScene } from "./applyOps";
+import { applyRemapsToOp, getOpMissingReferent } from "./remap";
 import { collectElementIdsFromGroupNode } from "./types";
 
 import type { SceneSnapshot } from "./applyOps";
-import type { LogIncrement, LogOperation } from "./types";
+import type { LogIncrement, LogOperation, PendingConflict } from "./types";
 import type { VersionLog } from "./VersionLog";
 
 export interface ReplayResult {
   snapshot: SceneSnapshot;
   /** Ops that couldn't apply because a referent was missing. */
   skipped: Set<LogOperation>;
+  /**
+   * Unresolved hard conflicts, grouped by the missing referent.
+   * Empty when every skipped op was explicitly resolved (via a remap
+   * to `null`) or there were no missing referents in the first place.
+   */
+  conflicts: PendingConflict[];
 }
 
 export const replayActiveOps = (log: VersionLog): ReplayResult | null => {
@@ -47,6 +55,7 @@ export const replayActiveOps = (log: VersionLog): ReplayResult | null => {
 
   const increments = log.getIncrements();
   const inactive = log.getInactiveIncrementIds();
+  const remaps = log.getRemaps();
 
   // Cursor index. If unset, treat as head (newest = index 0). Empty
   // log was handled by the baseline === null guard above.
@@ -60,6 +69,10 @@ export const replayActiveOps = (log: VersionLog): ReplayResult | null => {
   }
 
   const skipped = new Set<LogOperation>();
+  // Conflicts are accumulated under their missing-referent id so
+  // multiple ops referencing the same dead group/element collapse
+  // into a single user decision.
+  const conflictMap = new Map<string, PendingConflict>();
 
   // Walk oldest-first (high array index → low). Stop after applying
   // the cursor's increment.
@@ -71,32 +84,140 @@ export const replayActiveOps = (log: VersionLog): ReplayResult | null => {
       // happen.
       continue;
     }
-    applyIncrementTracked(inc, snapshot, skipped);
+    applyIncrementTracked(inc, snapshot, remaps, skipped, conflictMap);
   }
 
-  return { snapshot, skipped };
+  return { snapshot, skipped, conflicts: Array.from(conflictMap.values()) };
 };
 
 // ---------------------------------------------------------------------
 
-/**
- * Apply one increment's ops in chronological order, recording any
- * that couldn't fire because a referent was missing.
- */
 const applyIncrementTracked = (
   inc: LogIncrement,
   snapshot: SceneSnapshot,
+  remaps: ReadonlyMap<string, import("./types").Remap>,
   skipped: Set<LogOperation>,
+  conflictMap: Map<string, PendingConflict>,
 ): void => {
   for (const op of inc.operations) {
-    if (hasMissingReferent(op, snapshot)) {
+    const remap = applyRemapsToOp(op, remaps);
+    if (remap.status === "skip") {
+      // User explicitly chose to skip everything that touched this
+      // referent. Mark the (original) op for the panel's warning row
+      // and move on — no conflict.
       skipped.add(op);
+      continue;
+    }
+
+    const rewritten = remap.op;
+
+    // For group-keyed transforms, the captured `elementIds` is the
+    // ORIGINAL member set. After a group remap (G1 → G2) those ids
+    // are stale — apply the transform to the live members of G2 in
+    // the current snapshot instead.
+    const finalOp = resolveLiveGroupMembers(rewritten, snapshot);
+
+    if (hasMissingReferent(finalOp, snapshot)) {
+      skipped.add(op);
+      recordConflict(op, snapshot, conflictMap);
       continue;
     }
     // `applyOpsToScene` reverses ops for "backward" but applies in
     // order for "forward"; single-op call is the same either way.
-    applyOpsToScene([op], snapshot, "forward");
+    applyOpsToScene([finalOp], snapshot, "forward");
   }
+};
+
+/**
+ * For group transforms whose `groupId` may have been remapped, swap
+ * `elementIds` for the live members of the (possibly new) group in
+ * the current snapshot. For all other ops, return as-is.
+ */
+const resolveLiveGroupMembers = (
+  op: LogOperation,
+  snapshot: SceneSnapshot,
+): LogOperation => {
+  if (
+    op.kind !== "move-group" &&
+    op.kind !== "rotate-group" &&
+    op.kind !== "resize-group"
+  ) {
+    return op;
+  }
+  const liveMembers: string[] = [];
+  for (const el of snapshot.values()) {
+    if (!el.isDeleted && el.groupIds.includes(op.groupId)) {
+      liveMembers.push(el.id);
+    }
+  }
+  if (
+    liveMembers.length === op.elementIds.length &&
+    liveMembers.every((id, idx) => id === op.elementIds[idx])
+  ) {
+    return op;
+  }
+  return { ...op, elementIds: liveMembers };
+};
+
+const recordConflict = (
+  op: LogOperation,
+  snapshot: SceneSnapshot,
+  conflictMap: Map<string, PendingConflict>,
+): void => {
+  const ref = getOpMissingReferent(op);
+  if (ref == null) {
+    // Op has no single referent (e.g. `group` create). Don't surface
+    // it via the modal — `applyOpsToScene` will just no-op against
+    // missing children.
+    return;
+  }
+  const existing = conflictMap.get(ref.id);
+  if (existing) {
+    existing.affectedOps.push(op);
+    return;
+  }
+  conflictMap.set(ref.id, {
+    referentKind: ref.kind,
+    referentId: ref.id,
+    elementType: ref.elementType,
+    affectedOps: [op],
+    candidates: collectCandidates(ref.kind, ref.id, ref.elementType, snapshot),
+  });
+};
+
+const collectCandidates = (
+  kind: "element" | "group",
+  missingId: string,
+  elementType: string | undefined,
+  snapshot: SceneSnapshot,
+): string[] => {
+  if (kind === "element") {
+    const ids: string[] = [];
+    for (const el of snapshot.values()) {
+      if (el.isDeleted || el.id === missingId) {
+        continue;
+      }
+      if (elementType && el.type !== elementType) {
+        continue;
+      }
+      ids.push(el.id);
+    }
+    return ids;
+  }
+  // group: collect every unique gid currently borne by some live
+  // element, minus the missing one.
+  const gids = new Set<string>();
+  for (const el of snapshot.values()) {
+    if (el.isDeleted) {
+      continue;
+    }
+    for (const gid of el.groupIds) {
+      if (gid !== missingId) {
+        gids.add(gid);
+      }
+    }
+  }
+  return Array.from(gids);
 };
 
 /**
