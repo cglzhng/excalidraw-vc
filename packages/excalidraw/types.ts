@@ -888,6 +888,7 @@ export type AppClassProperties = {
 
   versionLog: App["versionLog"];
   jumpToVersionLogIncrement: App["jumpToVersionLogIncrement"];
+  toggleVersionLogIncrement: App["toggleVersionLogIncrement"];
 };
 
 export type PointerDownState = Readonly<{

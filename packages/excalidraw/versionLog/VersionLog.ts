@@ -3,6 +3,7 @@ import { Emitter } from "@excalidraw/common";
 import type { DurableIncrement } from "@excalidraw/element";
 import type { ExcalidrawElement } from "@excalidraw/element/types";
 
+import { applyOpsToScene } from "./applyOps";
 import { classifyEntries } from "./classify";
 
 import type {
@@ -76,6 +77,28 @@ export class VersionLog {
     hard: Set<LogOperation>;
     soft: Set<LogOperation>;
   } | null = null;
+  /**
+   * Ids of increments the user has selectively deactivated. They
+   * remain in the log (visible in the panel, struck-through) but are
+   * skipped during replay. Default-active model: only the exceptions
+   * are tracked.
+   */
+  private inactiveIncrementIds: Set<string> = new Set();
+  /**
+   * Scene state captured immediately BEFORE the first increment was
+   * ingested. The selective-undo replay reconstructs the canvas by
+   * starting from this snapshot and forward-applying every active
+   * op up to the cursor. `null` until the first ingest; reset to
+   * `null` on `clear()`.
+   */
+  private baselineScene: Map<string, ExcalidrawElement> | null = null;
+  /**
+   * Ops the most recent replay had to skip because their referent
+   * element / group was missing (typically because an earlier op in
+   * their dependency chain is currently inactive). Per-op set; the
+   * panel uses it to put a warning indicator on the row.
+   */
+  private skippedByReplay: Set<LogOperation> = new Set();
 
   constructor(opts: { maxIncrements?: number } = {}) {
     this.maxIncrements = opts.maxIncrements ?? DEFAULT_MAX_INCREMENTS;
@@ -119,6 +142,44 @@ export class VersionLog {
    * Move the cursor to a specific increment. Does not mutate the scene 
    * but triggers `onChangeEmitter` so the panel re-renders.
    */
+  /** Read-only view of the set of inactive increment ids. */
+  public getInactiveIncrementIds(): ReadonlySet<string> {
+    return this.inactiveIncrementIds;
+  }
+
+  /**
+   * Toggle an increment between active and inactive. The scene
+   * change is the caller's responsibility (App invokes a replay via
+   * `replayActiveOps` after this fires).
+   */
+  public toggleIncrementActive(id: string): void {
+    if (this.inactiveIncrementIds.has(id)) {
+      this.inactiveIncrementIds.delete(id);
+    } else {
+      this.inactiveIncrementIds.add(id);
+    }
+    this.onChangeEmitter.trigger();
+  }
+
+  /** Baseline scene state — used as the starting point of a replay. */
+  public getBaselineScene(): ReadonlyMap<string, ExcalidrawElement> | null {
+    return this.baselineScene;
+  }
+
+  /** Ops the most recent replay skipped due to missing referents. */
+  public getSkippedByReplay(): ReadonlySet<LogOperation> {
+    return this.skippedByReplay;
+  }
+
+  /**
+   * Record the conflict set produced by the latest replay. Triggers
+   * `onChangeEmitter` so the panel re-renders the warning indicators.
+   */
+  public setSkippedByReplay(skipped: Set<LogOperation>): void {
+    this.skippedByReplay = skipped;
+    this.onChangeEmitter.trigger();
+  }
+
   /**
    * Current dependency-highlight set, or `null` if nothing is being
    * hovered. The sidebar pushes this via `setDependencyHighlight`.
@@ -152,11 +213,19 @@ export class VersionLog {
   }
 
   public clear() {
-    if (this.increments.length === 0 && this.currentIncrementId === null) {
+    if (
+      this.increments.length === 0 &&
+      this.currentIncrementId === null &&
+      this.inactiveIncrementIds.size === 0 &&
+      this.baselineScene === null
+    ) {
       return;
     }
     this.increments = [];
     this.currentIncrementId = null;
+    this.inactiveIncrementIds = new Set();
+    this.baselineScene = null;
+    this.skippedByReplay = new Set();
     this.onChangeEmitter.trigger();
   }
 
@@ -264,6 +333,25 @@ export class VersionLog {
       // retained for revert / branch — see VERSION_CONTROL_PLAN.md.
       delta: increment.delta,
     };
+
+    // First-ever ingest: capture the baseline scene by undoing this
+    // increment on the current scene state. The selective-undo replay
+    // starts from this baseline + forward-applies active ops.
+    if (this.baselineScene == null) {
+      const baseline = new Map<string, ExcalidrawElement>();
+      for (const el of scene.getAllElements()) {
+        baseline.set(el.id, el);
+      }
+      // `applyOpsToScene` is typed against the live scene's
+      // OrderedExcalidrawElement; ExcalidrawElement is the supertype
+      // and shape-compatible for the fields applyOps reads/writes.
+      applyOpsToScene(
+        logIncrement.operations,
+        baseline as unknown as Parameters<typeof applyOpsToScene>[1],
+        "backward",
+      );
+      this.baselineScene = baseline;
+    }
 
     // Branch-discard semantics: if the cursor isn't at the head when a
     // new increment arrives, every increment newer than the cursor is

@@ -361,10 +361,7 @@ import { restoreAppState, restoreElements } from "../data/restore";
 import { getCenter, getDistance } from "../gesture";
 import { History } from "../history";
 import { VersionLog } from "../versionLog/VersionLog";
-import { applyOpsToScene } from "../versionLog/applyOps";
-
-import type { ApplyDirection, SceneSnapshot } from "../versionLog/applyOps";
-import type { LogIncrement } from "../versionLog/types";
+import { replayActiveOps } from "../versionLog/replay";
 import { defaultLang, getLanguage, languages, setLanguage, t } from "../i18n";
 
 import {
@@ -4636,6 +4633,36 @@ class App extends React.Component<AppProps, AppState> {
   );
 
   /**
+   * Selectively activate or deactivate a version-log increment.
+   * Inactive increments stay in the log but are skipped during
+   * replay; the scene recomputes from the baseline + the surviving
+   * active increments up to the cursor. Hard conflicts (ops whose
+   * referent was provided by a now-inactive op) are recorded on the
+   * log so the panel can flag them with a warning.
+   *
+   * Applied with `CaptureUpdateAction.NEVER` for the same
+   * feedback-loop reason `jumpToVersionLogIncrement` documents.
+   */
+  public toggleVersionLogIncrement = (incrementId: string): void => {
+    this.versionLog.toggleIncrementActive(incrementId);
+
+    const replay = replayActiveOps(this.versionLog);
+    if (replay == null) {
+      return;
+    }
+
+    const sanitisedElements = syncInvalidIndices(
+      Array.from(replay.snapshot.values()),
+    );
+    this.updateScene({
+      elements: sanitisedElements,
+      captureUpdate: CaptureUpdateAction.NEVER,
+    });
+
+    this.versionLog.setSkippedByReplay(replay.skipped);
+  };
+
+  /**
    * Move the document to the state immediately *after* the given
    * version-log increment was applied. Works in both directions:
    *
@@ -4658,52 +4685,22 @@ class App extends React.Component<AppProps, AppState> {
    */
   public jumpToVersionLogIncrement = (targetIncrementId: string): boolean => {
     const increments = this.versionLog.getIncrements();
-    const targetIdx = increments.findIndex(
-      (inc) => inc.id === targetIncrementId,
-    );
-    if (targetIdx < 0) {
+    if (!increments.some((inc) => inc.id === targetIncrementId)) {
+      return false;
+    }
+    if (this.versionLog.getCurrentIncrementId() === targetIncrementId) {
       return false;
     }
 
-    // increments are newest-first; `cursorIdx` is the index of the
-    // increment whose state the canvas currently shows. If the cursor
-    // is unset (fresh log), treat the head as current.
-    const cursorId = this.versionLog.getCurrentIncrementId();
-    const cursorIdx =
-      cursorId == null ? 0 : increments.findIndex((inc) => inc.id === cursorId);
-    if (cursorIdx < 0) {
-      return false;
-    }
-    if (cursorIdx === targetIdx) {
-      // Already there — no scene change, but make sure the cursor is
-      // recorded in case it was null.
-      this.versionLog.setCurrentIncrementId(targetIncrementId);
-      return false;
-    }
+    // Move the cursor first, then ask the replay engine for the new
+    // scene. Replay walks the active subset from baseline up to the
+    // (now-updated) cursor, so it correctly skips any selectively-
+    // deactivated increments along the way.
+    this.versionLog.setCurrentIncrementId(targetIncrementId);
 
-    // Build the increment list to walk, in the order we want to apply
-    // them. `applyOpsToScene` handles the inner op order per direction.
-    let incrementsToApply: readonly LogIncrement[];
-    let direction: ApplyDirection;
-    if (targetIdx > cursorIdx) {
-      // Backward: increments [cursor, target), newest-first order is
-      // already the reverse-chronological order we want to undo in.
-      incrementsToApply = increments.slice(cursorIdx, targetIdx);
-      direction = "backward";
-    } else {
-      // Forward: increments [target, cursor), oldest-first order.
-      incrementsToApply = increments.slice(targetIdx, cursorIdx).reverse();
-      direction = "forward";
-    }
-
-    // Clone the current elements map so we don't mutate the live
-    // SceneElementsMap. Includes deleted elements so soft-delete /
-    // restore work correctly.
-    const sceneSnapshot: SceneSnapshot = new Map(
-      this.scene.getElementsMapIncludingDeleted(),
-    );
-    for (const increment of incrementsToApply) {
-      applyOpsToScene(increment.operations, sceneSnapshot, direction);
+    const replay = replayActiveOps(this.versionLog);
+    if (replay == null) {
+      return false;
     }
 
     // `syncInvalidIndices` reassigns any fractional indices that
@@ -4714,7 +4711,7 @@ class App extends React.Component<AppProps, AppState> {
     // compromised" warning before the fix-up runs. Sanitising up front
     // keeps the dev console clean.
     const sanitisedElements = syncInvalidIndices(
-      Array.from(sceneSnapshot.values()),
+      Array.from(replay.snapshot.values()),
     );
 
     this.updateScene({
@@ -4722,7 +4719,7 @@ class App extends React.Component<AppProps, AppState> {
       captureUpdate: CaptureUpdateAction.NEVER,
     });
 
-    this.versionLog.setCurrentIncrementId(targetIncrementId);
+    this.versionLog.setSkippedByReplay(replay.skipped);
 
     return true;
   };
