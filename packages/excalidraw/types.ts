@@ -364,6 +364,20 @@ export interface AppState {
     bboxes: { elementIds: string[] }[];
   } | null;
   /**
+   * Unresolved hard conflicts produced by the most recent selective-
+   * undo toggle. When non-null, the conflict-resolution modal is
+   * shown; the user picks Skip / Remap for each missing referent,
+   * the picks are written to `versionLog.remaps`, and replay re-runs.
+   *
+   * `pendingIncrementId` is the increment whose toggle produced the
+   * conflicts — used by the modal's Cancel action to revert the
+   * toggle if the user backs out.
+   */
+  versionLogPendingConflicts: {
+    pendingIncrementId: string;
+    conflicts: import("./versionLog/types").PendingConflict[];
+  } | null;
+  /**
    * set when a new text is created or when an existing text is being edited
    */
   editingTextElement: ExcalidrawTextElement | null;

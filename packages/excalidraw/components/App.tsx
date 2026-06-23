@@ -362,6 +362,8 @@ import { getCenter, getDistance } from "../gesture";
 import { History } from "../history";
 import { VersionLog } from "../versionLog/VersionLog";
 import { replayActiveOps } from "../versionLog/replay";
+import { ConflictResolutionModal } from "./VersionControlConflictModal";
+import type { Remap } from "../versionLog/types";
 import { defaultLang, getLanguage, languages, setLanguage, t } from "../i18n";
 
 import {
@@ -2216,9 +2218,22 @@ class App extends React.Component<AppProps, AppState> {
                               this.props.generateLinkForSelection
                             }
                           >
+                            {this.state.versionLogPendingConflicts && (
+                              <ConflictResolutionModal
+                                conflicts={
+                                  this.state.versionLogPendingConflicts
+                                    .conflicts
+                                }
+                                onSubmit={
+                                  this.applyVersionLogConflictResolutions
+                                }
+                                onCancel={
+                                  this.cancelVersionLogConflictResolution
+                                }
+                              />
+                            )}
                             {this.props.children}
                           </LayerUI>
-
                           <div className="excalidraw-textEditorContainer" />
                           <div className="excalidraw-contextMenuContainer" />
                           <div className="excalidraw-eye-dropper-container" />
@@ -4645,12 +4660,41 @@ class App extends React.Component<AppProps, AppState> {
    */
   public toggleVersionLogIncrement = (incrementId: string): void => {
     this.versionLog.toggleIncrementActive(incrementId);
+    this.runReplayAfterToggle(incrementId);
+  };
 
+  /**
+   * Run a replay after a toggle (or after the user resolves a previous
+   * conflict). If the replay produces unresolved hard conflicts, open
+   * the modal; otherwise commit the snapshot. `pendingIncrementId` is
+   * remembered so the modal's Cancel can revert the original toggle.
+   */
+  private runReplayAfterToggle = (pendingIncrementId: string): void => {
     const replay = replayActiveOps(this.versionLog);
     if (replay == null) {
       return;
     }
 
+    if (replay.conflicts.length > 0) {
+      // Don't touch the scene yet — wait for user input. The canvas
+      // stays in its current state until the user either applies a
+      // resolution or cancels (which reverts the toggle).
+      this.setState({
+        versionLogPendingConflicts: {
+          pendingIncrementId,
+          conflicts: replay.conflicts,
+        },
+      });
+      return;
+    }
+
+    this.commitReplay(replay);
+    this.setState({ versionLogPendingConflicts: null });
+  };
+
+  private commitReplay = (
+    replay: NonNullable<ReturnType<typeof replayActiveOps>>,
+  ): void => {
     const sanitisedElements = syncInvalidIndices(
       Array.from(replay.snapshot.values()),
     );
@@ -4658,8 +4702,43 @@ class App extends React.Component<AppProps, AppState> {
       elements: sanitisedElements,
       captureUpdate: CaptureUpdateAction.NEVER,
     });
-
     this.versionLog.setSkippedByReplay(replay.skipped);
+  };
+
+  /**
+   * Modal callback. Writes the user's per-referent decisions into the
+   * log's remap map and re-runs the replay — which may itself surface
+   * new conflicts (cascading), in which case the modal stays open
+   * with the new conflict set.
+   */
+  public applyVersionLogConflictResolutions = (
+    decisions: Map<string, Remap>,
+  ): void => {
+    this.versionLog.addRemaps(decisions);
+    const pending = this.state.versionLogPendingConflicts;
+    if (pending == null) {
+      return;
+    }
+    this.runReplayAfterToggle(pending.pendingIncrementId);
+  };
+
+  /**
+   * Modal callback. Reverts the original toggle that produced the
+   * pending conflicts and closes the modal. Any remaps the user added
+   * via earlier rounds of the same modal session are kept — those
+   * were explicit user decisions.
+   */
+  public cancelVersionLogConflictResolution = (): void => {
+    const pending = this.state.versionLogPendingConflicts;
+    if (pending == null) {
+      return;
+    }
+    this.versionLog.toggleIncrementActive(pending.pendingIncrementId);
+    this.setState({ versionLogPendingConflicts: null });
+    const replay = replayActiveOps(this.versionLog);
+    if (replay != null) {
+      this.commitReplay(replay);
+    }
   };
 
   /**

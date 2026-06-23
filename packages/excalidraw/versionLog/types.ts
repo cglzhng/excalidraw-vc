@@ -387,6 +387,41 @@ export interface LogIncrement {
   delta: StoreDelta;
 }
 
+/**
+ * User-supplied rewrite for ops that reference a particular element or
+ * group. Keyed in `VersionLog.remaps` by the ORIGINAL referent id —
+ * once a remap exists for id `X`, every subsequent op the replay sees
+ * that touches `X` is rewritten (or explicitly skipped if `to` is
+ * null) before its referent-presence check runs.
+ *
+ * Created interactively via the conflict-resolution modal that pops up
+ * when a selective-undo causes downstream ops to lose their referent.
+ */
+export type Remap =
+  | { kind: "group"; to: string | null }
+  | { kind: "element"; to: string | null };
+
+/**
+ * One unresolved hard conflict detected during replay, grouped by the
+ * missing referent (so the user resolves once per referent rather than
+ * once per affected op). The modal renders one section per conflict.
+ *
+ * `candidates` is computed at the moment the conflict is hit — they're
+ * live referents of the matching kind in the in-progress replay
+ * snapshot, so a group that wouldn't yet exist at that point in the
+ * timeline isn't offered as a target.
+ */
+export interface PendingConflict {
+  referentKind: "group" | "element";
+  referentId: string;
+  /** elementType filter (only for element conflicts); informational. */
+  elementType?: string;
+  /** Ops that couldn't apply because `referentId` is missing. */
+  affectedOps: LogOperation[];
+  /** Live target ids the user can remap to (same kind). */
+  candidates: string[];
+}
+
 /** Reserved for future filtering UI; unused in v1. */
 export interface LogQuery {
   type?: LogEntryType;
