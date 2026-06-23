@@ -11,6 +11,7 @@ import type {
   LogIncrement,
   LogOperation,
   LogPropertyMap,
+  Remap,
 } from "./types";
 
 type DurableIncrementEmitter = Emitter<[DurableIncrement]>;
@@ -99,6 +100,19 @@ export class VersionLog {
    * panel uses it to put a warning indicator on the row.
    */
   private skippedByReplay: Set<LogOperation> = new Set();
+  /**
+   * User-supplied referent remaps, keyed by ORIGINAL referent id.
+   * Populated when the conflict-resolution modal submits a decision
+   * ("apply move-group X to group Y instead" / "skip everything that
+   * touched element X"). Read by the replay engine before every
+   * referent-presence check.
+   *
+   * Stale-remap cleanup (when the upstream `create` / `group` becomes
+   * active again, so the referent is naturally live) is deferred — for
+   * v1 these remaps persist until the user explicitly clears them, or
+   * until the log is cleared. See VERSION_CONTROL_PLAN.md.
+   */
+  private remaps: Map<string, Remap> = new Map();
 
   constructor(opts: { maxIncrements?: number } = {}) {
     this.maxIncrements = opts.maxIncrements ?? DEFAULT_MAX_INCREMENTS;
@@ -204,6 +218,35 @@ export class VersionLog {
     this.onChangeEmitter.trigger();
   }
 
+  /** Read-only view of the active remap map. */
+  public getRemaps(): ReadonlyMap<string, Remap> {
+    return this.remaps;
+  }
+
+  /**
+   * Merge new remap entries into the map (overwriting existing keys).
+   * Setting a value to `{ to: null, ... }` records an explicit "skip"
+   * for that referent. Callers pass the result of one modal submission.
+   */
+  public addRemaps(entries: Iterable<[string, Remap]>): void {
+    let changed = false;
+    for (const [id, remap] of entries) {
+      this.remaps.set(id, remap);
+      changed = true;
+    }
+    if (changed) {
+      this.onChangeEmitter.trigger();
+    }
+  }
+
+  public clearRemaps(): void {
+    if (this.remaps.size === 0) {
+      return;
+    }
+    this.remaps.clear();
+    this.onChangeEmitter.trigger();
+  }
+
   public setCurrentIncrementId(id: string | null) {
     if (this.currentIncrementId === id) {
       return;
@@ -226,6 +269,7 @@ export class VersionLog {
     this.inactiveIncrementIds = new Set();
     this.baselineScene = null;
     this.skippedByReplay = new Set();
+    this.remaps = new Map();
     this.onChangeEmitter.trigger();
   }
 
