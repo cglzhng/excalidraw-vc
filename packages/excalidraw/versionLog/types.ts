@@ -237,6 +237,8 @@ export type LogOperation =
       /** Local-space waypoints before the edit. `[0,0]` is always the start. */
       before: ReadonlyArray<readonly [number, number]>;
       after: ReadonlyArray<readonly [number, number]>;
+      beforeOrigin: [number, number] | null;
+      afterOrigin: [number, number] | null;
     }
   | {
       kind: "arrow-bind";
