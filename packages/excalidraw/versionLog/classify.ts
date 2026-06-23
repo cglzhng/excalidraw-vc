@@ -55,7 +55,8 @@ export const classifyEntries = (
   // Pre-pass: detect group / ungroup events. These are inherently
   // multi-entry (the same gid is added to / removed from N members
   // in one user action), so they don't fit the per-entry classifier.
-  const { groupingOps, consumed: groupingConsumed } = detectGroupChange(entries);
+  const { groupingOps, consumed: groupingConsumed } =
+    detectGroupChange(entries);
 
   // Per-entry classification for everything the pre-pass didn't claim.
   const ops: LogOperation[] = [];
@@ -309,13 +310,9 @@ const classifyEntry = (
           ? (entry.before.y as number)
           : (current?.y as number);
       const toX =
-        "x" in entry.after
-          ? (entry.after.x as number)
-          : (current?.x as number);
+        "x" in entry.after ? (entry.after.x as number) : (current?.x as number);
       const toY =
-        "y" in entry.after
-          ? (entry.after.y as number)
-          : (current?.y as number);
+        "y" in entry.after ? (entry.after.y as number) : (current?.y as number);
       return {
         kind: "move",
         elementId: entry.elementId,
@@ -470,6 +467,7 @@ const classifyArrowEntry = (
   const hasPointsChange = changed.has("points");
   const hasAngleChange = changed.has("angle");
   const hasSizeChange = changed.has("width") || changed.has("height");
+  const hasPosChange = changed.has("x") || changed.has("y");
 
   changed.delete("points");
   changed.delete("x");
@@ -626,6 +624,12 @@ const classifyArrowEntry = (
   // Permitted residue: derived bbox geometry. Anything else is "edit
   // + something" and falls through.
   if (hasPointsChange) {
+    const beforeOrigin = hasPosChange
+      ? ([entry.before.x, entry.before.y] as [number, number])
+      : null;
+    const afterOrigin = hasPosChange
+      ? ([entry.after.x, entry.after.y] as [number, number])
+      : null;
     if (changed.size === 0) {
       const before =
         (entry.before.points as readonly ArrowPoint[] | undefined) ?? [];
@@ -637,6 +641,8 @@ const classifyArrowEntry = (
         elementType: current.type,
         before,
         after,
+        beforeOrigin,
+        afterOrigin,
       };
     }
   }

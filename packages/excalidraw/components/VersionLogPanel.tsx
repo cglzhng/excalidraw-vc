@@ -53,6 +53,45 @@ const useVersionLogCursor = (log: VersionLog): string | null => {
 };
 
 /**
+ * Subscribe to the set of selectively-deactivated increment ids on
+ * a `VersionLog`. The panel uses this to render inactive cards as
+ * struck-through and to drive the toggle button's state.
+ */
+const useVersionLogInactive = (log: VersionLog): ReadonlySet<string> => {
+  const [inactive, setInactive] = useState<ReadonlySet<string>>(() =>
+    log.getInactiveIncrementIds(),
+  );
+  useEffect(() => {
+    setInactive(log.getInactiveIncrementIds());
+    const off = log.onChangeEmitter.on(() => {
+      setInactive(log.getInactiveIncrementIds());
+    });
+    return off;
+  }, [log]);
+  return inactive;
+};
+
+/**
+ * Subscribe to the set of ops the most recent replay couldn't apply
+ * because a referent was missing — typically because an earlier op
+ * in the dependency chain is currently inactive. Per-op set; the
+ * panel puts a warning icon on matching rows.
+ */
+const useVersionLogSkipped = (log: VersionLog): ReadonlySet<LogOperation> => {
+  const [skipped, setSkipped] = useState<ReadonlySet<LogOperation>>(() =>
+    log.getSkippedByReplay(),
+  );
+  useEffect(() => {
+    setSkipped(log.getSkippedByReplay());
+    const off = log.onChangeEmitter.on(() => {
+      setSkipped(log.getSkippedByReplay());
+    });
+    return off;
+  }, [log]);
+  return skipped;
+};
+
+/**
  * Subscribe to the debug dependency-highlight set on a `VersionLog`.
  * Each op in `hard` would become unapplicable if the hovered op were
  * selectively undone; each op in `soft` would still apply but with
@@ -455,8 +494,14 @@ const VersionLogOperationRow: React.FC<{
   isHardDep?: boolean;
   /** Debug: this op is a SOFT dependency of whatever is being hovered. */
   isSoftDep?: boolean;
+  /**
+   * True when the most recent replay had to skip this op because a
+   * referent was missing — usually caused by an earlier selectively-
+   * undone op. Surfaced with a small warning icon.
+   */
+  isSkipped?: boolean;
   onHoverOperation?: (op: LogOperation | null) => void;
-}> = ({ op, isHardDep, isSoftDep, onHoverOperation }) => {
+}> = ({ op, isHardDep, isSoftDep, isSkipped, onHoverOperation }) => {
   const ids = getOperationElementIds(op);
   const color = OP_COLOR[op.kind];
 
@@ -490,7 +535,22 @@ const VersionLogOperationRow: React.FC<{
         className="VersionLogPanel__entryHeader"
         style={{ display: "flex", justifyContent: "space-between", gap: 8 }}
       >
-        <span style={{ color }}>{renderOpContent(op)}</span>
+        <span style={{ color }}>
+          {isSkipped && (
+            <span
+              title="Skipped during replay: a referenced element / group is missing because an earlier op is deactivated"
+              style={{
+                marginRight: 4,
+                color: "#c92a2a",
+                fontWeight: 700,
+                cursor: "help",
+              }}
+            >
+              ⚠
+            </span>
+          )}
+          {renderOpContent(op)}
+        </span>
         <span
           style={{ opacity: 0.5, fontFamily: "monospace", fontSize: 11 }}
           title={ids.join(", ")}
@@ -536,18 +596,26 @@ const VersionLogIncrementCard: React.FC<{
    * button and shows a "Current" badge instead.
    */
   isCurrent: boolean;
+  /** True when this increment is selectively deactivated. */
+  isInactive: boolean;
   /** Debug: ops that are HARD dependencies of the hovered op. */
   hardDeps?: Set<LogOperation>;
   /** Debug: ops that are SOFT dependencies of the hovered op. */
   softDeps?: Set<LogOperation>;
+  /** Per-op set of replay-skipped ops; matches put a warning icon on the row. */
+  skippedOps?: ReadonlySet<LogOperation>;
   onJump?: (incrementId: string) => void;
+  onToggleActive?: (incrementId: string) => void;
   onHoverOperation?: (op: LogOperation | null) => void;
 }> = ({
   increment,
   isCurrent,
+  isInactive,
   hardDeps,
   softDeps,
+  skippedOps,
   onJump,
+  onToggleActive,
   onHoverOperation,
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -558,6 +626,11 @@ const VersionLogIncrementCard: React.FC<{
     // don't toggle the card when clicking the button
     e.stopPropagation();
     onJump?.(increment.id);
+  };
+
+  const handleToggleActive = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onToggleActive?.(increment.id);
   };
 
   return (
@@ -575,6 +648,10 @@ const VersionLogIncrementCard: React.FC<{
         background: isCurrent
           ? "var(--color-primary-light, rgba(91, 87, 209, 0.08))"
           : "var(--island-bg-color, rgba(0, 0, 0, 0.02))",
+        // Selectively-deactivated cards fade out so the timeline
+        // reads as "these ops are paused / hidden from replay."
+        opacity: isInactive ? 0.5 : 1,
+        textDecoration: isInactive ? "line-through" : "none",
       }}
     >
       <button
@@ -635,6 +712,34 @@ const VersionLogIncrementCard: React.FC<{
           }}
         >
           <span>{formatTimestamp(increment.timestamp)}</span>
+          {onToggleActive && (
+            <button
+              type="button"
+              onClick={handleToggleActive}
+              title={
+                isInactive
+                  ? "Re-include this change in replay"
+                  : "Skip this change during replay (selective undo)"
+              }
+              onMouseDown={(e) => e.stopPropagation()}
+              style={{
+                all: "unset",
+                cursor: "pointer",
+                padding: "2px 6px",
+                fontSize: 10,
+                fontWeight: 600,
+                color: isInactive
+                  ? "var(--color-primary, #5b57d1)"
+                  : "#c92a2a",
+                border: `1px solid ${
+                  isInactive ? "var(--color-primary, #5b57d1)" : "#c92a2a"
+                }`,
+                borderRadius: 4,
+              }}
+            >
+              {isInactive ? "Restore" : "Skip"}
+            </button>
+          )}
           {isCurrent ? (
             <span
               title="The document is at this point"
@@ -683,6 +788,7 @@ const VersionLogIncrementCard: React.FC<{
               op={op}
               isHardDep={hardDeps?.has(op)}
               isSoftDep={softDeps?.has(op)}
+              isSkipped={skippedOps?.has(op)}
               onHoverOperation={onHoverOperation}
             />
           ))}
@@ -704,6 +810,12 @@ export interface VersionLogPanelProps {
    */
   onJump?: (incrementId: string) => void;
   /**
+   * Called when the user clicks the "Skip" / "Restore" toggle on a
+   * card. App owns the replay + scene update — see
+   * `App.toggleVersionLogIncrement`.
+   */
+  onToggleActive?: (incrementId: string) => void;
+  /**
    * Called on op mouse-enter (with the op) and mouse-leave (with
    * `null`). Owners feed the op through `computeHoverPreview` and
    * write the result into `appState.versionLogHoverPreview` so the
@@ -715,11 +827,14 @@ export interface VersionLogPanelProps {
 export const VersionLogPanel: React.FC<VersionLogPanelProps> = ({
   log,
   onJump,
+  onToggleActive,
   onHoverOperation,
 }) => {
   const increments = useVersionLogIncrements(log);
   const cursorId = useVersionLogCursor(log);
   const depHighlight = useVersionLogDependencyHighlight(log);
+  const inactiveIds = useVersionLogInactive(log);
+  const skippedOps = useVersionLogSkipped(log);
 
   return (
     <div
@@ -782,9 +897,12 @@ export const VersionLogPanel: React.FC<VersionLogPanelProps> = ({
                   ? increment.id === increments[0]?.id
                   : increment.id === cursorId
               }
+              isInactive={inactiveIds.has(increment.id)}
               hardDeps={depHighlight?.hard}
               softDeps={depHighlight?.soft}
+              skippedOps={skippedOps}
               onJump={onJump}
+              onToggleActive={onToggleActive}
               onHoverOperation={onHoverOperation}
             />
           ))}

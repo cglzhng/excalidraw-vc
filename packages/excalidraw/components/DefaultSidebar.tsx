@@ -126,6 +126,7 @@ export const DefaultSidebar = Object.assign(
               <VersionLogPanel
                 log={app.versionLog}
                 onJump={app.jumpToVersionLogIncrement}
+                onToggleActive={app.toggleVersionLogIncrement}
                 onHoverOperation={(op) => {
                   // Compute the ghost / bbox preview for this op and
                   // hand it to the interactive canvas via appState.

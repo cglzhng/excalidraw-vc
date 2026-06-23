@@ -100,6 +100,47 @@ const updateElement = (
 };
 
 /**
+ * Insert an element into the scene if it isn't already there;
+ * otherwise merge `values` over the existing one. Used by `create`
+ * forward and `delete` backward — both paths need to actually
+ * materialise an element when replaying from a baseline that
+ * predates it. `values` is expected to be the full property bag
+ * Excalidraw's delta engine captured (`delta.inserted` /
+ * `delta.deleted`), so the inserted object has everything the
+ * renderer needs.
+ */
+const upsertElement = (
+  scene: SceneSnapshot,
+  id: string,
+  values: Partial<OrderedExcalidrawElement>,
+): void => {
+  const el = scene.get(id);
+  if (el) {
+    scene.set(id, {
+      ...el,
+      ...values,
+      version: el.version + 1,
+    } as OrderedExcalidrawElement);
+  } else {
+    // Defaults for array fields that Excalidraw's delta engine may
+    // omit from `values` when they match the "all elements start
+    // here" default. If we leave them `undefined`, Excalidraw
+    // silently normalises them to `[]` during the next user
+    // interaction, and that silent write shows up as a phantom
+    // property change in the following delta — making a plain move
+    // look like a multi-property edit. Setting safe defaults up
+    // front keeps the captured state consistent.
+    scene.set(id, {
+      id,
+      version: 1,
+      groupIds: [],
+      boundElements: null,
+      ...values,
+    } as unknown as OrderedExcalidrawElement);
+  }
+};
+
+/**
  * Recompute the bounding box (x, y, width, height) from a `points`
  * array. Excalidraw stores `points` in element-local coordinates
  * starting at `[0, 0]`, with the element's world position carried by
@@ -171,11 +212,12 @@ const applyOpToScene = (
   switch (op.kind) {
     // -------------------- lifecycle --------------------
     case "create": {
-      // Forward: element exists (post-create). Backward: hide it via
-      // soft-delete. Excalidraw never removes elements from the
-      // SceneElementsMap; deletion is `isDeleted: true`.
+      // Forward: insert / un-soft-delete. We use `upsertElement`
+      // because the scene may not contain this element yet — the
+      // selective-undo replay starts from a baseline captured before
+      // most creates fired. Backward: hide via soft-delete.
       if (forward) {
-        updateElement(scene, op.elementId, {
+        upsertElement(scene, op.elementId, {
           ...(op.values as Partial<OrderedExcalidrawElement>),
           isDeleted: false,
         });
@@ -185,10 +227,13 @@ const applyOpToScene = (
       break;
     }
     case "delete": {
+      // Forward: soft-delete. Backward: restore from lastValues —
+      // same `upsertElement` reason: if replay rewound past the
+      // original create, the element may need to be reinserted.
       if (forward) {
         updateElement(scene, op.elementId, { isDeleted: true });
       } else {
-        updateElement(scene, op.elementId, {
+        upsertElement(scene, op.elementId, {
           ...(op.lastValues as Partial<OrderedExcalidrawElement>),
           isDeleted: false,
         });
@@ -309,21 +354,16 @@ const applyOpToScene = (
     // -------------------- arrow-specific --------------------
     case "arrow-edit-points": {
       const points = forward ? op.after : op.before;
+      const origin = forward ? op.afterOrigin : op.beforeOrigin;
       const el = scene.get(op.elementId);
       if (!el) {
         break;
       }
-      const { width, height, offsetX, offsetY } = bboxFromPoints(points);
-      // Local origin of `points` is shifted by (offsetX, offsetY) from
-      // the bbox origin. Excalidraw normalizes so the first point is
-      // `[0, 0]` and the world position is in (x, y) — we re-apply
-      // that here.
+      const { width, height } = bboxFromPoints(points);
       updateElement(scene, op.elementId, {
-        points: points.map(
-          ([px, py]) => [px - offsetX, py - offsetY] as [number, number],
-        ),
-        x: el.x + offsetX,
-        y: el.y + offsetY,
+        points,
+        x: origin ? origin[0] : el.x,
+        y: origin ? origin[1] : el.y,
         width,
         height,
       } as Partial<OrderedExcalidrawElement>);
@@ -424,10 +464,9 @@ const applyOpToScene = (
       const entry = op.entry;
       const values = forward ? entry.after : entry.before;
       if (entry.type === "create") {
-        // Forward of a create entry sets isDeleted: false + values;
-        // backward marks deleted. Mirrors the `create` op above.
+        // Same upsert reasoning as the semantic `create` op.
         if (forward) {
-          updateElement(scene, entry.elementId, {
+          upsertElement(scene, entry.elementId, {
             ...(values as Partial<OrderedExcalidrawElement>),
             isDeleted: false,
           });
@@ -438,7 +477,7 @@ const applyOpToScene = (
         if (forward) {
           updateElement(scene, entry.elementId, { isDeleted: true });
         } else {
-          updateElement(scene, entry.elementId, {
+          upsertElement(scene, entry.elementId, {
             ...(values as Partial<OrderedExcalidrawElement>),
             isDeleted: false,
           });
