@@ -23,7 +23,7 @@
  */
 
 import { applyOpsToScene } from "./applyOps";
-import { applyRemapsToOp, getOpMissingReferent } from "./remap";
+import { applyRemapsToOp } from "./remap";
 import { collectElementIdsFromGroupNode } from "./types";
 
 import type { SceneSnapshot } from "./applyOps";
@@ -117,9 +117,12 @@ const applyIncrementTracked = (
     // the current snapshot instead.
     const finalOp = resolveLiveGroupMembers(rewritten, snapshot);
 
-    if (hasMissingReferent(finalOp, snapshot)) {
+    const missing = enumerateMissingReferents(finalOp, snapshot);
+    if (missing.length > 0) {
       skipped.add(op);
-      recordConflict(op, snapshot, conflictMap);
+      for (const ref of missing) {
+        recordConflict(op, ref, snapshot, conflictMap);
+      }
       continue;
     }
     // `applyOpsToScene` reverses ops for "backward" but applies in
@@ -159,29 +162,49 @@ const resolveLiveGroupMembers = (
   return { ...op, elementIds: liveMembers };
 };
 
+interface MissingReferent {
+  kind: "element" | "group";
+  id: string;
+  elementType?: string;
+}
+
 const recordConflict = (
   op: LogOperation,
+  ref: MissingReferent,
   snapshot: SceneSnapshot,
   conflictMap: Map<string, PendingConflict>,
 ): void => {
-  const ref = getOpMissingReferent(op);
-  if (ref == null) {
-    // Op has no single referent (e.g. `group` create). Don't surface
-    // it via the modal — `applyOpsToScene` will just no-op against
-    // missing children.
-    return;
-  }
   const existing = conflictMap.get(ref.id);
   if (existing) {
-    existing.affectedOps.push(op);
+    // Multiple ops can converge on the same missing referent (e.g. a
+    // create + the moves that followed); add this op to the existing
+    // bucket only if it isn't already there (an arrow-bind with two
+    // distinct missing bound-to elements would otherwise double-list).
+    if (!existing.affectedOps.includes(op)) {
+      existing.affectedOps.push(op);
+    }
     return;
   }
+  // Suppress remap candidates when the missing referent is an arrow's
+  // BOUND-TO element (not the arrow itself). Arrow-binding rebinds
+  // aren't yet supported by `applyRemapsToOp`, so offering a target
+  // here would store a remap that never actually rewrites the
+  // binding — the conflict would re-fire on every replay. Forcing
+  // Skip-only avoids the loop; proper rebind support is tracked
+  // separately.
+  const isArrowBoundToConflict =
+    (op.kind === "arrow-bind" || op.kind === "arrow-move-binding") &&
+    ref.kind === "element" &&
+    ref.id !== op.elementId;
+
   conflictMap.set(ref.id, {
     referentKind: ref.kind,
     referentId: ref.id,
     elementType: ref.elementType,
     affectedOps: [op],
-    candidates: collectCandidates(ref.kind, ref.id, ref.elementType, snapshot),
+    candidates: isArrowBoundToConflict
+      ? []
+      : collectCandidates(ref.kind, ref.id, ref.elementType, snapshot),
   });
 };
 
@@ -221,23 +244,32 @@ const collectCandidates = (
 };
 
 /**
- * True iff the op would be a no-op or incorrect because something it
- * references isn't currently in the scene. `create` is exempted — it
- * doesn't require its target to pre-exist.
+ * Enumerate every referent of `op` that's currently missing from the
+ * scene snapshot. Empty array means the op can apply cleanly.
+ *
+ * For ops with multiple potential referents (notably `arrow-bind`,
+ * which can fail because the arrow itself OR either bound-to element
+ * is gone), every missing one is surfaced — each becomes its own
+ * entry in the conflict modal so the user resolves them
+ * independently.
+ *
+ * `create` and `group` always return [] — they introduce referents
+ * rather than depending on them. (Group with all-dead members still
+ * no-ops harmlessly; we don't surface a conflict.)
  */
-const hasMissingReferent = (
+const enumerateMissingReferents = (
   op: LogOperation,
   snapshot: SceneSnapshot,
-): boolean => {
+): MissingReferent[] => {
   const isLive = (id: string): boolean => {
     const el = snapshot.get(id);
     return el != null && !el.isDeleted;
   };
+  const out: MissingReferent[] = [];
 
   switch (op.kind) {
     case "create":
-      // No precondition — create either inserts or restores.
-      return false;
+      return out;
     case "delete":
     case "move":
     case "rotate":
@@ -245,48 +277,112 @@ const hasMissingReferent = (
     case "resize":
     case "arrow-resize":
     case "arrow-edit-points":
-    case "arrow-bind":
-    case "arrow-move-binding":
     case "restyle":
-      return !isLive(op.elementId);
+      if (!isLive(op.elementId)) {
+        out.push({
+          kind: "element",
+          id: op.elementId,
+          elementType: op.elementType,
+        });
+      }
+      return out;
+
+    case "arrow-bind": {
+      // The arrow itself + each side's bound-to element on the AFTER
+      // side (forward apply writes that side). Unbinds (after === null)
+      // contribute no bound-to referent for forward apply.
+      if (!isLive(op.elementId)) {
+        out.push({
+          kind: "element",
+          id: op.elementId,
+          elementType: op.elementType,
+        });
+      }
+      const boundTo = (b: typeof op.start) => b?.after?.elementId;
+      const startTarget = boundTo(op.start);
+      const endTarget = boundTo(op.end);
+      if (startTarget && !isLive(startTarget)) {
+        out.push({ kind: "element", id: startTarget });
+      }
+      if (endTarget && startTarget !== endTarget && !isLive(endTarget)) {
+        out.push({ kind: "element", id: endTarget });
+      }
+      return out;
+    }
+
+    case "arrow-move-binding": {
+      // Same arrow + per-side boundElementId (which is unchanged
+      // between before/after by construction — only the anchor
+      // location moves).
+      if (!isLive(op.elementId)) {
+        out.push({
+          kind: "element",
+          id: op.elementId,
+          elementType: op.elementType,
+        });
+      }
+      if (op.start && !isLive(op.start.boundElementId)) {
+        out.push({ kind: "element", id: op.start.boundElementId });
+      }
+      if (
+        op.end &&
+        op.end.boundElementId !== op.start?.boundElementId &&
+        !isLive(op.end.boundElementId)
+      ) {
+        out.push({ kind: "element", id: op.end.boundElementId });
+      }
+      return out;
+    }
+
     case "move-group":
     case "rotate-group":
     case "resize-group":
       // The group itself must still exist — at least one captured
       // member must currently bear this group id. If none do, the
       // `group` op that established this group has been deactivated
-      // and the transform has no group to act on (e.g. the user
-      // skipped the grouping; moving the now-loose elements together
-      // wasn't the intent of the move-group op).
-      //
-      // We don't separately require every member element to be alive
-      // — `applyOpsToScene` silently no-ops on missing element ids,
-      // so partial members are handled naturally.
-      return !op.elementIds.some((id) => {
-        const el = snapshot.get(id);
-        return el != null && !el.isDeleted && el.groupIds.includes(op.groupId);
-      });
+      // and the transform has no group to act on.
+      if (
+        !op.elementIds.some((id) => {
+          const el = snapshot.get(id);
+          return (
+            el != null && !el.isDeleted && el.groupIds.includes(op.groupId)
+          );
+        })
+      ) {
+        out.push({ kind: "group", id: op.groupId });
+      }
+      return out;
+
     case "group": {
-      // Creating a new group: the gid is being introduced, so we
-      // only care that there's something to group. Hard conflict
-      // only if NO captured member still exists.
-      const ids = collectElementIdsFromGroupNode(op.group);
-      return !ids.some((id) => isLive(id));
+      // Creating a new group: harmless no-op if no captured members
+      // are alive, but the gid isn't a referent so we don't surface
+      // a conflict the user could resolve.
+      return out;
     }
     case "ungroup": {
       // Dissolving an existing group: at least one captured member
-      // must still bear this group id. Otherwise the `group` op
-      // that established it has been deactivated and there's
-      // nothing to dissolve.
+      // must still bear the group id.
       const ids = collectElementIdsFromGroupNode(op.group);
-      return !ids.some((id) => {
-        const el = snapshot.get(id);
-        return (
-          el != null && !el.isDeleted && el.groupIds.includes(op.group.id)
-        );
-      });
+      if (
+        !ids.some((id) => {
+          const el = snapshot.get(id);
+          return (
+            el != null && !el.isDeleted && el.groupIds.includes(op.group.id)
+          );
+        })
+      ) {
+        out.push({ kind: "group", id: op.group.id });
+      }
+      return out;
     }
     case "raw":
-      return !isLive(op.entry.elementId);
+      if (!isLive(op.entry.elementId)) {
+        out.push({
+          kind: "element",
+          id: op.entry.elementId,
+          elementType: op.entry.elementType,
+        });
+      }
+      return out;
   }
 };
