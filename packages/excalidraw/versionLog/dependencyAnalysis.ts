@@ -150,7 +150,46 @@ const getReferencedElementIds = (op: LogOperation): string[] => {
   // Every op needs its target element(s) to exist. `getOperationElementIds`
   // already enumerates them per kind (including the recursive walk
   // through group ops).
-  return getOperationElementIds(op);
+  const ids = [...getOperationElementIds(op)];
+
+  // Arrow binding ops also reference the BOUND-TO element on each side
+  // — the rectangle/ellipse/etc. the arrow is anchored against. Those
+  // ids aren't picked up by `getOperationElementIds` (which is the
+  // hover-highlight enumerator and intentionally lists only the op's
+  // primary subject), but for dependency purposes they very much are
+  // referenced: the create op for the bound-to element is a hard dep
+  // of the bind, so deactivating it would leave the arrow pointing at
+  // a corpse.
+  //
+  // We include both `before` and `after` sides: `after` is the side
+  // the forward apply needs; `before` is the side the inverse needs
+  // (and matters for unbind, where after is null). Duplicates are
+  // fine — the caller wraps the list in a Set.
+  if (op.kind === "arrow-bind") {
+    if (op.start?.after) {
+      ids.push(op.start.after.elementId);
+    }
+    if (op.start?.before) {
+      ids.push(op.start.before.elementId);
+    }
+    if (op.end?.after) {
+      ids.push(op.end.after.elementId);
+    }
+    if (op.end?.before) {
+      ids.push(op.end.before.elementId);
+    }
+  } else if (op.kind === "arrow-move-binding") {
+    // Anchor moves keep the same bound-to element on each side; one
+    // entry per side is enough.
+    if (op.start) {
+      ids.push(op.start.boundElementId);
+    }
+    if (op.end) {
+      ids.push(op.end.boundElementId);
+    }
+  }
+
+  return ids;
 };
 
 /**
