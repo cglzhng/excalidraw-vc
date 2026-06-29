@@ -886,21 +886,17 @@ export const resizeSingleElement = (
     };
 
     if (isBindingElement(latestElement)) {
+      // Both endpoints must go through `unbindBindingElement` so the
+      // bound-to element's `boundElements` array drops this arrow too
+      // — nulling `endBinding` directly on the arrow (as a previous
+      // version of this code did) leaves the bound element's
+      // back-reference stale, which then prevents future bind/unbind
+      // mutations from registering as changes to its `boundElements`.
       if (latestElement.startBinding) {
-        updates = {
-          ...updates,
-        } as ElementUpdate<ExcalidrawArrowElement>;
-
-        if (latestElement.startBinding) {
-          unbindBindingElement(latestElement, "start", scene);
-        }
+        unbindBindingElement(latestElement, "start", scene);
       }
-
       if (latestElement.endBinding) {
-        updates = {
-          ...updates,
-          endBinding: null,
-        } as ElementUpdate<ExcalidrawArrowElement>;
+        unbindBindingElement(latestElement, "end", scene);
       }
     }
 

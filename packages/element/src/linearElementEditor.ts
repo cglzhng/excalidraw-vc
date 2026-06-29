@@ -49,6 +49,7 @@ import {
   getBindingStrategyForDraggingBindingElementEndpoints,
   isBindingEnabled,
   snapToMid,
+  unbindBindingElement,
   updateBoundPoint,
 } from "./binding";
 import {
@@ -1752,6 +1753,30 @@ export class LinearElementEditor {
       isMidpointSnappingEnabled?: boolean;
     },
   ) {
+    // Route binding NULLINGS through `unbindBindingElement` so the
+    // bound element's `boundElements` back-reference is also cleared.
+    // Without this, the arrow's startBinding/endBinding flips to null
+    // here but the bindable element keeps its stale entry — which
+    // then makes future bind/unbind cycles on the same arrow+target
+    // appear to do nothing (the bind path's "already in boundElements"
+    // guard short-circuits, and no `boundElements` diff ever shows).
+    if (
+      otherUpdates?.startBinding === null &&
+      element.startBinding != null
+    ) {
+      unbindBindingElement(element, "start", scene);
+    }
+    if (
+      otherUpdates?.endBinding === null &&
+      element.endBinding != null
+    ) {
+      unbindBindingElement(element, "end", scene);
+    }
+
+    // Re-bindings to a different element (non-null new value) are
+    // left to the existing assignment path below — handling the
+    // bound-element side of a rebind is a known gap (#7348).
+
     if (isElbowArrow(element)) {
       const updates: {
         startBinding?: FixedPointBinding | null;
