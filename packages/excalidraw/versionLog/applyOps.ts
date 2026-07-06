@@ -201,6 +201,38 @@ const rotateAround = (
 
 // ---------------------------------------------------------------------
 
+/**
+ * Apply any ops that were absorbed into this op at classification time
+ * as consequences of the same user action (a bound arrow's endpoint
+ * following a moved/resized/rotated bindable). Each is a fully-formed
+ * `LogOperation` in its own right; replaying them here keeps the
+ * user-visible "one operation" while still reproducing the arrow's
+ * dependent geometry. No-op when there are none, and each nested op
+ * self-skips if its arrow isn't in the snapshot.
+ */
+const applyConsequentOps = (
+  op: Extract<
+    LogOperation,
+    | { kind: "move" }
+    | { kind: "resize" }
+    | { kind: "rotate" }
+    | { kind: "move-group" }
+    | { kind: "resize-group" }
+    | { kind: "rotate-group" }
+  >,
+  scene: SceneSnapshot,
+  direction: ApplyDirection,
+): void => {
+  if (!op.consequentOps || op.consequentOps.length === 0) {
+    return;
+  }
+  // The consequences are themselves fully-formed ops (classified from
+  // the same increment's arrow entries — typically `arrow-edit-points`
+  // / `move`). Replay them through the shared engine so they invert
+  // correctly for `backward` and never drift from the arrow handlers.
+  applyOpsToScene(op.consequentOps, scene, direction);
+};
+
 const applyOpToScene = (
   op: LogOperation,
   scene: SceneSnapshot,
@@ -244,13 +276,13 @@ const applyOpToScene = (
     // -------------------- translation --------------------
     case "move": {
       const el = scene.get(op.elementId);
-      if (!el) {
-        break;
+      if (el) {
+        updateElement(scene, op.elementId, {
+          x: el.x + sign * op.dx,
+          y: el.y + sign * op.dy,
+        });
       }
-      updateElement(scene, op.elementId, {
-        x: el.x + sign * op.dx,
-        y: el.y + sign * op.dy,
-      });
+      applyConsequentOps(op, scene, direction);
       break;
     }
     case "move-group": {
@@ -264,6 +296,7 @@ const applyOpToScene = (
           y: el.y + sign * op.dy,
         });
       }
+      applyConsequentOps(op, scene, direction);
       break;
     }
 
@@ -272,6 +305,9 @@ const applyOpToScene = (
     case "arrow-rotate": {
       const angle = (forward ? op.to : op.from) as Radians;
       updateElement(scene, op.elementId, { angle });
+      if (op.kind === "rotate") {
+        applyConsequentOps(op, scene, direction);
+      }
       break;
     }
     case "rotate-group": {
@@ -293,6 +329,7 @@ const applyOpToScene = (
           angle: (el.angle + angle) as Radians,
         });
       }
+      applyConsequentOps(op, scene, direction);
       break;
     }
 
@@ -301,25 +338,27 @@ const applyOpToScene = (
     case "arrow-resize": {
       const dims = forward ? op.to : op.from;
       const el = scene.get(op.elementId);
-      if (!el) {
-        break;
+      if (el) {
+        // If we have a resize center, scale the element's (x, y) around
+        // it. This preserves the anchor corner during a corner drag.
+        if (op.center) {
+          const sx = forward ? op.scaleX : 1 / op.scaleX;
+          const sy = forward ? op.scaleY : 1 / op.scaleY;
+          updateElement(scene, op.elementId, {
+            x: op.center[0] + (el.x - op.center[0]) * sx,
+            y: op.center[1] + (el.y - op.center[1]) * sy,
+            width: dims.width,
+            height: dims.height,
+          });
+        } else {
+          updateElement(scene, op.elementId, {
+            width: dims.width,
+            height: dims.height,
+          });
+        }
       }
-      // If we have a resize center, scale the element's (x, y) around
-      // it. This preserves the anchor corner during a corner drag.
-      if (op.center) {
-        const sx = forward ? op.scaleX : 1 / op.scaleX;
-        const sy = forward ? op.scaleY : 1 / op.scaleY;
-        updateElement(scene, op.elementId, {
-          x: op.center[0] + (el.x - op.center[0]) * sx,
-          y: op.center[1] + (el.y - op.center[1]) * sy,
-          width: dims.width,
-          height: dims.height,
-        });
-      } else {
-        updateElement(scene, op.elementId, {
-          width: dims.width,
-          height: dims.height,
-        });
+      if (op.kind === "resize") {
+        applyConsequentOps(op, scene, direction);
       }
       break;
     }
@@ -339,6 +378,7 @@ const applyOpToScene = (
           height: el.height * sy,
         });
       }
+      applyConsequentOps(op, scene, direction);
       break;
     }
 

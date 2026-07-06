@@ -56,9 +56,7 @@ export interface GroupNode {
  * Defined here in `types.ts` so `getOperationElementIds` can use it
  * without a circular import.
  */
-export const collectElementIdsFromGroupNode = (
-  node: GroupNode,
-): string[] => {
+export const collectElementIdsFromGroupNode = (node: GroupNode): string[] => {
   const ids: string[] = [];
   const walk = (n: GroupNode) => {
     for (const child of n.children) {
@@ -136,6 +134,16 @@ export type LogOperation =
       dx: number;
       dy: number;
       transform: TransformMatrix;
+      /**
+       * Bound-arrow geometry changes that were captured in the same
+       * increment as a consequence of this op (arrow endpoint follows
+       * a moved/resized/rotated bindable). Not surfaced as separate
+       * ops — the user did one thing, we show one op — but the raw
+       * before/after values are stashed here so replay can reproduce
+       * the arrow's dependent geometry when applying this op forward
+       * or backward. See `versionLog/consequences.ts`.
+       */
+      consequentOps?: LogOperation[];
     }
   | {
       kind: "move-group";
@@ -155,6 +163,7 @@ export type LogOperation =
       dx: number;
       dy: number;
       transform: TransformMatrix;
+      consequentOps?: LogOperation[];
     }
   | {
       kind: "resize";
@@ -174,6 +183,7 @@ export type LogOperation =
        */
       center: readonly [number, number] | null;
       transform: TransformMatrix;
+      consequentOps?: LogOperation[];
     }
   | {
       kind: "resize-group";
@@ -183,6 +193,7 @@ export type LogOperation =
       scaleY: number;
       center: readonly [number, number] | null;
       transform: TransformMatrix;
+      consequentOps?: LogOperation[];
     }
   | {
       kind: "rotate";
@@ -200,6 +211,7 @@ export type LogOperation =
        */
       center: readonly [number, number] | null;
       transform: TransformMatrix;
+      consequentOps?: LogOperation[];
     }
   | {
       kind: "rotate-group";
@@ -208,6 +220,7 @@ export type LogOperation =
       angle: number;
       center: readonly [number, number] | null;
       transform: TransformMatrix;
+      consequentOps?: LogOperation[];
     }
   // Style -------------------------------------------------------------
   | {
@@ -344,9 +357,6 @@ export const getOperationElementIds = (op: LogOperation): string[] => {
   switch (op.kind) {
     case "create":
     case "delete":
-    case "move":
-    case "resize":
-    case "rotate":
     case "restyle":
     case "arrow-edit-points":
     case "arrow-bind":
@@ -354,10 +364,14 @@ export const getOperationElementIds = (op: LogOperation): string[] => {
     case "arrow-resize":
     case "arrow-rotate":
       return [op.elementId];
+    case "move":
+    case "resize":
+    case "rotate":
+      return [op.elementId, ...consequentIds(op)];
     case "move-group":
     case "rotate-group":
     case "resize-group":
-      return op.elementIds;
+      return [...op.elementIds, ...consequentIds(op)];
     case "group":
     case "ungroup":
       return collectElementIdsFromGroupNode(op.group);
@@ -365,6 +379,9 @@ export const getOperationElementIds = (op: LogOperation): string[] => {
       return [op.entry.elementId];
   }
 };
+
+const consequentIds = (op: { consequentOps?: LogOperation[] }): string[] =>
+  op.consequentOps?.flatMap((o) => getOperationElementIds(o)) ?? [];
 
 export interface LogIncrement {
   id: string;

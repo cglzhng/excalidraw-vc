@@ -29,8 +29,22 @@ import type { TransformMatrix } from "./transform";
 /**
  * Properties Excalidraw uses for change tracking that are noise for
  * semantic classification. Ignore them throughout.
+ *
+ * `boundElements` is included here because upstream's emit of this
+ * field is unreliable — at least two endpoint-drag paths null an
+ * arrow's `startBinding` / `endBinding` directly without going
+ * through `unbindBindingElement`, leaving the bindable element's
+ * `boundElements` back-reference stale. As a result the field shows
+ * up in some bind/unbind deltas but not others, and treating it as
+ * a meaningful change would yield false `raw` ops. The arrow's own
+ * `startBinding` / `endBinding` are authoritative for binding state.
  */
-const TRACKING_PROPS = new Set(["version", "versionNonce", "index"]);
+const TRACKING_PROPS = new Set([
+  "version",
+  "versionNonce",
+  "index",
+  "boundElements",
+]);
 
 /**
  * Style properties that, when changed in isolation, become a `restyle`
@@ -47,20 +61,39 @@ const STYLE_PROPS: readonly string[] = [
 ];
 
 // Assumption: Only ONE LogEntry per element
+// Assumption: A single iteration represents a SINGLE operation by the user
+// But multiple elements can be operated on at once
+//
+// Mutiselect: Multiple elements selected, same operation applied to all
+// Dependencies: Operation applied to element(s) caused other element(s) to change
 export const classifyEntries = (
   entries: readonly LogEntry[],
   changedElements: Record<string, OrderedExcalidrawElement>,
   groupSizeCache: Map<string, number>,
 ): LogOperation[] => {
-  // Pre-pass: detect group / ungroup events. These are inherently
+  // Pre-pass A: identify arrow entries whose changes are purely a
+  // consequence of a bound bindable element being transformed in the
+  // same increment. Those are absorbed into the causing op rather
+  // than surfaced as their own — one user action, one op. See the
+  // `consequentOps` field on move/resize/rotate ops.
+  const arrowConsequences = findConsequentArrowChanges(
+    entries,
+    changedElements,
+  );
+  const consequentialEntries = new Set(
+    Array.from(arrowConsequences.values()).flat(),
+  );
+  const remainingEntries = entries.filter((e) => !consequentialEntries.has(e));
+
+  // Pre-pass B: detect group / ungroup events. These are inherently
   // multi-entry (the same gid is added to / removed from N members
   // in one user action), so they don't fit the per-entry classifier.
   const { groupingOps, consumed: groupingConsumed } =
-    detectGroupChange(entries);
+    detectGroupChange(remainingEntries);
 
-  // Per-entry classification for everything the pre-pass didn't claim.
+  // Per-entry classification for everything the pre-passes didn't claim.
   const ops: LogOperation[] = [];
-  for (const entry of entries) {
+  for (const entry of remainingEntries) {
     if (groupingConsumed.has(entry)) {
       continue;
     }
@@ -75,11 +108,14 @@ export const classifyEntries = (
     groupSizeCache,
   );
 
-  return [
+  const finalOps: LogOperation[] = [
     ...groupingOps,
     ...groupOps,
     ...ops.filter((o) => !geometricConsumed.has(o)),
   ];
+
+  attachArrowConsequences(finalOps, arrowConsequences, changedElements);
+  return finalOps;
 };
 
 /**
@@ -160,7 +196,6 @@ const buildEntryGeometryMatrix = (
   return composeMatrix(after, beforeInv);
 };
 
-// A single entry represent a SINGLE operation on one element
 const classifyEntry = (
   entry: LogEntry,
   changedElements: Record<string, OrderedExcalidrawElement>,
@@ -415,6 +450,155 @@ const isStructuralBindingChange = (
     return true;
   }
   return before.elementId !== after.elementId;
+};
+
+/**
+ * Scan the raw entries for arrow updates whose changes are purely
+ * geometric AND whose binding points to a bindable element that also
+ * received a geometry change in this increment. Return a
+ * `causeElementId → arrowEntries[]` map.
+ *
+ * "Purely geometric" here means the arrow entry's changed keys are a
+ * subset of `{points, x, y, width, height}`. If `angle` or a binding
+ * changed too, the user did something to the arrow directly and we
+ * shouldn't absorb it.
+ */
+
+const findConsequentArrowChanges = (
+  entries: readonly LogEntry[],
+  changedElements: Record<string, OrderedExcalidrawElement>,
+): Map<string, LogEntry[]> => {
+  const geometricallyChanged = new Set<string>();
+  for (const entry of entries) {
+    if (entry.type !== "update") {
+      continue;
+    }
+    const changed = getChangedKeys(entry);
+    if (
+      changed.has("x") ||
+      changed.has("y") ||
+      changed.has("width") ||
+      changed.has("height") ||
+      changed.has("angle")
+    ) {
+      geometricallyChanged.add(entry.elementId);
+    }
+  }
+
+  const out = new Map<string, LogEntry[]>();
+  for (const entry of entries) {
+    if (entry.type !== "update") {
+      continue;
+    }
+    const current = changedElements[entry.elementId];
+    if (current?.type !== "arrow") {
+      continue;
+    }
+    const changed = getChangedKeys(entry);
+
+    const beforeStart = (entry.before.startBinding ?? null) as ArrowBinding;
+    const afterStart = (entry.after.startBinding ?? null) as ArrowBinding;
+    const beforeEnd = (entry.before.endBinding ?? null) as ArrowBinding;
+    const afterEnd = (entry.after.endBinding ?? null) as ArrowBinding;
+
+    const hasStartChange =
+      changed.has("startBinding") && !bindingsEqual(beforeStart, afterStart);
+    const hasEndChange =
+      changed.has("endBinding") && !bindingsEqual(beforeEnd, afterEnd);
+    changed.delete("startBinding");
+    changed.delete("endBinding");
+
+    changed.delete("points");
+    changed.delete("x");
+    changed.delete("y");
+    changed.delete("width");
+    changed.delete("height");
+
+    if (hasStartChange || hasEndChange || changed.size !== 0) {
+      continue;
+    }
+
+    const arrow = current as {
+      startBinding?: { elementId: string } | null;
+      endBinding?: { elementId: string } | null;
+    };
+
+    if (
+      arrow.startBinding?.elementId &&
+      geometricallyChanged.has(arrow.startBinding.elementId)
+    ) {
+      const list = out.get(arrow.startBinding.elementId) ?? [];
+      list.push(entry);
+      out.set(arrow.startBinding.elementId, list);
+    }
+
+    if (
+      arrow.endBinding?.elementId &&
+      geometricallyChanged.has(arrow.endBinding.elementId)
+    ) {
+      const list = out.get(arrow.endBinding.elementId) ?? [];
+      list.push(entry);
+      out.set(arrow.endBinding.elementId, list);
+    }
+  }
+
+  return out;
+};
+
+/**
+ * Attach the collected arrow-consequence entries to the ops they
+ * originated from. Single-element ops (move/resize/rotate) key by
+ * their `elementId`; group ops (move-group/resize-group/rotate-group)
+ * absorb consequences of any of their members.
+ *
+ * Post-process: the raw consequence entries are run back through
+ * `classifyEntry` so each becomes its own semantic op (typically
+ * `arrow-edit-points` / `move` — bindings are excluded from
+ * consequences upstream, so no lossy `arrow-move-binding` here). Those
+ * nested ops replay through the same engine as any other op — see
+ * `applyConsequentOps` in `applyOps.ts`.
+ */
+const attachArrowConsequences = (
+  ops: LogOperation[],
+  consequences: Map<string, LogEntry[]>,
+  changedElements: Record<string, OrderedExcalidrawElement>,
+): void => {
+  if (consequences.size === 0) {
+    return;
+  }
+  const toOps = (entries: LogEntry[]): LogOperation[] =>
+    entries.map((e) => classifyEntry(e, changedElements));
+
+  for (const op of ops) {
+    switch (op.kind) {
+      case "move":
+      case "resize":
+      case "rotate": {
+        const c = consequences.get(op.elementId);
+        if (c) {
+          op.consequentOps = toOps(c);
+        }
+        break;
+      }
+      case "move-group":
+      case "resize-group":
+      case "rotate-group": {
+        const agg: LogEntry[] = [];
+        for (const id of op.elementIds) {
+          const c = consequences.get(id);
+          if (c) {
+            agg.push(...c);
+          }
+        }
+        if (agg.length > 0) {
+          op.consequentOps = toOps(agg);
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
 };
 
 /**
