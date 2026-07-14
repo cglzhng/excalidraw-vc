@@ -21,7 +21,10 @@ import { SearchMenu } from "./SearchMenu";
 import { Sidebar } from "./Sidebar/Sidebar";
 import { VersionLogPanel } from "./VersionLogPanel";
 import { computeHoverPreview } from "../versionLog/hoverPreview";
-import { findDependencies } from "../versionLog/dependencyAnalysis";
+import {
+  findDependencies,
+  findRelatedOps,
+} from "../versionLog/dependencyAnalysis";
 import { withInternalFallback } from "./hoc/withInternalFallback";
 import { LibraryIcon, historyIcon, searchIcon } from "./icons";
 
@@ -125,8 +128,8 @@ export const DefaultSidebar = Object.assign(
             <Sidebar.Tab tab={VERSION_LOG_SIDEBAR_TAB}>
               <VersionLogPanel
                 log={app.versionLog}
-                onJump={app.jumpToVersionLogIncrement}
-                onToggleActive={app.toggleVersionLogIncrement}
+                onJump={app.jumpToVersionLogMoment}
+                onToggleActive={app.toggleVersionLogMoment}
                 onHoverOperation={(op) => {
                   // Compute the ghost / bbox preview for this op and
                   // hand it to the interactive canvas via appState.
@@ -147,6 +150,20 @@ export const DefaultSidebar = Object.assign(
                   app.versionLog.setDependencyHighlight(
                     findDependencies(op, app.versionLog),
                   );
+                }}
+                onFilterOperation={(op) => {
+                  // Toggle: clicking the current focus (or the banner's
+                  // Clear, which passes null) drops the filter; any
+                  // other op focuses its dependency neighbourhood.
+                  const current = app.versionLog.getFilter();
+                  if (op == null || current?.focus === op) {
+                    app.versionLog.setFilter(null);
+                    return;
+                  }
+                  app.versionLog.setFilter({
+                    focus: op,
+                    ops: findRelatedOps(op, app.versionLog),
+                  });
                 }}
               />
             </Sidebar.Tab>

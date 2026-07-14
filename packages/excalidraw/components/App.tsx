@@ -5240,28 +5240,24 @@ class App extends React.Component<AppProps, AppState> {
   );
 
   /**
-   * Selectively activate or deactivate a version-log increment.
-   * Inactive increments stay in the log but are skipped during
-   * replay; the scene recomputes from the baseline + the surviving
-   * active increments up to the cursor. Hard conflicts (ops whose
-   * referent was provided by a now-inactive op) are recorded on the
-   * log so the panel can flag them with a warning.
-   *
-   * Applied with `CaptureUpdateAction.NEVER` for the same
-   * feedback-loop reason `jumpToVersionLogIncrement` documents.
+   * Activate or deactivate a version-log moment.
+   * Will cause the scene to be recomputed from the baseline,
+   * as well as conflicting moments to be identified and dealt with.
    */
-  public toggleVersionLogIncrement = (incrementId: string): void => {
-    this.versionLog.toggleIncrementActive(incrementId);
-    this.runReplayAfterToggle(incrementId);
+  public toggleVersionLogMoment = (momentId: string): void => {
+    this.versionLog.toggleMomentActive(momentId);
+    this.runReplayAfterToggle(momentId);
   };
 
   /**
-   * Run a replay after a toggle (or after the user resolves a previous
-   * conflict). If the replay produces unresolved hard conflicts, open
-   * the modal; otherwise commit the snapshot. `pendingIncrementId` is
-   * remembered so the modal's Cancel can revert the original toggle.
+   * Run a replay after a toggle or after the user resolves a previous conflict. 
+   * 
+   * If the replay produces unresolved hard conflicts, open the modal;
+   * otherwise commit the replay. 
+   * 
+   * The modal has a cancel button which can revert the original toggle.
    */
-  private runReplayAfterToggle = (pendingIncrementId: string): void => {
+  private runReplayAfterToggle = (pendingMomentId: string): void => {
     const replay = replayActiveOps(this.versionLog);
     if (replay == null) {
       return;
@@ -5273,7 +5269,7 @@ class App extends React.Component<AppProps, AppState> {
       // resolution or cancels (which reverts the toggle).
       this.setState({
         versionLogPendingConflicts: {
-          pendingIncrementId,
+          pendingMomentId,
           conflicts: replay.conflicts,
         },
       });
@@ -5311,7 +5307,7 @@ class App extends React.Component<AppProps, AppState> {
     if (pending == null) {
       return;
     }
-    this.runReplayAfterToggle(pending.pendingIncrementId);
+    this.runReplayAfterToggle(pending.pendingMomentId);
   };
 
   /**
@@ -5325,7 +5321,7 @@ class App extends React.Component<AppProps, AppState> {
     if (pending == null) {
       return;
     }
-    this.versionLog.toggleIncrementActive(pending.pendingIncrementId);
+    this.versionLog.toggleMomentActive(pending.pendingMomentId);
     this.setState({ versionLogPendingConflicts: null });
     const replay = replayActiveOps(this.versionLog);
     if (replay != null) {
@@ -5334,40 +5330,25 @@ class App extends React.Component<AppProps, AppState> {
   };
 
   /**
-   * Move the document to the state immediately *after* the given
-   * version-log increment was applied. Works in both directions:
-   *
-   * - Target older than cursor (backward / undo): invert each
-   *   increment from cursor up to (not including) target, walking
-   *   ops within each increment in reverse order.
-   * - Target newer than cursor (forward / redo): re-apply each
-   *   increment from target up to (not including) cursor, walking
-   *   ops within each increment in their original order.
-   *
-   * Iteration 2 (current): the scene change is reconstructed from the
-   * semantic `LogOperation` data — `LogIncrement.delta` is no longer
-   * read here. See `versionLog/applyOps.ts` for the per-op handlers
-   * and the known approximations.
+   * Given a target moment ID, move the document to the state immediately after that moment. 
+   * Works in both directions.
    *
    * Applied with `CaptureUpdateAction.NEVER` so the reapplication does
-   * NOT re-enter the durable-increment emitter — without that guard
-   * the `VersionLog` subscriber would log our own jump and loop. See
-   * `VERSION_CONTROL_PLAN.md` § "Avoiding the feedback loop".
+   * NOT re-enter the durable-increment emitter.
    */
-  public jumpToVersionLogIncrement = (targetIncrementId: string): boolean => {
-    const increments = this.versionLog.getIncrements();
-    if (!increments.some((inc) => inc.id === targetIncrementId)) {
+  public jumpToVersionLogMoment = (targetMomentId: string): boolean => {
+    const moments = this.versionLog.getMoments();
+    if (!moments.some((m) => m.id === targetMomentId)) {
       return false;
     }
-    if (this.versionLog.getCurrentIncrementId() === targetIncrementId) {
+    if (this.versionLog.getCurrentMomentId() === targetMomentId) {
       return false;
     }
 
-    // Move the cursor first, then ask the replay engine for the new
-    // scene. Replay walks the active subset from baseline up to the
-    // (now-updated) cursor, so it correctly skips any selectively-
-    // deactivated increments along the way.
-    this.versionLog.setCurrentIncrementId(targetIncrementId);
+    // Move the cursor first, then ask the replay engine for the new scene. 
+    // Replay walks the active subset from baseline up to the
+    // (now-updated) cursor.
+    this.versionLog.setCurrentMomentId(targetMomentId);
 
     const replay = replayActiveOps(this.versionLog);
     if (replay == null) {

@@ -1,50 +1,50 @@
 import React, { useEffect, useState } from "react";
 
 import {
-  collectElementIdsFromGroupNode,
-  getOperationElementIds,
-  type LogEntry,
-  type LogEntryType,
-  type LogIncrement,
-  type LogOperation,
-} from "../versionLog/types";
+  VersionLogMomentCard,
+  renderOpContent,
+} from "./VersionLogMomentCard";
+
+import type { LogMoment, LogOperation } from "../versionLog/types";
 
 import type { VersionLog } from "../versionLog/VersionLog";
 
+import "./VersionLogPanel.scss";
+
 /**
  * Subscribes a component to a `VersionLog` instance and returns the
- * current increments (newest-first). Re-renders on each ingest.
+ * current moments (newest-first). Re-renders on each ingest.
  */
-const useVersionLogIncrements = (log: VersionLog): readonly LogIncrement[] => {
-  const [increments, setIncrements] = useState<readonly LogIncrement[]>(() =>
-    log.getIncrements(),
+const useVersionLogMoments = (log: VersionLog): readonly LogMoment[] => {
+  const [moments, setMoments] = useState<readonly LogMoment[]>(() =>
+    log.getMoments(),
   );
 
   useEffect(() => {
-    setIncrements(log.getIncrements());
+    setMoments(log.getMoments());
     const off = log.onChangeEmitter.on(() => {
-      setIncrements(log.getIncrements());
+      setMoments(log.getMoments());
     });
     return off;
   }, [log]);
 
-  return increments;
+  return moments;
 };
 
 /**
- * Subscribe to the cursor (current-increment id) on a `VersionLog`.
+ * Subscribe to the cursor (current-moment id) on a `VersionLog`.
  * The panel uses this both to render the "Current" badge and to
  * decide whether the Jump button on a row is a no-op.
  */
 const useVersionLogCursor = (log: VersionLog): string | null => {
   const [cursor, setCursor] = useState<string | null>(() =>
-    log.getCurrentIncrementId(),
+    log.getCurrentMomentId(),
   );
 
   useEffect(() => {
-    setCursor(log.getCurrentIncrementId());
+    setCursor(log.getCurrentMomentId());
     const off = log.onChangeEmitter.on(() => {
-      setCursor(log.getCurrentIncrementId());
+      setCursor(log.getCurrentMomentId());
     });
     return off;
   }, [log]);
@@ -53,18 +53,18 @@ const useVersionLogCursor = (log: VersionLog): string | null => {
 };
 
 /**
- * Subscribe to the set of selectively-deactivated increment ids on
+ * Subscribe to the set of selectively-deactivated moment ids on
  * a `VersionLog`. The panel uses this to render inactive cards as
  * struck-through and to drive the toggle button's state.
  */
 const useVersionLogInactive = (log: VersionLog): ReadonlySet<string> => {
   const [inactive, setInactive] = useState<ReadonlySet<string>>(() =>
-    log.getInactiveIncrementIds(),
+    log.getInactiveMomentIds(),
   );
   useEffect(() => {
-    setInactive(log.getInactiveIncrementIds());
+    setInactive(log.getInactiveMomentIds());
     const off = log.onChangeEmitter.on(() => {
-      setInactive(log.getInactiveIncrementIds());
+      setInactive(log.getInactiveMomentIds());
     });
     return off;
   }, [log]);
@@ -111,691 +111,23 @@ const useVersionLogDependencyHighlight = (
   return deps;
 };
 
-// --------------------------- shared helpers --------------------------
-
-const TYPE_COLOR: Record<LogEntryType, string> = {
-  create: "#2f9e44", // green
-  update: "#1971c2", // blue
-  delete: "#c92a2a", // red
-};
-
 /**
- * Per-operation accent color. Lifecycle ops borrow from the create /
- * update / delete palette; semantic ops get their own shades so the
- * timeline is scannable at a glance.
+ * Subscribe to the click-to-filter focus on a `VersionLog`. When set,
+ * the panel collapses to just `ops` (the focus op's dependency
+ * neighbourhood) with `focus` styled as the anchor. `null` = show all.
  */
-const OP_COLOR: Record<LogOperation["kind"], string> = {
-  create: TYPE_COLOR.create,
-  delete: TYPE_COLOR.delete,
-  move: "#1971c2",
-  "move-group": "#1864ab",
-  resize: "#7048e8",
-  "resize-group": "#5f3dc4",
-  rotate: "#9c36b5",
-  "rotate-group": "#862e9c",
-  restyle: "#d9480f",
-  // Arrow-specific shades — kept in the warm/orange family so they
-  // sit visually next to restyle but stay distinguishable.
-  "arrow-edit-points": "#e8590c",
-  "arrow-bind": "#0ca678",
-  "arrow-move-binding": "#37b24d",
-  "arrow-resize": "#7048e8",
-  "arrow-rotate": "#9c36b5",
-  // Grouping ops — teal/cyan family, distinct from any other op group.
-  group: "#0b7285",
-  ungroup: "#15aabf",
-  raw: "#868e96",
-};
-
-const formatTimestamp = (ms: number) => {
-  const d = new Date(ms);
-  return d.toLocaleTimeString();
-};
-
-const formatValue = (v: unknown): string => {
-  if (v === undefined) {
-    return "—";
-  }
-  if (v === null) {
-    return "null";
-  }
-  if (typeof v === "string") {
-    return v.length > 40 ? `${v.slice(0, 37)}…` : v;
-  }
-  if (typeof v === "number") {
-    return Number.isInteger(v) ? String(v) : v.toFixed(2);
-  }
-  if (typeof v === "boolean") {
-    return String(v);
-  }
-  try {
-    const json = JSON.stringify(v);
-    return json.length > 60 ? `${json.slice(0, 57)}…` : json;
-  } catch {
-    return String(v);
-  }
-};
-
-const formatDelta = (n: number) => {
-  const rounded = Math.round(n * 100) / 100;
-  return rounded >= 0 ? `+${rounded}` : `${rounded}`;
-};
-
-const radToDeg = (rad: number) => (rad * 180) / Math.PI;
-
-/**
- * Render a (possibly null) world-space pivot point. `null` means
- * "no unique fixed point" (e.g. an axis-only scale or a degenerate
- * matrix); we show "—" so the row still parses visually.
- */
-const formatCenter = (
-  center: readonly [number, number] | null,
-): string =>
-  center == null
-    ? "—"
-    : `(${formatValue(center[0])}, ${formatValue(center[1])})`;
-
-const formatElementLabel = (
-  elementType: string | undefined,
-  count = 1,
-): string => {
-  const base = elementType ?? "element";
-  return count === 1 ? base : `${count} ${base}s`;
-};
-
-// ------------------------- raw-entry rendering ----------------------
-
-const RawChangedProperties: React.FC<{ entry: LogEntry }> = ({ entry }) => {
-  const { type, before, after } = entry;
-
-  if (type === "create") {
-    const keys = Object.keys(after);
-    if (keys.length === 0) {
-      return null;
-    }
-    return (
-      <ul className="VersionLogPanel__props">
-        {keys.map((k) => (
-          <li key={k}>
-            <span className="VersionLogPanel__propKey">{k}</span>:{" "}
-            <span className="VersionLogPanel__propAfter">
-              {formatValue(after[k])}
-            </span>
-          </li>
-        ))}
-      </ul>
-    );
-  }
-
-  if (type === "delete") {
-    const keys = Object.keys(before).filter(
-      (k) => k !== "version" && k !== "versionNonce",
-    );
-    if (keys.length === 0) {
-      return null;
-    }
-    return (
-      <ul className="VersionLogPanel__props">
-        {keys.map((k) => (
-          <li key={k}>
-            <span className="VersionLogPanel__propKey">{k}</span>:{" "}
-            <span className="VersionLogPanel__propBefore">
-              {formatValue(before[k])}
-            </span>
-          </li>
-        ))}
-      </ul>
-    );
-  }
-
-  const keys = Array.from(
-    new Set([...Object.keys(before), ...Object.keys(after)]),
-  ).filter((k) => k !== "version" && k !== "versionNonce");
-  if (keys.length === 0) {
-    return null;
-  }
-  return (
-    <ul className="VersionLogPanel__props">
-      {keys.map((k) => (
-        <li key={k}>
-          <span className="VersionLogPanel__propKey">{k}</span>:{" "}
-          <span className="VersionLogPanel__propBefore">
-            {formatValue(before[k])}
-          </span>{" "}
-          →{" "}
-          <span className="VersionLogPanel__propAfter">
-            {formatValue(after[k])}
-          </span>
-        </li>
-      ))}
-    </ul>
-  );
-};
-
-// --------------------------- per-op header --------------------------
-
-/**
- * The headline line for an operation row. Returns a short, human title
- * (e.g. "Moved rectangle", "Restyled rectangle stroke color").
- */
-const renderOpContent = (op: LogOperation): React.ReactNode => {
-  switch (op.kind) {
-    case "create":
-      return (
-        <>
-          <strong>Created</strong> {formatElementLabel(op.elementType)}
-        </>
-      );
-    case "delete":
-      return (
-        <>
-          <strong>Deleted</strong> {formatElementLabel(op.elementType)}
-        </>
-      );
-    case "move":
-      return (
-        <>
-          <strong>Moved</strong> {formatElementLabel(op.elementType)} by (
-          {formatDelta(op.dx)}, {formatDelta(op.dy)})
-        </>
-      );
-    case "move-group":
-      return (
-        <>
-          <strong>Moved group</strong> of {op.elementIds.length} by (
-          {formatDelta(op.dx)}, {formatDelta(op.dy)})
-        </>
-      );
-    case "resize":
-      return (
-        <>
-          <strong>Resized</strong> {formatElementLabel(op.elementType)}{" "}
-          {Math.round(op.from.width)}×{Math.round(op.from.height)} →{" "}
-          {Math.round(op.to.width)}×{Math.round(op.to.height)}
-          <br />({formatValue(op.scaleX)}, {formatValue(op.scaleY)})
-        </>
-      );
-    case "resize-group":
-      return (
-        <>
-          <strong>Resized group</strong> of {op.elementIds.length} by (
-          {formatValue(op.scaleX)}, {formatValue(op.scaleY)})
-          <br />
-          Center: {formatCenter(op.center)}
-        </>
-      );
-
-    case "rotate":
-      return (
-        <>
-          <strong>Rotated</strong> {formatElementLabel(op.elementType)}{" "}
-          {Math.round(radToDeg(op.from))}° → {Math.round(radToDeg(op.to))}°
-          <br />
-          Center: {formatCenter(op.center)}
-        </>
-      );
-    case "rotate-group":
-      return (
-        <>
-          <strong>Rotated group</strong> of {op.elementIds.length} by{" "}
-          {formatValue(op.angle)}
-          <br />
-          Center: {formatCenter(op.center)}
-        </>
-      );
-    case "restyle":
-      return (
-        <>
-          <strong>Restyled</strong> {formatElementLabel(op.elementType)}{" "}
-          {op.property}: <code>{formatValue(op.from)}</code> →{" "}
-          <code>{formatValue(op.to)}</code>
-        </>
-      );
-    case "arrow-edit-points": {
-      const before = op.before;
-      const after = op.after;
-      // Headline depends on the kind of edit: count change, single
-      // point moved, or general reshape.
-      if (before.length !== after.length) {
-        const delta = after.length - before.length;
-        return (
-          <>
-            <strong>{delta > 0 ? "Added" : "Removed"} arrow waypoint</strong> (
-            {before.length} → {after.length} points)
-          </>
-        );
-      }
-      // Same length: count which points differ.
-      let differing = 0;
-      let lastChangedIdx = -1;
-      for (let i = 0; i < before.length; i++) {
-        if (before[i][0] !== after[i][0] || before[i][1] !== after[i][1]) {
-          differing += 1;
-          lastChangedIdx = i;
-        }
-      }
-      if (differing === 1) {
-        const isEndpoint =
-          lastChangedIdx === 0 || lastChangedIdx === before.length - 1;
-        return (
-          <>
-            <strong>
-              {isEndpoint ? "Moved arrow endpoint" : "Moved arrow waypoint"}
-            </strong>{" "}
-            ({formatValue(before[lastChangedIdx][0])},{" "}
-            {formatValue(before[lastChangedIdx][1])}) → (
-            {formatValue(after[lastChangedIdx][0])},{" "}
-            {formatValue(after[lastChangedIdx][1])})
-          </>
-        );
-      }
-      return (
-        <>
-          <strong>Reshaped arrow</strong> ({differing} of {before.length} points
-          changed)
-        </>
-      );
-    }
-    case "arrow-bind": {
-      // Describe each affected side as bind / unbind / rebind based
-      // on the null-vs-value shape of before/after.
-      const describe = (
-        side: "start" | "end",
-        change: { before: unknown; after: unknown },
-      ): string => {
-        if (change.before == null && change.after != null) {
-          return `Bound ${side}`;
-        }
-        if (change.before != null && change.after == null) {
-          return `Unbound ${side}`;
-        }
-        return `Rebound ${side}`;
-      };
-      const parts: string[] = [];
-      if (op.start) {
-        parts.push(describe("start", op.start));
-      }
-      if (op.end) {
-        parts.push(describe("end", op.end));
-      }
-      return (
-        <>
-          <strong>{parts.join(" + ")}</strong> on arrow
-        </>
-      );
-    }
-    case "arrow-move-binding": {
-      // List which sides had their anchor moved, with the bound
-      // element id for context.
-      const parts: string[] = [];
-      if (op.start) {
-        parts.push(`start on ${op.start.boundElementId.slice(0, 6)}…`);
-      }
-      if (op.end) {
-        parts.push(`end on ${op.end.boundElementId.slice(0, 6)}…`);
-      }
-      return (
-        <>
-          <strong>Moved arrow anchor</strong> ({parts.join(" + ")})
-        </>
-      );
-    }
-    case "arrow-resize":
-      return (
-        <>
-          <strong>Resized arrow</strong> {Math.round(op.from.width)}×
-          {Math.round(op.from.height)} → {Math.round(op.to.width)}×
-          {Math.round(op.to.height)}
-          <br />({formatValue(op.scaleX)}, {formatValue(op.scaleY)})
-        </>
-      );
-    case "arrow-rotate":
-      return (
-        <>
-          <strong>Rotated arrow</strong> {Math.round(radToDeg(op.from))}° →{" "}
-          {Math.round(radToDeg(op.to))}°
-        </>
-      );
-    case "group":
-      return (
-        <>
-          <strong>Grouped</strong>{" "}
-          {collectElementIdsFromGroupNode(op.group).length} elements
-        </>
-      );
-    case "ungroup":
-      return (
-        <>
-          <strong>Ungrouped</strong>{" "}
-          {collectElementIdsFromGroupNode(op.group).length} elements
-        </>
-      );
-    case "raw":
-      return (
-        <>
-          <strong>
-            {op.entry.type === "create"
-              ? "Created"
-              : op.entry.type === "delete"
-              ? "Deleted"
-              : "Changed"}
-          </strong>{" "}
-          {formatElementLabel(op.entry.elementType)}
-        </>
-      );
-  }
-};
-
-// ------------------------------ row ---------------------------------
-
-const VersionLogOperationRow: React.FC<{
-  op: LogOperation;
-  /** Debug: this op is a HARD dependency of whatever is being hovered. */
-  isHardDep?: boolean;
-  /** Debug: this op is a SOFT dependency of whatever is being hovered. */
-  isSoftDep?: boolean;
-  /**
-   * True when the most recent replay had to skip this op because a
-   * referent was missing — usually caused by an earlier selectively-
-   * undone op. Surfaced with a small warning icon.
-   */
-  isSkipped?: boolean;
-  onHoverOperation?: (op: LogOperation | null) => void;
-}> = ({ op, isHardDep, isSoftDep, isSkipped, onHoverOperation }) => {
-  const ids = getOperationElementIds(op);
-  const color = OP_COLOR[op.kind];
-
-  const handleMouseEnter = () => onHoverOperation?.(op);
-  const handleMouseLeave = () => onHoverOperation?.(null);
-
-  // Dependency tint — debug-only. Hard deps get a stronger red wash;
-  // soft deps get a lighter amber. If both fire (shouldn't normally),
-  // hard wins.
-  const depBackground = isHardDep
-    ? "rgba(217, 72, 15, 0.18)"
-    : isSoftDep
-    ? "rgba(245, 159, 0, 0.16)"
-    : "var(--default-bg-color, transparent)";
-
-  return (
-    <li
-      className="VersionLogPanel__entry"
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
-      style={{
-        borderLeft: `3px solid ${color}`,
-        padding: "6px 8px",
-        marginBottom: 4,
-        fontSize: 12,
-        fontFamily: "var(--ui-font, sans-serif)",
-        background: depBackground,
-      }}
-    >
-      <div
-        className="VersionLogPanel__entryHeader"
-        style={{ display: "flex", justifyContent: "space-between", gap: 8 }}
-      >
-        <span style={{ color }}>
-          {isSkipped && (
-            <span
-              title="Skipped during replay: a referenced element / group is missing because an earlier op is deactivated"
-              style={{
-                marginRight: 4,
-                color: "#c92a2a",
-                fontWeight: 700,
-                cursor: "help",
-              }}
-            >
-              ⚠
-            </span>
-          )}
-          {renderOpContent(op)}
-        </span>
-        <span
-          style={{ opacity: 0.5, fontFamily: "monospace", fontSize: 11 }}
-          title={ids.join(", ")}
-        >
-          {ids.length === 1 ? `${ids[0].slice(0, 8)}…` : `${ids.length} ids`}
-        </span>
-      </div>
-      {op.kind === "raw" && <RawChangedProperties entry={op.entry} />}
-    </li>
-  );
-};
-
-// --------------------------- count chips ----------------------------
-
-const CountChip: React.FC<{
-  n: number;
-  type: LogEntryType;
-  symbol: string;
-}> = ({ n, type, symbol }) => {
-  if (n === 0) {
-    return null;
-  }
-  return (
-    <span
-      style={{
-        color: TYPE_COLOR[type],
-        fontVariantNumeric: "tabular-nums",
-      }}
-    >
-      {symbol}
-      {n}
-    </span>
-  );
-};
-
-// ----------------------------- card ---------------------------------
-
-const VersionLogIncrementCard: React.FC<{
-  increment: LogIncrement;
-  /**
-   * True when this increment is the one the document is currently at
-   * (matches `VersionLog.getCurrentIncrementId()`). Disables the Jump
-   * button and shows a "Current" badge instead.
-   */
-  isCurrent: boolean;
-  /** True when this increment is selectively deactivated. */
-  isInactive: boolean;
-  /** Debug: ops that are HARD dependencies of the hovered op. */
-  hardDeps?: Set<LogOperation>;
-  /** Debug: ops that are SOFT dependencies of the hovered op. */
-  softDeps?: Set<LogOperation>;
-  /** Per-op set of replay-skipped ops; matches put a warning icon on the row. */
-  skippedOps?: ReadonlySet<LogOperation>;
-  onJump?: (incrementId: string) => void;
-  onToggleActive?: (incrementId: string) => void;
-  onHoverOperation?: (op: LogOperation | null) => void;
-}> = ({
-  increment,
-  isCurrent,
-  isInactive,
-  hardDeps,
-  softDeps,
-  skippedOps,
-  onJump,
-  onToggleActive,
-  onHoverOperation,
-}) => {
-  const [isExpanded, setIsExpanded] = useState(false);
-
-  const toggle = () => setIsExpanded((v) => !v);
-
-  const handleJump = (e: React.MouseEvent) => {
-    // don't toggle the card when clicking the button
-    e.stopPropagation();
-    onJump?.(increment.id);
-  };
-
-  const handleToggleActive = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onToggleActive?.(increment.id);
-  };
-
-  return (
-    <li
-      className="VersionLogPanel__increment"
-      style={{
-        listStyle: "none",
-        marginBottom: 10,
-        padding: 6,
-        // Accent the current card so it stands out from the timeline.
-        border: isCurrent
-          ? "1px solid var(--color-primary, #5b57d1)"
-          : "1px solid var(--sidebar-border-color, #d0d0d0)",
-        borderRadius: 6,
-        background: isCurrent
-          ? "var(--color-primary-light, rgba(91, 87, 209, 0.08))"
-          : "var(--island-bg-color, rgba(0, 0, 0, 0.02))",
-        // Selectively-deactivated cards fade out so the timeline
-        // reads as "these ops are paused / hidden from replay."
-        opacity: isInactive ? 0.5 : 1,
-        textDecoration: isInactive ? "line-through" : "none",
-      }}
-    >
-      <button
-        type="button"
-        className="VersionLogPanel__incrementHeader"
-        aria-expanded={isExpanded}
-        onClick={toggle}
-        onKeyDown={(e) => {
-          // make Space toggle too (Enter already fires onClick on buttons)
-          if (e.key === " ") {
-            e.preventDefault();
-            toggle();
-          }
-        }}
-        style={{
-          // reset native button look
-          all: "unset",
-          cursor: "pointer",
-          // layout
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 8,
-          width: "100%",
-          marginBottom: isExpanded ? 6 : 0,
-          padding: "2px 4px",
-          fontSize: 11,
-          fontWeight: 600,
-          borderRadius: 4,
-          boxSizing: "border-box",
-        }}
-      >
-        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span
-            aria-hidden="true"
-            style={{
-              display: "inline-block",
-              width: 10,
-              textAlign: "center",
-              transition: "transform 120ms ease",
-              transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
-              opacity: 0.6,
-            }}
-          >
-            ▸
-          </span>
-          <CountChip n={increment.counts.create} type="create" symbol="+" />
-          <CountChip n={increment.counts.update} type="update" symbol="~" />
-          <CountChip n={increment.counts.delete} type="delete" symbol="−" />
-        </span>
-        <span
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            opacity: 0.6,
-            fontWeight: 400,
-          }}
-        >
-          <span>{formatTimestamp(increment.timestamp)}</span>
-          {onToggleActive && (
-            <button
-              type="button"
-              onClick={handleToggleActive}
-              title={
-                isInactive
-                  ? "Re-include this change in replay"
-                  : "Skip this change during replay (selective undo)"
-              }
-              onMouseDown={(e) => e.stopPropagation()}
-              style={{
-                all: "unset",
-                cursor: "pointer",
-                padding: "2px 6px",
-                fontSize: 10,
-                fontWeight: 600,
-                color: isInactive
-                  ? "var(--color-primary, #5b57d1)"
-                  : "#c92a2a",
-                border: `1px solid ${
-                  isInactive ? "var(--color-primary, #5b57d1)" : "#c92a2a"
-                }`,
-                borderRadius: 4,
-              }}
-            >
-              {isInactive ? "Restore" : "Skip"}
-            </button>
-          )}
-          {isCurrent ? (
-            <span
-              title="The document is at this point"
-              style={{
-                padding: "2px 6px",
-                fontSize: 10,
-                fontWeight: 600,
-                color: "var(--color-primary, #5b57d1)",
-                border: "1px solid var(--color-primary, #5b57d1)",
-                borderRadius: 4,
-                background: "var(--default-bg-color, transparent)",
-                opacity: 1,
-              }}
-            >
-              Current
-            </span>
-          ) : (
-            onJump && (
-              <button
-                type="button"
-                onClick={handleJump}
-                title="Jump the document to this point"
-                onMouseDown={(e) => e.stopPropagation()}
-                style={{
-                  all: "unset",
-                  cursor: "pointer",
-                  padding: "2px 6px",
-                  fontSize: 10,
-                  fontWeight: 600,
-                  color: "var(--color-primary, #5b57d1)",
-                  border: "1px solid var(--color-primary, #5b57d1)",
-                  borderRadius: 4,
-                }}
-              >
-                Jump
-              </button>
-            )
-          )}
-        </span>
-      </button>
-      {isExpanded && (
-        <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-          {increment.operations.map((op, i) => (
-            <VersionLogOperationRow
-              key={i}
-              op={op}
-              isHardDep={hardDeps?.has(op)}
-              isSoftDep={softDeps?.has(op)}
-              isSkipped={skippedOps?.has(op)}
-              onHoverOperation={onHoverOperation}
-            />
-          ))}
-        </ul>
-      )}
-    </li>
-  );
+const useVersionLogFilter = (
+  log: VersionLog,
+): { focus: LogOperation; ops: Set<LogOperation> } | null => {
+  const [filter, setFilter] = useState(() => log.getFilter());
+  useEffect(() => {
+    setFilter(log.getFilter());
+    const off = log.onChangeEmitter.on(() => {
+      setFilter(log.getFilter());
+    });
+    return off;
+  }, [log]);
+  return filter;
 };
 
 // ----------------------------- panel --------------------------------
@@ -803,25 +135,22 @@ const VersionLogIncrementCard: React.FC<{
 export interface VersionLogPanelProps {
   log: VersionLog;
   /**
-   * Called when the user clicks "Jump" on a non-current card. Works
-   * in both directions: forward (target newer than cursor) and
-   * backward (target older than cursor). App owns the actual scene
-   * change — see `App.jumpToVersionLogIncrement`.
+   * Called when the user clicks "Jump" on a non-current card.
    */
-  onJump?: (incrementId: string) => void;
+  onJump?: (momentId: string) => void;
   /**
-   * Called when the user clicks the "Skip" / "Restore" toggle on a
-   * card. App owns the replay + scene update — see
-   * `App.toggleVersionLogIncrement`.
+   * Called when the user clicks the "Skip" / "Restore" toggle on a card.
    */
-  onToggleActive?: (incrementId: string) => void;
+  onToggleActive?: (momentId: string) => void;
   /**
-   * Called on op mouse-enter (with the op) and mouse-leave (with
-   * `null`). Owners feed the op through `computeHoverPreview` and
-   * write the result into `appState.versionLogHoverPreview` so the
-   * interactive canvas can draw the ghost / bbox.
+   * Called on op mouse-enter (with op) and mouse-leave (null).
    */
   onHoverOperation?: (op: LogOperation | null) => void;
+  /**
+   * Called when the user clicks an op to filter the log to that op's
+   * dependency neighbourhood, or `null` to clear the filter.
+   */
+  onFilterOperation?: (op: LogOperation | null) => void;
 }
 
 export const VersionLogPanel: React.FC<VersionLogPanelProps> = ({
@@ -829,12 +158,21 @@ export const VersionLogPanel: React.FC<VersionLogPanelProps> = ({
   onJump,
   onToggleActive,
   onHoverOperation,
+  onFilterOperation,
 }) => {
-  const increments = useVersionLogIncrements(log);
+  const moments = useVersionLogMoments(log);
   const cursorId = useVersionLogCursor(log);
   const depHighlight = useVersionLogDependencyHighlight(log);
   const inactiveIds = useVersionLogInactive(log);
   const skippedOps = useVersionLogSkipped(log);
+  const filter = useVersionLogFilter(log);
+
+  // With a filter active, hide moments that contribute no ops to
+  // the neighbourhood; the surviving cards force-expand to reveal only
+  // their matching ops.
+  const visibleMoments = filter
+    ? moments.filter((m) => m.operations.some((op) => filter.ops.has(op)))
+    : moments;
 
   return (
     <div
@@ -864,12 +202,56 @@ export const VersionLogPanel: React.FC<VersionLogPanelProps> = ({
       >
         <h3 style={{ margin: 0, fontSize: 13 }}>Version log</h3>
         <span style={{ fontSize: 11, opacity: 0.6 }}>
-          {increments.length} {increments.length === 1 ? "change" : "changes"}
+          {filter
+            ? `${filter.ops.size} related`
+            : `${moments.length} ${
+                moments.length === 1 ? "moment" : "moments"
+              }`}
         </span>
       </div>
-      {increments.length === 0 ? (
+      {filter && (
+        <div
+          className="VersionLogPanel__filterBanner"
+          style={{
+            flex: "0 0 auto",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 8,
+            marginBottom: 8,
+            padding: "4px 8px",
+            fontSize: 11,
+            borderRadius: 4,
+          }}
+        >
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+            Filtering by{" "}
+            <span style={{ opacity: 0.85 }}>
+              {renderOpContent(filter.focus)}
+            </span>
+          </span>
+          <button
+            type="button"
+            onClick={() => onFilterOperation?.(null)}
+            style={{
+              all: "unset",
+              cursor: "pointer",
+              flex: "0 0 auto",
+              padding: "2px 6px",
+              fontSize: 10,
+              fontWeight: 600,
+              color: "var(--vlog-primary)",
+              border: "1px solid var(--vlog-primary)",
+              borderRadius: 4,
+            }}
+          >
+            Clear
+          </button>
+        </div>
+      )}
+      {moments.length === 0 ? (
         <p style={{ fontSize: 12, opacity: 0.6 }}>
-          No changes recorded yet. Create, edit, or delete something on the
+          No moments recorded yet. Create, edit, or delete something on the
           canvas.
         </p>
       ) : (
@@ -885,25 +267,28 @@ export const VersionLogPanel: React.FC<VersionLogPanelProps> = ({
             padding: 0,
           }}
         >
-          {increments.map((increment) => (
-            <VersionLogIncrementCard
-              key={increment.id}
-              increment={increment}
-              // Cursor-driven: the increment whose id matches the log's
+          {visibleMoments.map((moment) => (
+            <VersionLogMomentCard
+              key={moment.id}
+              moment={moment}
+              // Cursor-driven: the moment whose id matches the log's
               // cursor is "current". Falls back to the head when the
               // cursor is null (fresh log).
               isCurrent={
                 cursorId == null
-                  ? increment.id === increments[0]?.id
-                  : increment.id === cursorId
+                  ? moment.id === moments[0]?.id
+                  : moment.id === cursorId
               }
-              isInactive={inactiveIds.has(increment.id)}
+              isInactive={inactiveIds.has(moment.id)}
               hardDeps={depHighlight?.hard}
               softDeps={depHighlight?.soft}
               skippedOps={skippedOps}
+              filterOps={filter?.ops}
+              focusOp={filter?.focus ?? null}
               onJump={onJump}
               onToggleActive={onToggleActive}
               onHoverOperation={onHoverOperation}
+              onFilterOperation={onFilterOperation}
             />
           ))}
         </ul>

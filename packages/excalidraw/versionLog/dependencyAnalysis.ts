@@ -90,6 +90,77 @@ export const findDependencies = (
   return { hard, soft };
 };
 
+/**
+ * Every op "related" to `op` by dependency: the transitive closure of
+ * everything `op` depends on (upstream) UNION everything that depends
+ * on `op` (downstream), including `op` itself.
+ *
+ * Powers the sidebar's click-to-filter — clicking a change collapses
+ * the timeline to just its dependency-connected neighbourhood.
+ *
+ * We build the direct-dependency edges for every op in the log once
+ * (edge `B → A` whenever `B` hard/soft-depends on `A`, i.e. `A` is an
+ * earlier op), then walk edges forward from `op` for the upstream set
+ * and reversed edges for the downstream set. Because `findDependencies`
+ * only ever looks backwards, the graph is a DAG whose edges point at
+ * strictly-earlier ops; upstream and downstream closures are therefore
+ * disjoint (apart from `op`), so a single shared "seen" set is safe.
+ */
+export const findRelatedOps = (
+  op: LogOperation,
+  log: VersionLog,
+): Set<LogOperation> => {
+  const allOps: LogOperation[] = [];
+  for (const moment of log.getMoments()) {
+    for (const o of moment.operations) {
+      allOps.push(o);
+    }
+  }
+
+  // `op → {ops it depends on}` and the reverse `op → {ops depending on it}`.
+  const deps = new Map<LogOperation, Set<LogOperation>>();
+  const dependents = new Map<LogOperation, Set<LogOperation>>();
+  for (const o of allOps) {
+    const { hard, soft } = findDependencies(o, log);
+    const direct = new Set<LogOperation>([...hard, ...soft]);
+    deps.set(o, direct);
+    for (const d of direct) {
+      let bucket = dependents.get(d);
+      if (!bucket) {
+        bucket = new Set();
+        dependents.set(d, bucket);
+      }
+      bucket.add(o);
+    }
+  }
+
+  const related = new Set<LogOperation>([op]);
+
+  const walk = (
+    edges: Map<LogOperation, Set<LogOperation>>,
+    start: LogOperation,
+  ) => {
+    const stack = [start];
+    while (stack.length > 0) {
+      const cur = stack.pop();
+      if (cur === undefined) {
+        continue;
+      }
+      for (const next of edges.get(cur) ?? []) {
+        if (!related.has(next)) {
+          related.add(next);
+          stack.push(next);
+        }
+      }
+    }
+  };
+
+  walk(deps, op); // upstream: what `op` depends on
+  walk(dependents, op); // downstream: what depends on `op`
+
+  return related;
+};
+
 // ---------------------------------------------------------------------
 
 const propKey = ({
@@ -109,35 +180,35 @@ function* iterateBackwardFromOp(
   targetOp: LogOperation,
   log: VersionLog,
 ): Generator<LogOperation> {
-  const increments = log.getIncrements();
+  const moments = log.getMoments();
 
-  let foundIncIdx = -1;
+  let foundMomentIdx = -1;
   let foundOpIdx = -1;
-  for (let i = 0; i < increments.length; i++) {
-    const idx = increments[i].operations.indexOf(targetOp);
+  for (let i = 0; i < moments.length; i++) {
+    const idx = moments[i].operations.indexOf(targetOp);
     if (idx >= 0) {
-      foundIncIdx = i;
+      foundMomentIdx = i;
       foundOpIdx = idx;
       break;
     }
   }
-  if (foundIncIdx < 0) {
+  if (foundMomentIdx < 0) {
     return;
   }
 
-  // Earlier ops within the same increment (chronologically before
-  // targetOp). Within an increment, op[0] is the earliest, so we
+  // Earlier ops within the same moment (chronologically before
+  // targetOp). Within a moment, op[0] is the earliest, so we
   // iterate `foundOpIdx - 1` down to `0`.
-  const sameIncOps = increments[foundIncIdx].operations;
+  const sameMomentOps = moments[foundMomentIdx].operations;
   for (let j = foundOpIdx - 1; j >= 0; j--) {
-    yield sameIncOps[j];
+    yield sameMomentOps[j];
   }
 
-  // Older increments. In the newest-first array these have HIGHER
+  // Older moments. In the newest-first array these have HIGHER
   // index. Within each, the last op is the most recent — iterate in
   // reverse.
-  for (let i = foundIncIdx + 1; i < increments.length; i++) {
-    const ops = increments[i].operations;
+  for (let i = foundMomentIdx + 1; i < moments.length; i++) {
+    const ops = moments[i].operations;
     for (let j = ops.length - 1; j >= 0; j--) {
       yield ops[j];
     }

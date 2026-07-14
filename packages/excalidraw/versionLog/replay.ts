@@ -1,14 +1,14 @@
 /**
- * Replay the active subset of the log to produce a fresh scene
- * snapshot. The selective-undo entry point.
- *
+ * Replay the active subset of the log to produce a fresh scene snapshot. 
+ * Entry point for selective undo.
+ * 
  * Algorithm:
  *
- *   1. Clone the baseline scene captured at the moment the first
- *      increment was ingested.
- *   2. Walk increments oldest-first, up to AND INCLUDING the cursor.
+ *   1. Clone the baseline scene captured just before the first
+ *      moment was ingested.
+ *   2. Walk moments oldest-first, up to AND INCLUDING the cursor.
  *      Skip any whose id is in the inactive set entirely.
- *   3. For each remaining increment, walk its ops in chronological
+ *   3. For each remaining moment, walk its ops in chronological
  *      order. Apply user-supplied remaps; then before applying each
  *      op, check whether its (possibly-rewritten) referent actually
  *      exists. If any referent is missing, record the op as skipped
@@ -24,10 +24,10 @@
 
 import { applyOpsToScene } from "./applyOps";
 import { applyRemapsToOp } from "./remap";
-import { collectElementIdsFromGroupNode } from "./types";
+import { collectElementIdsFromGroupNode, getOperationElementIds } from "./types";
 
 import type { SceneSnapshot } from "./applyOps";
-import type { LogIncrement, LogOperation, PendingConflict } from "./types";
+import type { LogMoment, LogOperation, PendingConflict } from "./types";
 import type { VersionLog } from "./VersionLog";
 
 export interface ReplayResult {
@@ -53,17 +53,17 @@ export const replayActiveOps = (log: VersionLog): ReplayResult | null => {
   // with `{ ...el, ...updates }`.
   const snapshot: SceneSnapshot = new Map(baseline) as unknown as SceneSnapshot;
 
-  const increments = log.getIncrements();
-  const inactive = log.getInactiveIncrementIds();
+  const moments = log.getMoments();
+  const inactive = log.getInactiveMomentIds();
   const remaps = log.getRemaps();
 
   // Cursor index. If unset, treat as head (newest = index 0). Empty
   // log was handled by the baseline === null guard above.
-  const cursorId = log.getCurrentIncrementId();
+  const cursorId = log.getCurrentMomentId();
   const cursorIdx =
     cursorId == null
       ? 0
-      : increments.findIndex((inc) => inc.id === cursorId);
+      : moments.findIndex((m) => m.id === cursorId);
   if (cursorIdx < 0) {
     return null;
   }
@@ -74,17 +74,45 @@ export const replayActiveOps = (log: VersionLog): ReplayResult | null => {
   // into a single user decision.
   const conflictMap = new Map<string, PendingConflict>();
 
+  // Elements any walked moment touches — active OR skipped. These are
+  // the only ones whose state can differ from the store's snapshot, so
+  // they're the only ones that need a version bump at commit time (see
+  // the stamping pass below). Collected across every moment in range,
+  // skipped ones included: skipping a moment reverts elements that no
+  // active op re-writes, and those still need to dominate the snapshot.
+  const inPlay = new Set<string>();
+
   // Walk oldest-first (high array index → low). Stop after applying
-  // the cursor's increment.
-  for (let i = increments.length - 1; i >= cursorIdx; i--) {
-    const inc = increments[i];
-    if (inactive.has(inc.id)) {
-      // Increment is deactivated wholesale; nothing to apply, no
+  // the cursor's moment.
+  for (let i = moments.length - 1; i >= cursorIdx; i--) {
+    const moment = moments[i];
+    for (const op of moment.operations) {
+      for (const id of getOperationElementIds(op)) {
+        inPlay.add(id);
+      }
+    }
+    if (inactive.has(moment.id)) {
+      // Moment is deactivated wholesale; nothing to apply, no
       // conflicts to record at this level — its ops simply didn't
       // happen.
       continue;
     }
-    applyIncrementTracked(inc, snapshot, remaps, skipped, conflictMap);
+    applyMomentTracked(moment, snapshot, remaps, skipped, conflictMap);
+  }
+
+  // Stamp the in-play elements with a version that dominates the store's
+  // snapshot so the commit is adopted wholesale despite the store's
+  // strict `snapshot.version < next.version` gate. Untouched-since-
+  // baseline elements are deliberately left alone: their version already
+  // matches the store, so they stay out of the ephemeral change the
+  // commit emits (onChange / collab / persistence). See
+  // `VersionLog.reserveReplayVersion`.
+  const replayVersion = log.reserveReplayVersion();
+  for (const id of inPlay) {
+    const el = snapshot.get(id);
+    if (el) {
+      snapshot.set(id, { ...el, version: replayVersion } as typeof el);
+    }
   }
 
   return { snapshot, skipped, conflicts: Array.from(conflictMap.values()) };
@@ -92,14 +120,14 @@ export const replayActiveOps = (log: VersionLog): ReplayResult | null => {
 
 // ---------------------------------------------------------------------
 
-const applyIncrementTracked = (
-  inc: LogIncrement,
+const applyMomentTracked = (
+  moment: LogMoment,
   snapshot: SceneSnapshot,
   remaps: ReadonlyMap<string, import("./types").Remap>,
   skipped: Set<LogOperation>,
   conflictMap: Map<string, PendingConflict>,
 ): void => {
-  for (const op of inc.operations) {
+  for (const op of moment.operations) {
     const remap = applyRemapsToOp(op, remaps);
     if (remap.status === "skip") {
       // User explicitly chose to skip everything that touched this
