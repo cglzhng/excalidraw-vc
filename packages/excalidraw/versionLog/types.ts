@@ -1,16 +1,16 @@
 /**
  * Types for the in-memory version log / audit log.
  *
- * The primitive unit is a `LogIncrement` — one store increment, holding
+ * The primitive unit is a `LogMoment` — one user-facing change, holding
  * one or more semantic `LogOperation`s derived from the raw element
- * deltas. This mirrors the upstream `DurableIncrement` shape and keeps
- * related changes (e.g. a multi-select drag, a paste) bound together
- * for display, revert, branching, etc.
+ * deltas. It wraps one upstream `DurableIncrement` and keeps related
+ * changes (e.g. a multi-select drag, a paste) bound together for
+ * display, revert, branching, etc.
  *
  * Operations are a higher-level view than the raw `Delta<ElementPartial>`
  * the store emits: "moved group G by (dx, dy)" instead of "elements A, B,
  * C each had x and y change." When classification fails for any single
- * change in an increment, the whole increment falls back to `raw`
+ * change in a moment, the whole moment falls back to `raw`
  * operations (one per untouched entry) so no information is lost.
  */
 
@@ -24,8 +24,7 @@ import type { TransformMatrix } from "./transform";
  * Re-exported from Excalidraw so the rest of the version-log code can
  * stay free of `unknown` casts.
  *
- * `null` represents "not bound" — both endpoints are independently
- * bindable, and either may be unset.
+ * `null` represents "not bound"
  */
 export type ArrowBinding = FixedPointBinding | null;
 
@@ -33,19 +32,18 @@ export type LogEntryType = "create" | "update" | "delete";
 
 /**
  * A child of a `GroupNode`: either another group (nested) or a leaf
- * element id. Groups can contain groups; elements are always leaves.
+ * element id.
  *
  * This is a tree representation of Excalidraw's flat `groupIds` array
  * on each element. We use it for `group` / `ungroup` ops because the
  * tree encodes structure (in particular the position of a group
- * relative to its siblings and ancestors) that the flat array loses
- * once a group is dissolved — the "ungroup-redo" problem.
+ * relative to its siblings and ancestors).
  */
 export type GroupChild =
   | { kind: "element"; elementId: string }
   | { kind: "group"; node: GroupNode };
 
-/** A group with its members, in z-order (only roughly significant). */
+/** A group with its members, in z-order. */
 export interface GroupNode {
   id: string;
   children: GroupChild[];
@@ -84,7 +82,7 @@ export type LogPropertyMap = Record<string, unknown>;
  * intermediate form that the classifier consumes inside `VersionLog`.
  */
 export interface LogEntry {
-  /** Stable id for React keys + future persistence. Unique within an increment. */
+  /** Stable id for React keys + future persistence. Unique within a moment. */
   id: string;
   type: LogEntryType;
   elementId: string;
@@ -98,8 +96,9 @@ export interface LogEntry {
 
 /**
  * Semantic operations derived from raw element deltas. Each variant
- * carries just the data needed to describe that operation; consumers
- * use `getOperationElementIds` to enumerate the ids it touches (for
+ * carries just the data needed to describe that operation.
+ * 
+ * Use `getOperationElementIds` to enumerate the ids it touches (for
  * hover-highlight, future revert-scope previews, etc.).
  */
 export type LogOperation =
@@ -115,7 +114,7 @@ export type LogOperation =
       kind: "delete";
       elementId: string;
       elementType?: string;
-      /** Last-known property values before tombstoning. */
+      /** Last-known property values before user deletion. */
       lastValues: LogPropertyMap;
     }
   // Geometric ---------------------------------------------------------
@@ -136,7 +135,7 @@ export type LogOperation =
       transform: TransformMatrix;
       /**
        * Bound-arrow geometry changes that were captured in the same
-       * increment as a consequence of this op (arrow endpoint follows
+       * moment as a consequence of this op (arrow endpoint follows
        * a moved/resized/rotated bindable). Not surfaced as separate
        * ops — the user did one thing, we show one op — but the raw
        * before/after values are stashed here so replay can reproduce
@@ -383,9 +382,9 @@ export const getOperationElementIds = (op: LogOperation): string[] => {
 const consequentIds = (op: { consequentOps?: LogOperation[] }): string[] =>
   op.consequentOps?.flatMap((o) => getOperationElementIds(o)) ?? [];
 
-export interface LogIncrement {
+export interface LogMoment {
   id: string;
-  /** Wall-clock time the increment was observed, ms since epoch. */
+  /** Wall-clock time the moment was observed, ms since epoch. */
   timestamp: number;
   /**
    * Semantic operations derived from the raw store delta. May be empty
@@ -396,10 +395,8 @@ export interface LogIncrement {
   /** Pre-computed tallies — handy for the card header. */
   counts: { create: number; update: number; delete: number };
   /**
-   * The original store delta this increment was derived from. Retained
-   * so we can `StoreDelta.inverse(...)` it later for revert / branch.
-   * Not serialized when we add IndexedDB persistence — will need
-   * re-hydration via `StoreDelta.restore()` at load time.
+   * The original store delta this moment was derived from.
+   * Unused but retained for debugging.
    */
   delta: StoreDelta;
 }
@@ -437,12 +434,4 @@ export interface PendingConflict {
   affectedOps: LogOperation[];
   /** Live target ids the user can remap to (same kind). */
   candidates: string[];
-}
-
-/** Reserved for future filtering UI; unused in v1. */
-export interface LogQuery {
-  type?: LogEntryType;
-  elementId?: string;
-  since?: number;
-  until?: number;
 }

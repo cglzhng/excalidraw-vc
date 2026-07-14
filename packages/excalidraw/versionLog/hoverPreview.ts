@@ -40,7 +40,10 @@ import { applyOpsToScene } from "./applyOps";
 
 import type { SceneSnapshot } from "./applyOps";
 
-import { collectElementIdsFromGroupNode } from "./types";
+import {
+  collectElementIdsFromGroupNode,
+  getOperationElementIds,
+} from "./types";
 
 import type { GroupChild, LogOperation } from "./types";
 
@@ -117,7 +120,13 @@ export const computeHoverPreview = (
       if (snapshot == null) {
         return null;
       }
-      const ids = elementIdsForOp(op);
+      // `getOperationElementIds` includes the ids of any absorbed
+      // consequence ops (e.g. a bound arrow that followed this move), so
+      // the ghost shows the arrow alongside the element it's bound to.
+      // The opposite-side geometry for those arrows is already in the
+      // snapshot — `applyOps` replays `consequentOps` when it applies the
+      // parent op.
+      const ids = getOperationElementIds(op);
       const ghosts: OrderedExcalidrawElement[] = [];
       for (const id of ids) {
         const el = snapshot.get(id);
@@ -136,25 +145,6 @@ export const computeHoverPreview = (
 };
 
 // ---------------------------------------------------------------------
-
-const elementIdsForOp = (op: LogOperation): string[] => {
-  switch (op.kind) {
-    case "delete":
-    case "move":
-    case "rotate":
-    case "arrow-rotate":
-    case "resize":
-    case "arrow-resize":
-    case "arrow-edit-points":
-      return [op.elementId];
-    case "move-group":
-    case "rotate-group":
-    case "resize-group":
-      return op.elementIds;
-    default:
-      return [];
-  }
-};
 
 const idsForChild = (child: GroupChild): string[] => {
   if (child.kind === "element") {
@@ -186,68 +176,68 @@ const buildOppositeSideSnapshot = (
   log: VersionLog,
   currentScene: SceneSnapshot,
 ): SceneSnapshot | null => {
-  const increments = log.getIncrements();
+  const moments = log.getMoments();
 
-  // Locate the increment + position of the hovered op.
-  let targetIncIdx = -1;
+  // Locate the moment + position of the hovered op.
+  let targetMomentIdx = -1;
   let targetOpIdx = -1;
-  for (let i = 0; i < increments.length; i++) {
-    const idx = increments[i].operations.indexOf(op);
+  for (let i = 0; i < moments.length; i++) {
+    const idx = moments[i].operations.indexOf(op);
     if (idx >= 0) {
-      targetIncIdx = i;
+      targetMomentIdx = i;
       targetOpIdx = idx;
       break;
     }
   }
-  if (targetIncIdx < 0) {
+  if (targetMomentIdx < 0) {
     return null;
   }
 
   // Cursor index. `null` cursor (fresh log) is equivalent to head.
-  const cursorId = log.getCurrentIncrementId();
+  const cursorId = log.getCurrentMomentId();
   const cursorIdx =
     cursorId == null
       ? 0
-      : increments.findIndex((inc) => inc.id === cursorId);
+      : moments.findIndex((m) => m.id === cursorId);
   if (cursorIdx < 0) {
     return null;
   }
 
   const snapshot: SceneSnapshot = new Map(currentScene);
 
-  if (cursorIdx <= targetIncIdx) {
+  if (cursorIdx <= targetMomentIdx) {
     // -------- backward replay --------
     //
-    // Undo every full increment between cursor (inclusive) and the
-    // hovered op's increment (exclusive). `applyOpsToScene` reverses
-    // the ops within an increment internally when given direction
+    // Undo every full moment between cursor (inclusive) and the
+    // hovered op's moment (exclusive). `applyOpsToScene` reverses
+    // the ops within a moment internally when given direction
     // "backward".
-    for (let i = cursorIdx; i < targetIncIdx; i++) {
-      applyOpsToScene(increments[i].operations, snapshot, "backward");
+    for (let i = cursorIdx; i < targetMomentIdx; i++) {
+      applyOpsToScene(moments[i].operations, snapshot, "backward");
     }
 
-    // Within the hovered op's increment, undo ops from the end of the
-    // increment down to AND INCLUDING the hovered op. The slice
+    // Within the hovered op's moment, undo ops from the end of the
+    // moment down to AND INCLUDING the hovered op. The slice
     // covers [T, end); "backward" iterates it in reverse, landing the
     // snapshot at state-before-T.
-    const targetOps = increments[targetIncIdx].operations.slice(targetOpIdx);
+    const targetOps = moments[targetMomentIdx].operations.slice(targetOpIdx);
     applyOpsToScene(targetOps, snapshot, "backward");
   } else {
     // -------- forward replay --------
     //
     // Newest-first array: chronological "next" after `cursorIdx` is
     // `cursorIdx - 1`. Walk DOWN from `cursorIdx - 1` to
-    // `targetIncIdx + 1`, applying each full increment forward.
-    for (let i = cursorIdx - 1; i > targetIncIdx; i--) {
-      applyOpsToScene(increments[i].operations, snapshot, "forward");
+    // `targetMomentIdx + 1`, applying each full moment forward.
+    for (let i = cursorIdx - 1; i > targetMomentIdx; i--) {
+      applyOpsToScene(moments[i].operations, snapshot, "forward");
     }
 
-    // Then within the target increment, apply ops chronologically up
+    // Then within the target moment, apply ops chronologically up
     // to AND INCLUDING the hovered op. The slice covers [0, T + 1);
     // "forward" iterates it in original order, landing the snapshot
     // at state(T) — the "after" side, which the user wants because
     // the live element is currently at the "before" side.
-    const targetOps = increments[targetIncIdx].operations.slice(
+    const targetOps = moments[targetMomentIdx].operations.slice(
       0,
       targetOpIdx + 1,
     );

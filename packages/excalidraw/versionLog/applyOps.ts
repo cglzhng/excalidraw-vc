@@ -1,32 +1,13 @@
 /**
  * Apply a sequence of `LogOperation`s to a scene snapshot, in either
- * direction. Used by `App.jumpToVersionLogIncrement` so that jumps no
- * longer depend on the raw `StoreDelta` retained on each `LogIncrement`
- * — every change is reconstructed from the semantic op data.
- *
+ * direction. 
+ * 
  * Direction:
  *   - "forward":  apply each op as it was originally — moves x/y by
  *                 +(dx, dy), sets angle to `op.to`, etc.
  *   - "backward": invert each op — moves x/y by -(dx, dy), sets angle
  *                 to `op.from`, etc.
  *
- * The caller is responsible for walking the right increments in the
- * right outer order. Inside this module:
- *   - `applyOpsToScene` walks the ops array, reversing its order for
- *     backward direction (so ops are undone in reverse-chronological
- *     sequence within an increment).
- *   - `applyOpToScene` switches on `op.kind`.
- *
- * Known approximations (acceptable for iteration 2; revisit if they
- * cause visible round-trip drift):
- *
- *   - `arrow-bind` / `arrow-move-binding` restore the binding payload
- *     but leave the derived `points` / `x` / `y` / `width` / `height`
- *     in whatever state the scene was in when the op fires. The
- *     original binding event would have shifted the endpoint and
- *     recomputed the bbox; we don't have that data on the op.
- *   - Group transforms (`rotate-group`, `resize-group`) accumulate
- *     float drift across repeated round-trips.
  */
 
 import type { OrderedExcalidrawElement } from "@excalidraw/element/types";
@@ -38,20 +19,15 @@ import type { LogOperation } from "./types";
 
 /**
  * Mutable scene snapshot used during op application. Keyed by element
- * id; values are the element objects (treated as immutable — we
- * replace via `scene.set(id, { ...el, …updates })`).
+ * id; values are the element objects (treated as immutable).
  */
 export type SceneSnapshot = Map<string, OrderedExcalidrawElement>;
 
 export type ApplyDirection = "forward" | "backward";
 
 /**
- * Apply every op in `ops` to `scene` in the given direction. For
- * backward direction the iteration order is reversed so each op's
- * inverse runs in the right sequence within an increment.
- *
- * Mutates `scene` in place — pass in a cloned `Map` if the caller
- * needs to retain the original.
+ * Apply every op in `ops` to `scene` in the given direction.
+ * Mutates `scene` in place.
  */
 export const applyOpsToScene = (
   ops: readonly LogOperation[],
@@ -67,18 +43,11 @@ export const applyOpsToScene = (
 // ---------------------------------------------------------------------
 
 /**
- * Replace the element at `id` with the result of merging `updates` on
- * top of the existing object. Treats elements as immutable — if there's
- * no existing element, the call is a no-op (we don't fabricate ids).
+ * Replace the element at `id` with the result of merging it with the updated properties contained in `updates`. 
+ * If there's no existing element, the call is a no-op.
  *
- * Always increments `version`. Excalidraw's store uses a strict
- * `prev.version < next.version` check in `detectChangedElements` to
- * decide whether to refresh its snapshot for a given element. Without
- * a bump, our jump produces elements with the SAME version the scene
- * already has, the store concludes "nothing changed", and the
- * snapshot drifts out of sync with the canvas. The next real edit
- * then computes its delta against that stale snapshot and surfaces
- * "phantom" reverts of whatever the jump undid.
+ * Always increment `version` because Excalidraw checks the version number
+ * to decide when to update its internal snapshot. 
  */
 const updateElement = (
   scene: SceneSnapshot,
@@ -100,14 +69,11 @@ const updateElement = (
 };
 
 /**
- * Insert an element into the scene if it isn't already there;
- * otherwise merge `values` over the existing one. Used by `create`
- * forward and `delete` backward — both paths need to actually
- * materialise an element when replaying from a baseline that
- * predates it. `values` is expected to be the full property bag
- * Excalidraw's delta engine captured (`delta.inserted` /
- * `delta.deleted`), so the inserted object has everything the
- * renderer needs.
+ * Same as updateElement, but insert it if it isn't there.
+ * Used by `create` forward and `delete` backward.
+ * 
+ * Expectation: `values` contains the full set of properties
+ * so that Excalidraw can render it properly.
  */
 const upsertElement = (
   scene: SceneSnapshot,
@@ -116,20 +82,11 @@ const upsertElement = (
 ): void => {
   const el = scene.get(id);
   if (el) {
-    scene.set(id, {
-      ...el,
-      ...values,
-      version: el.version + 1,
-    } as OrderedExcalidrawElement);
+    updateElement(scene, id, values);
   } else {
-    // Defaults for array fields that Excalidraw's delta engine may
-    // omit from `values` when they match the "all elements start
-    // here" default. If we leave them `undefined`, Excalidraw
-    // silently normalises them to `[]` during the next user
-    // interaction, and that silent write shows up as a phantom
-    // property change in the following delta — making a plain move
-    // look like a multi-property edit. Setting safe defaults up
-    // front keeps the captured state consistent.
+    // Also add the Excalidraw default values (version, groupIds, boundElements)
+    // so that Excalidraw doesn't populate them with default values 
+    // and emit extra deltas
     scene.set(id, {
       id,
       version: 1,
@@ -141,17 +98,11 @@ const upsertElement = (
 };
 
 /**
- * Recompute the bounding box (x, y, width, height) from a `points`
- * array. Excalidraw stores `points` in element-local coordinates
- * starting at `[0, 0]`, with the element's world position carried by
- * `x` and `y`. When points change we have to shift both the world
- * anchor and the bbox dimensions.
- *
- * Returns the deltas relative to a starting `(x, y)` of the element.
+ * Recompute the bounding box (width, height) from a `points` array. 
  */
 const bboxFromPoints = (
   points: ReadonlyArray<readonly [number, number]>,
-): { width: number; height: number; offsetX: number; offsetY: number } => {
+): { width: number; height: number; } => {
   let minX = Infinity;
   let maxX = -Infinity;
   let minY = Infinity;
@@ -173,17 +124,11 @@ const bboxFromPoints = (
   return {
     width: maxX - minX,
     height: maxY - minY,
-    // The element's world (x, y) corresponds to the local origin; if
-    // the local origin shifts within the bbox, x and y need to shift
-    // by the negative amount to keep the same world position.
-    offsetX: minX,
-    offsetY: minY,
   };
 };
 
 /**
- * Rotate point `(px, py)` around pivot `(cx, cy)` by `angle` radians,
- * counter-clockwise.
+ * Rotate point `(px, py)` around pivot `(cx, cy)` by `angle` radians counter-clockwise.
  */
 const rotateAround = (
   px: number,
@@ -200,7 +145,7 @@ const rotateAround = (
 };
 
 // ---------------------------------------------------------------------
-
+//TODO: Evaluate if we need to get rid of this function
 /**
  * Apply any ops that were absorbed into this op at classification time
  * as consequences of the same user action (a bound arrow's endpoint
@@ -227,7 +172,7 @@ const applyConsequentOps = (
     return;
   }
   // The consequences are themselves fully-formed ops (classified from
-  // the same increment's arrow entries — typically `arrow-edit-points`
+  // the same moment's arrow entries — typically `arrow-edit-points`
   // / `move`). Replay them through the shared engine so they invert
   // correctly for `backward` and never drift from the arrow handlers.
   applyOpsToScene(op.consequentOps, scene, direction);
@@ -244,10 +189,8 @@ const applyOpToScene = (
   switch (op.kind) {
     // -------------------- lifecycle --------------------
     case "create": {
-      // Forward: insert / un-soft-delete. We use `upsertElement`
-      // because the scene may not contain this element yet — the
-      // selective-undo replay starts from a baseline captured before
-      // most creates fired. Backward: hide via soft-delete.
+      // Forward: insert / un-soft-delete. 
+      // Backward: hide via soft-delete.
       if (forward) {
         upsertElement(scene, op.elementId, {
           ...(op.values as Partial<OrderedExcalidrawElement>),
@@ -259,9 +202,8 @@ const applyOpToScene = (
       break;
     }
     case "delete": {
-      // Forward: soft-delete. Backward: restore from lastValues —
-      // same `upsertElement` reason: if replay rewound past the
-      // original create, the element may need to be reinserted.
+      // Forward: soft-delete. 
+      // Backward: restore from lastValues using upsertElement
       if (forward) {
         updateElement(scene, op.elementId, { isDeleted: true });
       } else {
@@ -311,8 +253,8 @@ const applyOpToScene = (
       break;
     }
     case "rotate-group": {
-      // Rotate each member's center around `op.center` by `±op.angle`,
-      // and bump its own `angle` by the same delta.
+      // In addition to rotating each member by `op.angle`, also 
+      // rotate each member's center around `op.center` by `op.angle`
       const angle = sign * op.angle;
       const [cx, cy] = op.center ?? [0, 0];
       for (const id of op.elementIds) {
@@ -339,8 +281,6 @@ const applyOpToScene = (
       const dims = forward ? op.to : op.from;
       const el = scene.get(op.elementId);
       if (el) {
-        // If we have a resize center, scale the element's (x, y) around
-        // it. This preserves the anchor corner during a corner drag.
         if (op.center) {
           const sx = forward ? op.scaleX : 1 / op.scaleX;
           const sy = forward ? op.scaleY : 1 / op.scaleY;
@@ -442,18 +382,17 @@ const applyOpToScene = (
 
     // -------------------- grouping --------------------
     //
-    // Both `group` and `ungroup` reduce to two canonical actions:
+    // You can create or remove a group.
     //
-    //   "install" the group's id into every affected element's
-    //   `groupIds` at the position just inner to `parentGroupId`;
+    // Creating a group with a given groupId, parentGroupId, and elements means adding the groupId
+    // into every given elements's array `groupIds` at the position just inner to `parentGroupId`;
     //
-    //   "uninstall" the gid by filtering it out.
+    // Removing a group with groupId is to remove the groupId from the `groupIds` array from each element that
+    // contains the groupId in its groupIds array.
     //
-    // Direction picks which: forward-of-group = install,
-    // backward-of-group = uninstall; ungroup is the opposite.
     case "group":
     case "ungroup": {
-      const install =
+      const create =
         (op.kind === "group" && forward) ||
         (op.kind === "ungroup" && !forward);
       const gid = op.group.id;
@@ -464,7 +403,7 @@ const applyOpToScene = (
         if (!el) {
           continue;
         }
-        if (install) {
+        if (create) {
           if (el.groupIds.includes(gid)) {
             continue;
           }

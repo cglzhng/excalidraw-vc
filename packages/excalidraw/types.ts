@@ -458,12 +458,12 @@ export interface AppState {
    * shown; the user picks Skip / Remap for each missing referent,
    * the picks are written to `versionLog.remaps`, and replay re-runs.
    *
-   * `pendingIncrementId` is the increment whose toggle produced the
+   * `pendingMomentId` is the moment whose toggle produced the
    * conflicts — used by the modal's Cancel action to revert the
    * toggle if the user backs out.
    */
   versionLogPendingConflicts: {
-    pendingIncrementId: string;
+    pendingMomentId: string;
     conflicts: import("./versionLog/types").PendingConflict[];
   } | null;
   /**
@@ -1355,8 +1355,8 @@ export type AppClassProperties = {
   isNavigationEnabled: App["isNavigationEnabled"];
   isUIControlEnabled: App["isUIControlEnabled"];
   versionLog: App["versionLog"];
-  jumpToVersionLogIncrement: App["jumpToVersionLogIncrement"];
-  toggleVersionLogIncrement: App["toggleVersionLogIncrement"];
+  jumpToVersionLogMoment: App["jumpToVersionLogMoment"];
+  toggleVersionLogMoment: App["toggleVersionLogMoment"];
 };
 
 export type PointerDownState = Readonly<{

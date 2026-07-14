@@ -1,0 +1,46 @@
+.VersionLogPanel {
+  // --- theme hooks (Excalidraw global -> literal fallback) ---
+  --vlog-primary: var(--color-primary, #5b57d1);
+  --vlog-font: var(--ui-font, sans-serif);
+  --vlog-card-border: var(--sidebar-border-color, #d0d0d0);
+  --vlog-card-bg: var(--island-bg-color, rgba(0, 0, 0, 0.02));
+  --vlog-current-bg: var(--color-primary-light, rgba(91, 87, 209, 0.08));
+  --vlog-entry-bg: var(--default-bg-color, transparent);
+
+  // --- semantic accent ---
+  --vlog-danger: #c92a2a;
+
+  // --- lifecycle / count-chip colors ---
+  --vlog-type-create: #2f9e44; // green
+  --vlog-type-update: #1971c2; // blue
+  --vlog-type-delete: #c92a2a; // red
+
+  // --- per-operation accent colors ---
+  // Lifecycle ops borrow the create/delete palette; semantic ops get
+  // their own shades so the timeline is scannable at a glance.
+  --vlog-op-create: var(--vlog-type-create);
+  --vlog-op-delete: var(--vlog-type-delete);
+  --vlog-op-move: #1971c2;
+  --vlog-op-move-group: #1864ab;
+  --vlog-op-resize: #7048e8;
+  --vlog-op-resize-group: #5f3dc4;
+  --vlog-op-rotate: #9c36b5;
+  --vlog-op-rotate-group: #862e9c;
+  --vlog-op-restyle: #d9480f;
+  // Arrow-specific shades — warm/orange family, next to restyle but
+  // still distinguishable.
+  --vlog-op-arrow-edit-points: #e8590c;
+  --vlog-op-arrow-bind: #0ca678;
+  --vlog-op-arrow-move-binding: #37b24d;
+  --vlog-op-arrow-resize: #7048e8;
+  --vlog-op-arrow-rotate: #9c36b5;
+  // Grouping ops — teal/cyan family, distinct from any other group.
+  --vlog-op-group: #0b7285;
+  --vlog-op-ungroup: #15aabf;
+  --vlog-op-raw: #868e96;
+
+  // --- row highlight washes ---
+  --vlog-focus-bg: rgba(91, 87, 209, 0.18); // click-to-filter anchor
+  --vlog-hard-dep-bg: rgba(217, 72, 15, 0.18); // hard dependency
+  --vlog-soft-dep-bg: rgba(245, 159, 0, 0.16); // soft dependency
+}

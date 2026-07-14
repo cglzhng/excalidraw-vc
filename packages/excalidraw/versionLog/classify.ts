@@ -1,6 +1,5 @@
 import type {
   ExcalidrawElement,
-  FixedPointBinding,
   OrderedExcalidrawElement,
 } from "@excalidraw/element/types";
 
@@ -27,17 +26,12 @@ import type {
 import type { TransformMatrix } from "./transform";
 
 /**
- * Properties Excalidraw uses for change tracking that are noise for
- * semantic classification. Ignore them throughout.
+ * Properties that are noise for our own semantic classification.
+ * We ignore them throughout.
  *
  * `boundElements` is included here because upstream's emit of this
- * field is unreliable — at least two endpoint-drag paths null an
- * arrow's `startBinding` / `endBinding` directly without going
- * through `unbindBindingElement`, leaving the bindable element's
- * `boundElements` back-reference stale. As a result the field shows
- * up in some bind/unbind deltas but not others, and treating it as
- * a meaningful change would yield false `raw` ops. The arrow's own
- * `startBinding` / `endBinding` are authoritative for binding state.
+ * field is unreliable. The arrow's own `startBinding` / `endBinding` fields
+ * provide the binding state.
  */
 const TRACKING_PROPS = new Set([
   "version",
@@ -47,8 +41,7 @@ const TRACKING_PROPS = new Set([
 ]);
 
 /**
- * Style properties that, when changed in isolation, become a `restyle`
- * operation. One op per property (per Q2 answer).
+ * Properties that result in a `restyle` operation when changed.
  */
 const STYLE_PROPS: readonly string[] = [
   "strokeColor",
@@ -66,6 +59,10 @@ const STYLE_PROPS: readonly string[] = [
 //
 // Mutiselect: Multiple elements selected, same operation applied to all
 // Dependencies: Operation applied to element(s) caused other element(s) to change
+//
+// entries: All the LogEntrys from the App
+// changedElements: Contains references to every ExcalidrawElement that was changed
+// groupSizeCache: A map that contains the size of each group in the scene
 export const classifyEntries = (
   entries: readonly LogEntry[],
   changedElements: Record<string, OrderedExcalidrawElement>,
@@ -73,7 +70,7 @@ export const classifyEntries = (
 ): LogOperation[] => {
   // Pre-pass A: identify arrow entries whose changes are purely a
   // consequence of a bound bindable element being transformed in the
-  // same increment. Those are absorbed into the causing op rather
+  // same moment. Those are absorbed into the causing op rather
   // than surfaced as their own — one user action, one op. See the
   // `consequentOps` field on move/resize/rotate ops.
   const arrowConsequences = findConsequentArrowChanges(
@@ -115,17 +112,36 @@ export const classifyEntries = (
   ];
 
   attachArrowConsequences(finalOps, arrowConsequences, changedElements);
+
+  // [version-log] debug: dump the classified operations so the shape of
+  // each classification can be inspected alongside the raw delta log.
+  // Safe to remove once the classifier is stable.
+  // eslint-disable-next-line no-console
+  console.groupCollapsed(`[version-log] classified ${finalOps.length} op(s)`);
+  // eslint-disable-next-line no-console
+  console.log(
+    finalOps.map((op) => op.kind).join(", ") || "(none)",
+  );
+  for (const op of finalOps) {
+    // eslint-disable-next-line no-console
+    console.log(op.kind, op);
+  }
+  // eslint-disable-next-line no-console
+  console.log("full operations:", JSON.stringify(finalOps));
+  // eslint-disable-next-line no-console
+  console.groupEnd();
+
   return finalOps;
 };
 
 /**
  * Geometry properties of an element that affect its world transform.
- * If an entry doesn't touch a given property, its before/after value is
- * the same as the current scene value.
  */
 type GeometryKey = "x" | "y" | "width" | "height" | "angle";
-
 /**
+ * !NOTE: THIE FUNCTION IS ENTIRELY VIBE-CODED. USE WITH CAUTION!
+ * !REVISIT WITH A TEXTBOOK!
+ *
  * Compute the single `TransformMatrix` representing the geometric
  * change to one element between its before- and after-states.
  *
@@ -196,6 +212,7 @@ const buildEntryGeometryMatrix = (
   return composeMatrix(after, beforeInv);
 };
 
+// Turn ONE LogEntry into ONE corresponding LogOperation
 const classifyEntry = (
   entry: LogEntry,
   changedElements: Record<string, OrderedExcalidrawElement>,
@@ -220,10 +237,8 @@ const classifyEntry = (
   const current = changedElements[entry.elementId];
   const changed = getChangedKeys(entry);
 
-  // Arrows have derived geometry (x/y/width/height computed from
-  // points) and structural properties (`startBinding`, `endBinding`)
-  // that don't fit the generic geometry/style classifier. Dispatch to
-  // arrow-specific detection first; if nothing matches, fall through
+  // Dispatch to   // arrow-specific detection first.
+  // If nothing matches, fall through
   // and let the generic paths handle simple cases like translation.
   if (current?.type === "arrow") {
     const arrowOp = classifyArrowEntry(entry, current, changed);
@@ -249,15 +264,15 @@ const classifyEntry = (
   if (hasGeometryChange && current && changed.size === 0) {
     const transform = buildEntryGeometryMatrix(entry, current);
 
-    // Without an invertible transform (e.g. degenerate before-box) the
+    // Without an invertible transform, the
     // geometric op types can't be populated; fall through to raw.
     if (transform == null) {
       return { kind: "raw", entry };
     }
 
-    // Resize: width and/or height changed; angle unchanged. x/y may
-    // also have changed if the user dragged from a corner that isn't
-    // the anchor — that's the normal case.
+    // Resize: width and/or height changed; angle unchanged. 
+    // x and y also change when the user drags from somewhere 
+    // other than the top-left corner 
     if (hasSizeChange && !hasAngleChange && current) {
       const fromW =
         "width" in entry.before
@@ -276,7 +291,7 @@ const classifyEntry = (
           ? (entry.after.height as number)
           : (current.height as number);
 
-      // Local-frame scale: derive directly from the dimension change.
+      // Derive the scale directly from the dimension change.
       // This works even when the element is rotated.
       const scaleX = fromW === 0 ? 1 : toW / fromW;
       const scaleY = fromH === 0 ? 1 : toH / fromH;
@@ -314,16 +329,13 @@ const classifyEntry = (
         elementType: current.type,
         from,
         to,
-        // Local-frame delta: just (to - from). Avoids the
-        // world-frame decomposition for the same reason as above.
         angle: to - from,
-        // Rotation pivot in world coords — read off the matrix.
         center: fixedPoint(transform),
         transform,
       };
     }
 
-    // Move: only x and/or y changed.
+    // Move: ONLY x and/or y changed.
     if (hasPosChange && !hasAngleChange && !hasSizeChange) {
       let dx: number;
       let dy: number;
@@ -333,9 +345,8 @@ const classifyEntry = (
         dx = changed.has("x") ? numericDiff(entry.before, entry.after, "x") : 0;
         dy = changed.has("y") ? numericDiff(entry.before, entry.after, "y") : 0;
       }
-      // Absolute before/after positions. Fall back to `current` for
-      // axes the entry didn't touch — that side equals the current
-      // scene value by definition.
+      // Absolute before/after positions. If the entry doesn't contain x or y,
+      // fall back to current because the before and after will be equal
       const fromX =
         "x" in entry.before
           ? (entry.before.x as number)
@@ -383,7 +394,6 @@ const classifyEntry = (
 
 /**
  * Return the set of changed property keys on an entry, excluding noise
- * (`version`, `versionNonce`).
  */
 const getChangedKeys = (entry: LogEntry): Set<string> => {
   const keys = new Set<string>();
@@ -455,7 +465,7 @@ const isStructuralBindingChange = (
 /**
  * Scan the raw entries for arrow updates whose changes are purely
  * geometric AND whose binding points to a bindable element that also
- * received a geometry change in this increment. Return a
+ * received a geometry change in this moment. Return a
  * `causeElementId → arrowEntries[]` map.
  *
  * "Purely geometric" here means the arrow entry's changed keys are a
@@ -840,7 +850,7 @@ const classifyArrowEntry = (
 /**
  * Detect `group` / `ungroup` events by looking at `groupIds` deltas
  * across entries. A group / ungroup event = N (≥ 2) entries that all
- * gained / lost the SAME group id in this increment.
+ * gained / lost the SAME group id in this moment.
  *
  * Runs as a pre-pass before per-entry classification
  *

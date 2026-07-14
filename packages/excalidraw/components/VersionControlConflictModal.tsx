@@ -1,7 +1,7 @@
 /**
  * Conflict-resolution modal for the version-log selective-undo feature.
  *
- * Opens when toggling an increment off would leave one or more later
+ * Opens when toggling a moment off would leave one or more later
  * ops pointing at a now-missing element or group. The user resolves
  * each missing referent independently — Skip (drop every op that
  * touched it) or Remap (apply those ops to a different live referent

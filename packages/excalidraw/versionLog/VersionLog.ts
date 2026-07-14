@@ -8,7 +8,7 @@ import { classifyEntries } from "./classify";
 
 import type {
   LogEntry,
-  LogIncrement,
+  LogMoment,
   LogOperation,
   LogPropertyMap,
   Remap,
@@ -29,68 +29,68 @@ export interface VersionLogSceneContext {
 }
 
 /**
- * Default ring-buffer size, in *increments* (not operations). Each
- * increment may carry many ops — a multi-select drag, a paste, etc.
+ * Default ring-buffer size, in *moments* (not operations). Each
+ * moment may carry many ops — a multi-select drag, a paste, etc.
  */
-const DEFAULT_MAX_INCREMENTS = 1000;
+const DEFAULT_MAX_MOMENTS = 1000;
 
 /**
- * In-memory version log. Subscribes to `Store.onDurableIncrementEmitter`,
- * derives raw per-element entries from each delta, then runs the
- * semantic classifier (`classifyEntries`) to produce a `LogIncrement`
- * whose `operations` are high-level: "moved group G by (dx, dy)",
- * "rotated", "restyled strokeColor", etc.
- *
- * v1: read-only + revert-to-point. When write-back beyond simple revert
- * is added (branching / merging), see `VERSION_CONTROL_PLAN.md` §
- * "Avoiding the feedback loop" for how to prevent our own programmatic
- * updates from re-entering this subscriber.
+ * In-memory version log. Subscribes to `Store.onDurableIncrementEmitter`
  */
 export class VersionLog {
   public readonly onChangeEmitter = new Emitter<[]>();
 
-  private increments: LogIncrement[] = [];
-  private readonly maxIncrements: number;
+  private moments: LogMoment[] = [];
+  private readonly maxMoments: number;
   private unsubscribe: (() => void) | null = null;
   private nextEntrySeq = 0;
   /**
-   * The increment id the document is currently at — i.e. the latest
-   * increment whose effects are visible on the canvas. `null` when
+   * The id of the moment the document is currently at. `null` when
    * the log is empty.
    *
-   * Updated by `ingest` (set to the newly-arrived increment's id) and
-   * by `App.jumpToVersionLogIncrement` (set to the navigated target).
-   *
-   * When a new increment arrives while the cursor is not at the head,
-   * every increment newer than the cursor is discarded first — we
+   * When a new moment arrives while the cursor is not at the head,
+   * every moment newer than the cursor is discarded first — we
    * model this as "make a new branch and discard the old one." Real
    * branching is iteration 3+ work.
    */
-  private currentIncrementId: string | null = null;
+  private currentMomentId: string | null = null;
   /**
    * DEBUG: dependency-highlight set, populated by the sidebar's
    * hover handler via `findDependencies`. The panel reads this to
-   * tint rows that the currently-hovered op depends on. `null` when
-   * nothing is hovered. Not part of the data model proper — purely
-   * a UI affordance for previewing selective-undo blast radius.
+   * tint rows that the currently-hovered op depends on. 
+   * 
+   * `null` when nothing is hovered. 
+   * 
+   * A UI affordance, so not actually part of the data model.
    */
   private dependencyHighlight: {
     hard: Set<LogOperation>;
     soft: Set<LogOperation>;
   } | null = null;
   /**
-   * Ids of increments the user has selectively deactivated. They
-   * remain in the log (visible in the panel, struck-through) but are
-   * skipped during replay. Default-active model: only the exceptions
-   * are tracked.
+   * Click-to-filter focus. When set, the panel collapses to just the
+   * ops in `ops` (the dependency neighbourhood of `focus`), with
+   * `focus` styled as the anchor. 
+   * 
+   * `null` means no filter, so show the whole log.
+   * 
+   * A UI affordance, so not actually part of the data model.
    */
-  private inactiveIncrementIds: Set<string> = new Set();
+  private filter: {
+    focus: LogOperation;
+    ops: Set<LogOperation>;
+  } | null = null;
   /**
-   * Scene state captured immediately BEFORE the first increment was
-   * ingested. The selective-undo replay reconstructs the canvas by
-   * starting from this snapshot and forward-applying every active
-   * op up to the cursor. `null` until the first ingest; reset to
-   * `null` on `clear()`.
+   * Ids of moments the user has selectively deactivated. They
+   * remain visible but are not applied to the current scene.
+   */
+  private inactiveMomentIds: Set<string> = new Set();
+  /**
+   * Scene state captured immediately BEFORE the first moment was
+   * ingested. 
+   * 
+   * `null` until the first ingest. 
+   * reset to `null` on `clear()`.
    */
   private baselineScene: Map<string, ExcalidrawElement> | null = null;
   /**
@@ -113,14 +113,21 @@ export class VersionLog {
    * until the log is cleared. See VERSION_CONTROL_PLAN.md.
    */
   private remaps: Map<string, Remap> = new Map();
+  /**
+   * Highest element `version` this log has ever observed.
+   * Used when reconstructing the scene to ensure that the Excalidraw store
+   * adopts the replayed state, since elements with lower versions could be ignored.
+   */
+  private highWaterVersion = 0;
 
-  constructor(opts: { maxIncrements?: number } = {}) {
-    this.maxIncrements = opts.maxIncrements ?? DEFAULT_MAX_INCREMENTS;
+  constructor(opts: { maxMoments?: number } = {}) {
+    this.maxMoments = opts.maxMoments ?? DEFAULT_MAX_MOMENTS;
   }
 
   /**
-   * Wire this log to a store's durable-increment emitter. The `scene`
-   * context is used at ingest time for group detection (we need to
+   * Attach to Ecalidraw store's durable-increment emitter.
+   * 
+   * The `scene` context is used at ingest time for group detection (we need to
    * know how many elements belong to a group, not just how many changed).
    */
   public subscribe(
@@ -135,49 +142,68 @@ export class VersionLog {
   public destroy() {
     this.unsubscribe?.();
     this.unsubscribe = null;
-    this.increments = [];
+    this.moments = [];
     this.onChangeEmitter.clear();
   }
 
-  public getIncrements(): readonly LogIncrement[] {
-    return this.increments;
+  public getMoments(): readonly LogMoment[] {
+    return this.moments;
+  }
+
+  public getCurrentMomentId(): string | null {
+    return this.currentMomentId;
+  }
+
+  public setCurrentMomentId(id: string | null) {
+    if (this.currentMomentId === id) {
+      return;
+    }
+    this.currentMomentId = id;
+    this.onChangeEmitter.trigger();
   }
 
   /**
-   * Id of the increment the document is currently at. `null` if the
-   * log is empty. The panel uses this to render the "Current" marker
-   * and to disable the Jump button on the matching row.
-   */
-  public getCurrentIncrementId(): string | null {
-    return this.currentIncrementId;
-  }
-
-  /**
-   * Move the cursor to a specific increment. Does not mutate the scene 
+   * Move the cursor to a specific moment. Does not mutate the scene
    * but triggers `onChangeEmitter` so the panel re-renders.
    */
-  /** Read-only view of the set of inactive increment ids. */
-  public getInactiveIncrementIds(): ReadonlySet<string> {
-    return this.inactiveIncrementIds;
+
+
+  public getInactiveMomentIds(): ReadonlySet<string> {
+    return this.inactiveMomentIds;
   }
 
   /**
-   * Toggle an increment between active and inactive. The scene
-   * change is the caller's responsibility (App invokes a replay via
-   * `replayActiveOps` after this fires).
+   * Toggle a moment between active and inactive. 
+   * The scene change is the caller's responsibility
+   * 
+   * Note: App invokes a replay via `replayActiveOps` after this fires.
    */
-  public toggleIncrementActive(id: string): void {
-    if (this.inactiveIncrementIds.has(id)) {
-      this.inactiveIncrementIds.delete(id);
+  public toggleMomentActive(id: string): void {
+    if (this.inactiveMomentIds.has(id)) {
+      this.inactiveMomentIds.delete(id);
     } else {
-      this.inactiveIncrementIds.add(id);
+      this.inactiveMomentIds.add(id);
     }
     this.onChangeEmitter.trigger();
   }
 
-  /** Baseline scene state — used as the starting point of a replay. */
   public getBaselineScene(): ReadonlyMap<string, ExcalidrawElement> | null {
     return this.baselineScene;
+  }
+
+  /**
+   * Reserve a fresh element `version` for a replay to stamp onto the
+   * elements it commits. Strictly greater than every version this log
+   * has observed (real edits) AND every stamp handed to a prior replay,
+   * so the store's `detectChangedElements` — which gates on a strict
+   * `snapshot.version < next.version` — always adopts the replayed
+   * state. Called once per replay; the elements share the stamp (the
+   * check is per-element, so one value clearing every element's snapshot
+   * version is enough).
+   */
+  public reserveReplayVersion(): number {
+    this.highWaterVersion += 1;
+    return this.highWaterVersion;
   }
 
   /** Ops the most recent replay skipped due to missing referents. */
@@ -194,10 +220,6 @@ export class VersionLog {
     this.onChangeEmitter.trigger();
   }
 
-  /**
-   * Current dependency-highlight set, or `null` if nothing is being
-   * hovered. The sidebar pushes this via `setDependencyHighlight`.
-   */
   public getDependencyHighlight(): {
     hard: Set<LogOperation>;
     soft: Set<LogOperation>;
@@ -218,7 +240,23 @@ export class VersionLog {
     this.onChangeEmitter.trigger();
   }
 
-  /** Read-only view of the active remap map. */
+  public getFilter(): {
+    focus: LogOperation;
+    ops: Set<LogOperation>;
+  } | null {
+    return this.filter;
+  }
+
+  public setFilter(
+    filter: { focus: LogOperation; ops: Set<LogOperation> } | null,
+  ) {
+    if (this.filter === filter) {
+      return;
+    }
+    this.filter = filter;
+    this.onChangeEmitter.trigger();
+  }
+
   public getRemaps(): ReadonlyMap<string, Remap> {
     return this.remaps;
   }
@@ -247,32 +285,27 @@ export class VersionLog {
     this.onChangeEmitter.trigger();
   }
 
-  public setCurrentIncrementId(id: string | null) {
-    if (this.currentIncrementId === id) {
-      return;
-    }
-    this.currentIncrementId = id;
-    this.onChangeEmitter.trigger();
-  }
-
   public clear() {
     if (
-      this.increments.length === 0 &&
-      this.currentIncrementId === null &&
-      this.inactiveIncrementIds.size === 0 &&
+      this.moments.length === 0 &&
+      this.currentMomentId === null &&
+      this.inactiveMomentIds.size === 0 &&
       this.baselineScene === null
     ) {
       return;
     }
-    this.increments = [];
-    this.currentIncrementId = null;
-    this.inactiveIncrementIds = new Set();
+    this.moments = [];
+    this.currentMomentId = null;
+    this.inactiveMomentIds = new Set();
     this.baselineScene = null;
     this.skippedByReplay = new Set();
     this.remaps = new Map();
+    this.filter = null;
+    this.highWaterVersion = 0;
     this.onChangeEmitter.trigger();
   }
 
+  // Debug printing
   private printIncrement(increment: DurableIncrement) {
     const { added, removed, updated } = increment.delta.elements;
     const addedIds = Object.keys(added);
@@ -304,16 +337,27 @@ export class VersionLog {
   }
 
   /**
-   * Convert a single durable increment into a `LogIncrement` (with
-   * semantic operations) and prepend it. Skips empty deltas.
+   * On any user action: convert the resulting durable increment from Excalidraw
+   * into a `LogMoment` and prepend it. 
    */
   private ingest(increment: DurableIncrement, scene: VersionLogSceneContext) {
-    // [version-log] temporary console logger for inspecting delta shape.
-    // Kept for debugging; safe to remove once the feature is stable.
+    // Debug
     this.printIncrement(increment);
 
     const { added, removed, updated } = increment.delta.elements;
+
+    // The elements that were changed in this increment
+    // (in their post-changed state)
     const changedElements = increment.change.elements;
+
+    // Track the highest element version we've seen so a later replay can
+    // mark all changed elements with a higher version to ensure that
+    // the Excalidraw store registers the change
+    for (const el of Object.values(changedElements)) {
+      if (el.version > this.highWaterVersion) {
+        this.highWaterVersion = el.version;
+      }
+    }
 
     const rawEntries: LogEntry[] = [];
     const counts = { create: 0, update: 0, delete: 0 };
@@ -369,7 +413,7 @@ export class VersionLog {
       groupSizeCache,
     );
 
-    const logIncrement: LogIncrement = {
+    const logMoment: LogMoment = {
       id: increment.delta.id,
       timestamp: Date.now(),
       operations,
@@ -379,44 +423,51 @@ export class VersionLog {
     };
 
     // First-ever ingest: capture the baseline scene by undoing this
-    // increment on the current scene state. The selective-undo replay
+    // moment on the current scene state. The selective-undo replay
     // starts from this baseline + forward-applies active ops.
     if (this.baselineScene == null) {
       const baseline = new Map<string, ExcalidrawElement>();
       for (const el of scene.getAllElements()) {
         baseline.set(el.id, el);
+        // Seed the high-water mark from pre-existing elements too, so a
+        // replay stamp dominates elements that were never edited after
+        // the log started (whose only recorded version is the baseline's).
+        if (el.version > this.highWaterVersion) {
+          this.highWaterVersion = el.version;
+        }
       }
       // `applyOpsToScene` is typed against the live scene's
       // OrderedExcalidrawElement; ExcalidrawElement is the supertype
       // and shape-compatible for the fields applyOps reads/writes.
       applyOpsToScene(
-        logIncrement.operations,
+        logMoment.operations,
         baseline as unknown as Parameters<typeof applyOpsToScene>[1],
         "backward",
       );
       this.baselineScene = baseline;
     }
 
-    // Branch-discard semantics: if the cursor isn't at the head when a
-    // new increment arrives, every increment newer than the cursor is
-    // dropped from the log. Conceptually we're starting a new branch
-    // from the cursor's position and abandoning the old future. (Real
-    // branching: iteration 3+.)
-    if (this.currentIncrementId != null) {
-      const cursorIdx = this.increments.findIndex(
-        (inc) => inc.id === this.currentIncrementId,
+    // If the cursor isn't at the head when a new moment arrives,
+    // every moment newer than the cursor is dropped from the log.
+    // 
+    // Conceptually we're starting a new branch from the cursor's position.
+    if (this.currentMomentId != null) {
+      const cursorIdx = this.moments.findIndex(
+        (m) => m.id === this.currentMomentId,
       );
       if (cursorIdx > 0) {
-        this.increments = this.increments.slice(cursorIdx);
+        this.moments = this.moments.slice(cursorIdx);
       }
     }
 
-    // newest first
-    this.increments = [logIncrement, ...this.increments];
-    if (this.increments.length > this.maxIncrements) {
-      this.increments.length = this.maxIncrements;
+    this.moments = [logMoment, ...this.moments];
+    if (this.moments.length > this.maxMoments) {
+      this.moments.length = this.maxMoments;
     }
-    this.currentIncrementId = logIncrement.id;
+    this.currentMomentId = logMoment.id;
+
+    // Clear the filter
+    this.filter = null;
 
     this.onChangeEmitter.trigger();
   }
