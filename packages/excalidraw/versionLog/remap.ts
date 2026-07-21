@@ -18,6 +18,8 @@
  * to land those first.
  */
 
+import type { ElementAlignment } from "@excalidraw/element/types";
+
 import type { LogOperation, Remap } from "./types";
 
 export type RemapResult =
@@ -29,8 +31,10 @@ export type RemapResult =
  * their `elementId` replaced; group-keyed ops (`move-group`,
  * `resize-group`, `rotate-group`) have their `groupId` replaced; an
  * `ungroup` whose target group has been remapped switches to the
- * remapped group too. `group` (create) and `arrow-*` are left
- * unchanged in v1.
+ * remapped group too. `alignment` rewrites both its members and the
+ * partner ids inside its links, dropping (rather than skipping the whole
+ * op) any referent the user chose to skip. `group` (create) and
+ * `arrow-*` are left unchanged in v1.
  */
 export const applyRemapsToOp = (
   op: LogOperation,
@@ -101,6 +105,84 @@ export const applyRemapsToOp = (
       // The gid being introduced is brand-new; remapping it doesn't
       // make sense. Children element-id remaps are out of scope for v1.
       return { status: "ok", op };
+
+    case "alignment": {
+      // An alignment op references elements two ways: the members whose
+      // `alignments` field it writes, and the partner id inside each
+      // link. Both need rewriting, or a remap would leave the op
+      // pointing at a dead element.
+      //
+      // Unlike the single-element ops above, a skipped referent
+      // (`to == null`) drops just that element from the op rather than
+      // skipping the whole thing — the op covers several elements and
+      // the remaining links are still valid. Only if nothing survives
+      // is the op skipped outright.
+      const touches = (id: string) => remaps.has(id);
+      const isTouched =
+        op.elementIds.some(touches) ||
+        [op.before, op.after].some((map) =>
+          Object.entries(map).some(
+            ([ownerId, links]) =>
+              touches(ownerId) || links.some((l) => touches(l.elementId)),
+          ),
+        );
+      if (!isTouched) {
+        return { status: "ok", op };
+      }
+
+      // null => the user chose to skip this referent, so drop it
+      const resolve = (id: string): string | null => {
+        const remap = remaps.get(id);
+        if (!remap || remap.kind !== "element") {
+          return id;
+        }
+        return remap.to;
+      };
+
+      const remapLinks = (
+        map: Record<string, readonly ElementAlignment[]>,
+      ): Record<string, readonly ElementAlignment[]> => {
+        const next: Record<string, readonly ElementAlignment[]> = {};
+        for (const [ownerId, links] of Object.entries(map)) {
+          const nextOwner = resolve(ownerId);
+          if (nextOwner == null) {
+            continue;
+          }
+          const nextLinks: ElementAlignment[] = [];
+          for (const link of links) {
+            const partner = resolve(link.elementId);
+            if (partner == null) {
+              continue;
+            }
+            nextLinks.push(
+              partner === link.elementId
+                ? link
+                : { ...link, elementId: partner },
+            );
+          }
+          next[nextOwner] = nextLinks;
+        }
+        return next;
+      };
+
+      const elementIds = op.elementIds
+        .map(resolve)
+        .filter((id): id is string => id != null);
+
+      if (elementIds.length === 0) {
+        return { status: "skip" };
+      }
+
+      return {
+        status: "ok",
+        op: {
+          ...op,
+          elementIds,
+          before: remapLinks(op.before),
+          after: remapLinks(op.after),
+        },
+      };
+    }
   }
 };
 

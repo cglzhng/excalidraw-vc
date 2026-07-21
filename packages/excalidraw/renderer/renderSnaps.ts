@@ -5,10 +5,18 @@ import { THEME } from "@excalidraw/common";
 import type { PointSnapLine, PointerSnapLine } from "../snapping";
 import type { InteractiveCanvasAppState } from "../types";
 
-const SNAP_COLOR_LIGHT = "#ff6b6b";
-const SNAP_COLOR_DARK = "#ff0000";
+const SNAP_COLOR_LIGHT = "#e03131";
+const SNAP_COLOR_DARK = "#ffa8a8";
 const SNAP_WIDTH = 1;
 const SNAP_CROSS_SIZE = 2;
+
+// While Alt is held during a drag the snap is about to become a
+// persistent hard alignment, so it is drawn in the alignment-lock style
+// instead: solid rather than dashed, and in the lock colors, so the
+// preview looks like the indicator it is about to turn into. Keep these
+// in sync with `renderAlignmentLocks`.
+const HARD_SNAP_COLOR_LIGHT = "#e03131";
+const HARD_SNAP_COLOR_DARK = "#ffa8a8";
 
 export const renderSnaps = (
   context: CanvasRenderingContext2D,
@@ -52,7 +60,11 @@ export const renderSnaps = (
       );
     } else if (snapLine.type === "points") {
       context.lineWidth = snapWidth;
-      context.strokeStyle = snapColor;
+      context.strokeStyle = snapLine.hard
+        ? appState.theme === THEME.LIGHT
+          ? HARD_SNAP_COLOR_LIGHT
+          : HARD_SNAP_COLOR_DARK
+        : snapColor;
       drawPointsSnapLine(snapLine, context, appState);
     }
   }
@@ -69,7 +81,15 @@ const drawPointsSnapLine = (
     const firstPoint = pointSnapLine.points[0];
     const lastPoint = pointSnapLine.points[pointSnapLine.points.length - 1];
 
+    // A soft snap is dashed, reading as transient; a hard snap is solid,
+    // matching the persistent lock indicator it is about to become.
+    // Only the connecting line is dashed — the crosses are a couple of
+    // pixels across and would break up into nothing.
+    if (!pointSnapLine.hard) {
+      context.setLineDash([4 / appState.zoom.value, 4 / appState.zoom.value]);
+    }
     drawLine(firstPoint, lastPoint, context);
+    context.setLineDash([]);
   }
 
   for (const point of pointSnapLine.points) {

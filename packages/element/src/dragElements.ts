@@ -15,6 +15,7 @@ import type {
 
 import type { NonDeletedExcalidrawElement } from "@excalidraw/element/types";
 
+import { dragAlignedElements } from "./alignmentLock";
 import { unbindBindingElement, updateBoundElements } from "./binding";
 import { getCommonBounds } from "./bounds";
 import { getPerfectElementSize } from "./sizeHelpers";
@@ -168,6 +169,16 @@ export const dragSelectedElements = (
       }
     }
   });
+
+  // Hard alignment: drag any elements hard-aligned to the moved set so
+  // the alignment is preserved. Runs after the direct moves so partners
+  // inherit the snapped / grid-adjusted offset.
+  dragAlignedElements(
+    pointerDownState.originalElements,
+    elementsToUpdateIds,
+    adjustedOffset,
+    scene,
+  );
 };
 
 const calculateOffset = (

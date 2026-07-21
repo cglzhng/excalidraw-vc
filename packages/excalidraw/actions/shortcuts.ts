@@ -28,6 +28,7 @@ export type ShortcutName =
       | "copyAsPng"
       | "group"
       | "ungroup"
+      | "unlockAlignment"
       | "gridMode"
       | "zenMode"
       | "objectsSnapMode"
@@ -91,6 +92,7 @@ const shortcutMap: Record<ShortcutName, string[]> = {
   copyAsPng: [getShortcutKey("Shift+Alt+C")],
   group: [getShortcutKey("CtrlOrCmd+G")],
   ungroup: [getShortcutKey("CtrlOrCmd+Shift+G")],
+  unlockAlignment: [getShortcutKey("Alt+Shift+L")],
   gridMode: [getShortcutKey("CtrlOrCmd+'")],
   zenMode: [getShortcutKey("Alt+Z")],
   objectsSnapMode: [getShortcutKey("Alt+S")],

@@ -81,6 +81,7 @@ import type {
   NonDeletedSceneElementsMap,
 } from "@excalidraw/element/types";
 
+import { renderAlignmentLocks } from "../renderer/renderAlignmentLocks";
 import { renderSnaps } from "../renderer/renderSnaps";
 import { roundRect } from "../renderer/roundRect";
 import {
@@ -2002,7 +2003,8 @@ const _renderInteractiveScene = ({
             x2,
             y2,
             selectionColors: element.locked ? ["#ced4da"] : selectionColors,
-            dashed: !!remoteClients || element.locked,
+            // always dashed (upstream dashes only remote/locked selections)
+            dashed: true,
             cx,
             cy,
             activeEmbeddable:
@@ -2187,6 +2189,8 @@ const _renderInteractiveScene = ({
   });
 
   renderSnaps(context, appState);
+
+  renderAlignmentLocks(context, appState, allElementsMap, selectedElements);
 
   context.restore();
 

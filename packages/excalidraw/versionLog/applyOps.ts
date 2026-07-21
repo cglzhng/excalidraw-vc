@@ -435,6 +435,19 @@ const applyOpToScene = (
       break;
     }
 
+    // -------------------- hard alignment --------------------
+    case "alignment": {
+      // Forward: set each member's `alignments` to the after-state;
+      // backward: to the before-state. Missing members are no-ops.
+      const map = forward ? op.after : op.before;
+      for (const id of op.elementIds) {
+        updateElement(scene, id, {
+          alignments: map[id],
+        } as Partial<OrderedExcalidrawElement>);
+      }
+      break;
+    }
+
     // -------------------- raw fallback --------------------
     case "raw": {
       // For unclassified entries we have the original before/after

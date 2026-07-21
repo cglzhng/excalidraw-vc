@@ -62,6 +62,8 @@ export {
   actionAlignHorizontallyCentered,
 } from "./actionAlign";
 
+export { actionUnlockAlignment } from "./actionAlignmentLock";
+
 export {
   distributeHorizontally,
   distributeVertically,

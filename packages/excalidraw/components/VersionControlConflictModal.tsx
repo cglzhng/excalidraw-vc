@@ -220,6 +220,10 @@ const describeOp = (op: LogOperation): string => {
       return `Move arrow ${ids} binding`;
     case "raw":
       return `Update ${ids} (raw)`;
+    case "alignment":
+      return `${op.action === "lock" ? "Lock" : "Unlock"} alignment (${
+        op.elementIds.length
+      })`;
     case "create":
     case "group":
       // Shouldn't appear in conflicts (no missing referent), but

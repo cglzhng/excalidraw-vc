@@ -403,6 +403,31 @@ const enumerateMissingReferents = (
       }
       return out;
     }
+    case "alignment": {
+      // Writing `alignments` onto a missing *member* is a harmless
+      // no-op. A link *pointing at* a missing element is not: it would
+      // leave a live element carrying a dangling, one-sided alignment
+      // to something that no longer exists. So the referents are the
+      // partner ids inside the links this op would write — and only for
+      // owners that are themselves still live, since a dead owner's
+      // links never get written anyway.
+      const partnerIds = new Set<string>();
+      for (const [ownerId, links] of Object.entries(op.after)) {
+        if (!isLive(ownerId)) {
+          continue;
+        }
+        for (const link of links) {
+          partnerIds.add(link.elementId);
+        }
+      }
+      for (const id of partnerIds) {
+        if (!isLive(id)) {
+          out.push({ kind: "element", id });
+        }
+      }
+      return out;
+    }
+
     case "raw":
       if (!isLive(op.entry.elementId)) {
         out.push({

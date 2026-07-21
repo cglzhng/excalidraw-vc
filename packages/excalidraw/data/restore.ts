@@ -411,8 +411,9 @@ const repairBinding = <T extends ExcalidrawArrowElement>(
 };
 
 const restoreElementWithProperties = <
-  T extends Required<Omit<ExcalidrawElement, "customData">> & {
+  T extends Required<Omit<ExcalidrawElement, "customData" | "alignments">> & {
     customData?: ExcalidrawElement["customData"];
+    alignments?: ExcalidrawElement["alignments"];
     /** @deprecated */
     boundElementIds?: readonly ExcalidrawElement["id"][];
     /** @deprecated */
@@ -477,6 +478,12 @@ const restoreElementWithProperties = <
   if ("customData" in element || "customData" in extra) {
     base.customData =
       "customData" in extra ? extra.customData : element.customData;
+  }
+
+  // Preserve hard-alignment links (only when present, to avoid adding an
+  // empty array to every restored element).
+  if (element.alignments?.length) {
+    base.alignments = element.alignments;
   }
 
   const ret = {

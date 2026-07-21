@@ -37,6 +37,33 @@ export type BoundElement = Readonly<{
   type: "arrow" | "text";
 }>;
 
+/**
+ * Which coordinate of an element's bounds an alignment tracks, on a
+ * given axis: "min" — left (x) / top (y); "center" — the midpoint;
+ * "max" — right (x) / bottom (y).
+ */
+export type AlignmentEdge = "min" | "center" | "max";
+
+/**
+ * A hard-alignment link to a partner element. `axis` is the axis whose
+ * coordinate is held in lockstep: an "x" link keeps the two elements
+ * moving together horizontally, a "y" link vertically.
+ *
+ * `selfEdge` is the edge of *this* element that's aligned, `otherEdge`
+ * the edge of the partner it's aligned to — the two coordinates are
+ * equal by construction. They usually match (left-to-left) but may
+ * differ (this element's right aligned to the partner's left). Edges
+ * are irrelevant to dragging (a uniform translation preserves any
+ * relationship) but essential to resizing, where each edge moves by a
+ * different amount and we must know which one to track.
+ */
+export type ElementAlignment = Readonly<{
+  elementId: string;
+  axis: "x" | "y";
+  selfEdge: AlignmentEdge;
+  otherEdge: AlignmentEdge;
+}>;
+
 type _ExcalidrawElementBase = Readonly<{
   id: string;
   x: number;
@@ -74,6 +101,12 @@ type _ExcalidrawElementBase = Readonly<{
   frameId: string | null;
   /** other elements that are bound to this element */
   boundElements: readonly BoundElement[] | null;
+  /** Hard-alignment links. Each entry pins a shared coordinate to a
+      partner element on one axis, so moving either element drags the
+      other to keep the alignment. Symmetric — the reciprocal entry is
+      stored on the partner. Optional/undefined for the common case of
+      no links. See `alignmentLock.ts`. */
+  alignments?: readonly ElementAlignment[];
   /** epoch (ms) timestamp of last element update */
   updated: number;
   link: string | null;

@@ -117,6 +117,7 @@ import {
   getObservedAppState,
   getCommonBounds,
   getElementAbsoluteCoords,
+  lockDraggedAlignments,
   bindOrUnbindBindingElements,
   fixBindingsAfterDeletion,
   getHoveredElementForBinding,
@@ -319,6 +320,7 @@ import {
   actionUnbindText,
   actionBindText,
   actionUngroup,
+  actionUnlockAlignment,
   actionLink,
   actionToggleElementLock,
   actionToggleLinearEditor,
@@ -590,6 +592,10 @@ export const useExcalidrawAPI = () => useContext(ExcalidrawAPIContext);
 
 let didTapTwice: boolean = false;
 let tappedTwiceTimer = 0;
+// Alt+drag is repurposed as the hard-alignment gesture in this fork, so
+// the upstream "alt-drag duplicates the selection" behaviour is disabled.
+const ALT_DRAG_DUPLICATES = false;
+
 let firstTapPosition: { x: number; y: number } | null = null;
 let isHoldingSpace: boolean = false;
 let isPanning: boolean = false;
@@ -3732,6 +3738,14 @@ class App extends React.Component<AppProps, AppState> {
     this.versionLog.subscribe(this.store.onDurableIncrementEmitter, {
       getElement: (id) => this.scene.getNonDeletedElementsMap().get(id),
       getAllElements: () => this.scene.getNonDeletedElements(),
+      // Read at ingest (pointer-up) time, so it reflects what the user
+      // directly manipulated — hard-alignment followers aren't selected.
+      getSelectedElementIds: () =>
+        new Set(
+          Object.keys(this.state.selectedElementIds).filter(
+            (id) => this.state.selectedElementIds[id],
+          ),
+        ),
     });
 
     // per. optimmisation, only subscribe if there is the `onIncrement` prop registered, to avoid unnecessary computation
@@ -9626,7 +9640,8 @@ class App extends React.Component<AppProps, AppState> {
           // If we click on something
         } else if (hitElement != null) {
           // == deep selection ==
-          // on CMD/CTRL, drill down to hit element regardless of groups etc.
+          // on CMD/CTRL, drill down to the hit element regardless of
+          // groups etc. — but only on pointer-up, see below
           if (event[KEYS.CTRL_OR_CMD]) {
             if (event.altKey) {
               // ctrl + alt means we're lasso selecting - start lasso trail and switch to lasso tool
@@ -9643,15 +9658,13 @@ class App extends React.Component<AppProps, AppState> {
               this.setActiveTool({ type: "lasso", fromSelection: true });
               return false;
             }
-            if (!this.state.selectedElementIds[hitElement.id]) {
-              pointerDownState.hit.wasAddedToSelection = true;
-            }
-            this.setState((prevState) => ({
-              ...editGroupForSelectedElement(prevState, hitElement),
-              previousSelectedElementIds: this.state.selectedElementIds,
-            }));
-            // mark as not completely handled so as to allow dragging etc.
-            return false;
+            // Drilling into the group is deferred to pointer-up (see the
+            // deferred deep-select there). Doing it here would narrow the
+            // selection to this single element before any drag begins, so
+            // a cmd/ctrl *drag* would pull the element out of its group
+            // instead of moving the group. Falling through selects the
+            // group as a plain click would; a click that never becomes a
+            // drag then drills down on pointer-up.
           }
 
           // deselect if item is selected
@@ -10943,9 +10956,21 @@ class App extends React.Component<AppProps, AppState> {
         // prevent dragging even if we're no longer holding cmd/ctrl otherwise
         // it would have weird results (stuff jumping all over the screen)
         // Checking for editingTextElement to avoid jump while editing on mobile #6503
+        //
+        // Exception: when the gesture started on an element, cmd/ctrl
+        // unambiguously means "move it, with snapping toggled" rather than
+        // "start a box selection", so allow the drag. Cmd/ctrl pointer-down
+        // on an element already deep-selects it and returns "not handled"
+        // precisely so dragging can follow. Box selection is still what you
+        // get when the gesture starts on empty canvas. Decided from
+        // pointer-down state only, so the mode cannot flip mid-gesture.
+        const grabbedElement =
+          !!pointerDownState.hit.element ||
+          pointerDownState.hit.hasHitCommonBoundingBoxOfSelectedElements;
+
         if (
           selectedElements.length > 0 &&
-          !pointerDownState.withCmdOrCtrl &&
+          (!pointerDownState.withCmdOrCtrl || grabbedElement) &&
           !this.state.editingTextElement &&
           this.state.activeEmbeddable?.state !== "active"
         ) {
@@ -11110,8 +11135,11 @@ class App extends React.Component<AppProps, AppState> {
             selectionElement: null,
           });
 
-          // We duplicate the selected element if alt is pressed on pointer move
-          if (event.altKey && !pointerDownState.hit.hasBeenDuplicated) {
+          // Alt+drag is repurposed as the hard-alignment gesture (the
+          // soft snap under the pointer is committed to a persistent
+          // link on release — see the pointer-up handler), so it no
+          // longer duplicates the selection.
+          if (ALT_DRAG_DUPLICATES && !pointerDownState.hit.hasBeenDuplicated) {
             // Move the currently selected elements to the top of the z index stack, and
             // put the duplicates where the selected elements used to be.
             // (the origin point where the dragging started)
@@ -12116,6 +12144,28 @@ class App extends React.Component<AppProps, AppState> {
         }
       }
 
+      // Hard-alignment gesture: if Alt was held for this drag, commit the
+      // soft snaps under the pointer to persistent alignment links (see
+      // `lockDraggedAlignments`). Spliced in before the drag's capture
+      // below, so the move and the new links land in one undo step.
+      if (
+        childEvent.altKey &&
+        pointerDownState.drag.hasOccurred &&
+        !this.state.selectedLinearElement
+      ) {
+        const updated = lockDraggedAlignments(
+          this.scene.getSelectedElements(this.state),
+          this.scene.getNonDeletedElementsMap(),
+        );
+        if (updated.size > 0) {
+          this.scene.replaceAllElements(
+            this.scene
+              .getElementsIncludingDeleted()
+              .map((el) => updated.get(el.id) ?? el),
+          );
+        }
+      }
+
       if (resizingElement) {
         this.store.scheduleCapture();
       }
@@ -12434,6 +12484,25 @@ class App extends React.Component<AppProps, AppState> {
         // reset cursor
         this.cursor.set(CURSOR_TYPE.AUTO);
         return;
+      }
+
+      // Deferred cmd/ctrl deep-select (counterpart of the pointer-down
+      // branch). Cmd/ctrl+click drills into a group to select the single
+      // element under the cursor, but the drill-down happens here so that
+      // a cmd/ctrl *drag* moves the whole group instead of pulling one
+      // element out of it. Runs after the deselect-on-bounding-box check
+      // above, which returns early when the click should clear selection.
+      if (
+        pointerDownState.withCmdOrCtrl &&
+        hitElement &&
+        !pointerDownState.drag.hasOccurred &&
+        !pointerDownState.boxSelection.hasOccurred &&
+        this.state.activeTool.type !== "lasso"
+      ) {
+        this.setState((prevState) => ({
+          ...editGroupForSelectedElement(prevState, hitElement),
+          previousSelectedElementIds: this.state.selectedElementIds,
+        }));
       }
 
       const selectedTextEditingContainer =
@@ -13768,6 +13837,7 @@ class App extends React.Component<AppProps, AppState> {
       actionBindText,
       actionWrapTextInContainer,
       actionUngroup,
+      actionUnlockAlignment,
       CONTEXT_MENU_SEPARATOR,
       actionAddToLibrary,
       ...zIndexActions,

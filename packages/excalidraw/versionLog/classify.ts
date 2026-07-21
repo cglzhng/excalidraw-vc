@@ -1,4 +1,5 @@
 import type {
+  ElementAlignment,
   ExcalidrawElement,
   OrderedExcalidrawElement,
 } from "@excalidraw/element/types";
@@ -30,8 +31,8 @@ import type { TransformMatrix } from "./transform";
  * We ignore them throughout.
  *
  * `boundElements` is included here because upstream's emit of this
- * field is unreliable. The arrow's own `startBinding` / `endBinding` fields
- * provide the binding state.
+ * field is unreliable. Instead, we use the `endBinding / startBinding` fields
+ * from the arrow element itself to determine if it was changed.
  */
 const TRACKING_PROPS = new Set([
   "version",
@@ -55,34 +56,83 @@ const STYLE_PROPS: readonly string[] = [
 
 // Assumption: Only ONE LogEntry per element
 // Assumption: A single iteration represents a SINGLE operation by the user
-// But multiple elements can be operated on at once
+// But multiple elements can be operated on at once in these cases:
 //
-// Mutiselect: Multiple elements selected, same operation applied to all
-// Dependencies: Operation applied to element(s) caused other element(s) to change
+//    Mutiselect: Multiple elements selected, same operation applied to all
+//    Dependencies: Operation applied to element(s) caused other element(s) to change
+//        e.g. Arrow bindings moved, hard alignments
 //
 // entries: All the LogEntrys from the App
 // changedElements: Contains references to every ExcalidrawElement that was changed
 // groupSizeCache: A map that contains the size of each group in the scene
+// selectedElementIds: The IDs of the elements that the user directly manipulated
 export const classifyEntries = (
   entries: readonly LogEntry[],
   changedElements: Record<string, OrderedExcalidrawElement>,
   groupSizeCache: Map<string, number>,
+  selectedElementIds: ReadonlySet<string> = new Set(),
 ): LogOperation[] => {
-  // Pre-pass A: identify arrow entries whose changes are purely a
-  // consequence of a bound bindable element being transformed in the
-  // same moment. Those are absorbed into the causing op rather
-  // than surfaced as their own — one user action, one op. See the
-  // `consequentOps` field on move/resize/rotate ops.
+  // Pre-pass A: identify entries whose geometric change is purely a
+  // consequence of something else being transformed in the same moment
+  // — a bound arrow following its bindable (arrow consequences), or a
+  // hard-aligned element following its aligned partner (alignment
+  // consequences). Both are absorbed into the causing op's
+  // `consequentOps` rather than surfaced separately — one user action,
+  // one op.
   const arrowConsequences = findConsequentArrowChanges(
     entries,
     changedElements,
   );
-  const consequentialEntries = new Set(
+  const arrowConsumed = new Set(
     Array.from(arrowConsequences.values()).flat(),
   );
+
+  const alignmentConsequences = findConsequentAlignmentChanges(
+    entries,
+    changedElements,
+    arrowConsumed,
+    selectedElementIds,
+  );
+
+  // An alignment follower can itself be the cause of an arrow change:
+  // the user drags A, hard-aligned B follows, and an arrow bound to B
+  // follows B. The arrow consequence is keyed on B, but B is no longer a
+  // top-level op — it was just absorbed into A. Walk each arrow's cause
+  // up to the root driver so the arrow lands alongside B as a consequent
+  // of A, instead of being dropped by `attachConsequences` (which only
+  // matches top-level ops). Chains are resolved transitively; the `seen`
+  // guard keeps a cycle from looping forever.
+  const driverOfFollower = new Map<string, string>();
+  for (const [driverId, followers] of alignmentConsequences) {
+    for (const follower of followers) {
+      driverOfFollower.set(follower.elementId, driverId);
+    }
+  }
+  const resolveDriver = (elementId: string): string => {
+    const seen = new Set<string>([elementId]);
+    let current = elementId;
+    for (;;) {
+      const next = driverOfFollower.get(current);
+      if (next === undefined || seen.has(next)) {
+        return current;
+      }
+      seen.add(next);
+      current = next;
+    }
+  };
+
+  const consequentialEntries = new Set<LogEntry>([
+    ...arrowConsumed,
+    ...Array.from(alignmentConsequences.values()).flat(),
+  ]);
   const remainingEntries = entries.filter((e) => !consequentialEntries.has(e));
 
-  // Pre-pass B: detect group / ungroup events. These are inherently
+  // Pre-pass B: detect alignment lock / unlock — multi-entry
+  // `alignments` changes, one op per gesture.
+  const { alignmentOps, consumed: alignmentConsumed } =
+    detectAlignmentChange(remainingEntries);
+
+  // Pre-pass C: detect group / ungroup events. These are inherently
   // multi-entry (the same gid is added to / removed from N members
   // in one user action), so they don't fit the per-entry classifier.
   const { groupingOps, consumed: groupingConsumed } =
@@ -91,7 +141,7 @@ export const classifyEntries = (
   // Per-entry classification for everything the pre-passes didn't claim.
   const ops: LogOperation[] = [];
   for (const entry of remainingEntries) {
-    if (groupingConsumed.has(entry)) {
+    if (groupingConsumed.has(entry) || alignmentConsumed.has(entry)) {
       continue;
     }
     ops.push(classifyEntry(entry, changedElements));
@@ -107,11 +157,31 @@ export const classifyEntries = (
 
   const finalOps: LogOperation[] = [
     ...groupingOps,
+    ...alignmentOps,
     ...groupOps,
     ...ops.filter((o) => !geometricConsumed.has(o)),
   ];
 
-  attachArrowConsequences(finalOps, arrowConsequences, changedElements);
+  // Merge alignment + arrow consequences (both keyed by driver element
+  // id) and attach them to the ops they originated from. Alignment
+  // followers go in first so the consequents read in causal order: the
+  // aligned partner moved because the driver did, and the bound arrow
+  // moved because the partner did.
+  const consequences = new Map<string, LogEntry[]>();
+  for (const [id, list] of alignmentConsequences) {
+    const existing = consequences.get(id) ?? [];
+    existing.push(...list);
+    consequences.set(id, existing);
+  }
+  for (const [id, list] of arrowConsequences) {
+    // re-key onto the root driver if this arrow's cause was itself
+    // absorbed as an alignment follower
+    const target = resolveDriver(id);
+    const existing = consequences.get(target) ?? [];
+    existing.push(...list);
+    consequences.set(target, existing);
+  }
+  attachConsequences(finalOps, consequences, changedElements);
 
   // [version-log] debug: dump the classified operations so the shape of
   // each classification can be inspected alongside the raw delta log.
@@ -261,6 +331,18 @@ const classifyEntry = (
   changed.delete("x");
   changed.delete("y");
 
+  if (hasGeometryChange) {
+    // Permitted residue: `alignments`. An Alt+drag commits the move and
+    // the hard-alignment links it creates in a single increment, so the
+    // moved element's entry carries both. `detectAlignmentChange` has
+    // already surfaced the link half as its own `alignment` op (and
+    // deliberately left this entry unconsumed), so drop the key rather
+    // than falling through to `raw`. Gated on there being a geometry
+    // change so that an `alignments` + non-geometry entry — which the
+    // detector skips entirely — still reaches `raw` with nothing lost.
+    changed.delete("alignments");
+  }
+
   if (hasGeometryChange && current && changed.size === 0) {
     const transform = buildEntryGeometryMatrix(entry, current);
 
@@ -393,6 +475,26 @@ const classifyEntry = (
 };
 
 /**
+ * Order-insensitive structural equality for `alignments` link arrays.
+ * Each link is a flat record of primitives, so comparing a stable key
+ * per link is a full deep-equal. `undefined` is treated as `[]`.
+ */
+const alignmentsEqual = (
+  a: readonly ElementAlignment[] | undefined,
+  b: readonly ElementAlignment[] | undefined,
+): boolean => {
+  const aa = a ?? [];
+  const bb = b ?? [];
+  if (aa.length !== bb.length) {
+    return false;
+  }
+  const key = (l: ElementAlignment) =>
+    `${l.elementId}:${l.axis}:${l.selfEdge}:${l.otherEdge}`;
+  const keysA = new Set(aa.map(key));
+  return bb.every((l) => keysA.has(key(l)));
+};
+
+/**
  * Return the set of changed property keys on an entry, excluding noise
  */
 const getChangedKeys = (entry: LogEntry): Set<string> => {
@@ -406,6 +508,20 @@ const getChangedKeys = (entry: LogEntry): Set<string> => {
     if (!TRACKING_PROPS.has(k)) {
       keys.add(k);
     }
+  }
+  // The store diffs `alignments` by array/element reference, so it can
+  // report the field as changed when the links are structurally
+  // identical (a rebuilt-but-equal array). A phantom `alignments` key
+  // would both emit spurious lock/unlock ops and break the clean-residue
+  // checks that classify moves/resizes — so drop it when deep-equal.
+  if (
+    keys.has("alignments") &&
+    alignmentsEqual(
+      entry.before.alignments as readonly ElementAlignment[] | undefined,
+      entry.after.alignments as readonly ElementAlignment[] | undefined,
+    )
+  ) {
+    keys.delete("alignments");
   }
   return keys;
 };
@@ -555,20 +671,303 @@ const findConsequentArrowChanges = (
   return out;
 };
 
+// ------------------- Alignment lock / unlock detector ----------------
+
+/** Keys the per-entry classifier interprets as a geometric transform. */
+const GEOMETRY_KEYS = ["x", "y", "width", "height", "angle"] as const;
+
 /**
- * Attach the collected arrow-consequence entries to the ops they
- * originated from. Single-element ops (move/resize/rotate) key by
- * their `elementId`; group ops (move-group/resize-group/rotate-group)
- * absorb consequences of any of their members.
+ * Detect hard-alignment lock / unlock as a single op. Locking or
+ * unlocking writes the `alignments` field on several elements at once,
+ * so — like grouping — it's multi-entry and doesn't fit the per-entry
+ * classifier.
+ *
+ * Two shapes of entry contribute to the op:
+ *
+ *   - `alignments` alone — the whole entry is about the link, so it is
+ *     **consumed** here.
+ *   - `alignments` plus geometry — the Alt+drag gesture commits the move
+ *     and the new links in one increment. The link half is recorded into
+ *     the op, but the entry is deliberately **not consumed**, so it flows
+ *     on to `classifyEntry` and also surfaces as its own move / resize.
+ *     (`classifyEntry` correspondingly permits `alignments` as residue.)
+ *
+ * Anything mixing `alignments` with non-geometry properties is left
+ * entirely alone, so its alignment change is never silently dropped —
+ * such an entry falls through to `raw`, which preserves it verbatim.
+ */
+const detectAlignmentChange = (
+  entries: readonly LogEntry[],
+): { alignmentOps: LogOperation[]; consumed: Set<LogEntry> } => {
+  const consumed = new Set<LogEntry>();
+  const before: Record<string, readonly ElementAlignment[]> = {};
+  const after: Record<string, readonly ElementAlignment[]> = {};
+  const elementIds: string[] = [];
+  let added = 0;
+  let removed = 0;
+
+  for (const entry of entries) {
+    if (entry.type !== "update") {
+      continue;
+    }
+    const changed = getChangedKeys(entry);
+    if (!changed.has("alignments")) {
+      continue;
+    }
+    changed.delete("alignments");
+    const hasGeometryResidue = GEOMETRY_KEYS.some((key) => changed.has(key));
+    for (const key of GEOMETRY_KEYS) {
+      changed.delete(key);
+    }
+    if (changed.size > 0) {
+      // alignments changed alongside something other than geometry —
+      // leave the entry whole for per-entry classification.
+      continue;
+    }
+
+    const b =
+      (entry.before.alignments as readonly ElementAlignment[] | undefined) ?? [];
+    const a =
+      (entry.after.alignments as readonly ElementAlignment[] | undefined) ?? [];
+    before[entry.elementId] = b;
+    after[entry.elementId] = a;
+    elementIds.push(entry.elementId);
+    if (a.length > b.length) {
+      added += 1;
+    } else if (a.length < b.length) {
+      removed += 1;
+    }
+    if (!hasGeometryResidue) {
+      consumed.add(entry);
+    }
+  }
+
+  if (elementIds.length === 0) {
+    return { alignmentOps: [], consumed };
+  }
+
+  return {
+    alignmentOps: [
+      {
+        kind: "alignment",
+        action: removed > added ? "unlock" : "lock",
+        elementIds,
+        before,
+        after,
+      },
+    ],
+    consumed,
+  };
+};
+
+// ------------------- Alignment consequence detector ------------------
+
+/**
+ * Scan for elements whose pure translation in this moment was caused by
+ * a hard-aligned partner being moved or resized — the alignment analog
+ * of `findConsequentArrowChanges`. Returns a `driverElementId →
+ * followerEntries[]` map so the followers get absorbed as
+ * `consequentOps` of the driver rather than surfaced as their own moves.
+ *
+ * Driver identification, in priority order:
+ *   - `selectedIds` is authoritative: a selected element was directly
+ *     manipulated (the driver); a non-selected element in the same
+ *     aligned component that only translated followed it.
+ *   - with no selection overlap (e.g. a programmatic change), fall back
+ *     to geometry: an aligned partner that *resized / rotated* is the
+ *     driver of the translators aligned to it; failing that, a cluster
+ *     of mutually-aligned pure-movers is a drag whose most-displaced
+ *     element is the driver.
+ *
+ * `excluded` are entries already claimed (arrow consequences). A
+ * follower that is itself the cause of an arrow change is still absorbed
+ * here — the caller re-keys that arrow onto this driver, so the whole
+ * chain (drag → aligned partner → the partner's bound arrow) collapses
+ * into one top-level op with two consequents. See `classifyEntries`.
+ */
+const findConsequentAlignmentChanges = (
+  entries: readonly LogEntry[],
+  changedElements: Record<string, OrderedExcalidrawElement>,
+  excluded: Set<LogEntry>,
+  selectedIds: ReadonlySet<string>,
+): Map<string, LogEntry[]> => {
+  const entryById = new Map<string, LogEntry>();
+  const transformers = new Set<string>(); // resize / rotate → definite driver
+  const translators = new Set<string>(); // pure x/y → follower or move-driver
+
+  for (const e of entries) {
+    if (e.type !== "update" || excluded.has(e)) {
+      continue;
+    }
+    const changed = getChangedKeys(e);
+    const hasSize = changed.has("width") || changed.has("height");
+    const hasAngle = changed.has("angle");
+    const hasPos = changed.has("x") || changed.has("y");
+    changed.delete("x");
+    changed.delete("y");
+    changed.delete("width");
+    changed.delete("height");
+    changed.delete("angle");
+    // Permitted residue, as in `classifyEntry`: an Alt+drag writes the
+    // newly-created links onto the very element it moved, and that
+    // element is precisely the driver this pass is looking for. Without
+    // this the driver would be rejected as "not purely geometric" and
+    // its partners would surface as their own moves.
+    changed.delete("alignments");
+    if (changed.size > 0) {
+      // Not a purely geometric change — not an alignment participant.
+      continue;
+    }
+    if (hasSize || hasAngle) {
+      transformers.add(e.elementId);
+      entryById.set(e.elementId, e);
+    } else if (hasPos) {
+      translators.add(e.elementId);
+      entryById.set(e.elementId, e);
+    }
+  }
+
+  const inPlay = new Set<string>([...transformers, ...translators]);
+  if (inPlay.size < 2) {
+    return new Map();
+  }
+
+  // Undirected alignment adjacency, restricted to elements that changed
+  // geometrically this moment.
+  const adjacency = new Map<string, Set<string>>();
+  const addEdge = (a: string, b: string) => {
+    let set = adjacency.get(a);
+    if (!set) {
+      set = new Set();
+      adjacency.set(a, set);
+    }
+    set.add(b);
+  };
+  for (const id of inPlay) {
+    const links = changedElements[id]?.alignments;
+    if (!links) {
+      continue;
+    }
+    for (const link of links) {
+      if (inPlay.has(link.elementId)) {
+        addEdge(id, link.elementId);
+        addEdge(link.elementId, id);
+      }
+    }
+  }
+
+  const consequences = new Map<string, LogEntry[]>();
+  const seen = new Set<string>();
+  for (const start of inPlay) {
+    if (seen.has(start)) {
+      continue;
+    }
+    // Flood the connected component.
+    const component: string[] = [];
+    const stack = [start];
+    seen.add(start);
+    while (stack.length > 0) {
+      const id = stack.pop()!;
+      component.push(id);
+      for (const neighbor of adjacency.get(id) ?? []) {
+        if (!seen.has(neighbor)) {
+          seen.add(neighbor);
+          stack.push(neighbor);
+        }
+      }
+    }
+    if (component.length < 2) {
+      // Nothing aligned to this element also moved — a real user move.
+      continue;
+    }
+
+    const compSelected = component.filter((id) => selectedIds.has(id));
+    const compTransformers = component.filter((id) => transformers.has(id));
+    const compTranslators = component.filter((id) => translators.has(id));
+
+    let driverId: string | undefined;
+    let followers: string[];
+    if (compSelected.length > 0) {
+      // Selection is authoritative: the selected element(s) were
+      // directly manipulated; any non-selected element that only
+      // translated followed via alignment. (When the user selects and
+      // drags several aligned elements together, they're all selected,
+      // so none is absorbed — each stays a top-level op.)
+      driverId = [...compSelected].sort()[0];
+      followers = component.filter(
+        (id) => !selectedIds.has(id) && translators.has(id),
+      );
+    } else if (compTransformers.length > 0) {
+      // Fallback (no selection overlap): resize / rotate gesture.
+      driverId = [...compTransformers].sort()[0];
+      followers = compTranslators;
+    } else {
+      // Fallback: pure-move cluster; most-displaced element is the driver.
+      driverId = pickMoveDriver(compTranslators, entryById);
+      followers = compTranslators.filter((id) => id !== driverId);
+    }
+    if (!driverId) {
+      continue;
+    }
+
+    for (const followerId of followers) {
+      const entry = entryById.get(followerId);
+      if (!entry) {
+        continue;
+      }
+      const list = consequences.get(driverId) ?? [];
+      list.push(entry);
+      consequences.set(driverId, list);
+    }
+  }
+
+  return consequences;
+};
+
+/**
+ * Pick the driver of a pure-move alignment cluster: the element that
+ * moved the farthest (its displacement isn't limited to a single
+ * coupled axis), breaking ties by smallest id for determinism.
+ */
+const pickMoveDriver = (
+  ids: readonly string[],
+  entryById: Map<string, LogEntry>,
+): string | undefined => {
+  let best: string | undefined;
+  let bestScore = -1;
+  for (const id of ids) {
+    const entry = entryById.get(id);
+    if (!entry) {
+      continue;
+    }
+    const dx =
+      Number(entry.after.x ?? entry.before.x ?? 0) -
+      Number(entry.before.x ?? entry.after.x ?? 0);
+    const dy =
+      Number(entry.after.y ?? entry.before.y ?? 0) -
+      Number(entry.before.y ?? entry.after.y ?? 0);
+    const score = dx * dx + dy * dy;
+    if (score > bestScore || (score === bestScore && (best === undefined || id < best))) {
+      bestScore = score;
+      best = id;
+    }
+  }
+  return best;
+};
+
+/**
+ * Attach the collected consequence entries to the ops they originated
+ * from. Single-element ops (move/resize/rotate) key by their
+ * `elementId`; group ops (move-group/resize-group/rotate-group) absorb
+ * consequences of any of their members.
  *
  * Post-process: the raw consequence entries are run back through
  * `classifyEntry` so each becomes its own semantic op (typically
- * `arrow-edit-points` / `move` — bindings are excluded from
- * consequences upstream, so no lossy `arrow-move-binding` here). Those
- * nested ops replay through the same engine as any other op — see
- * `applyConsequentOps` in `applyOps.ts`.
+ * `arrow-edit-points` / `move`). Those nested ops replay through the
+ * same engine as any other op — see `applyConsequentOps` in
+ * `applyOps.ts`.
  */
-const attachArrowConsequences = (
+const attachConsequences = (
   ops: LogOperation[],
   consequences: Map<string, LogEntry[]>,
   changedElements: Record<string, OrderedExcalidrawElement>,
