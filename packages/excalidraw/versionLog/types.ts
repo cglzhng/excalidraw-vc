@@ -15,7 +15,10 @@
  */
 
 import type { StoreDelta } from "@excalidraw/element";
-import type { FixedPointBinding } from "@excalidraw/element/types";
+import type {
+  ElementAlignment,
+  FixedPointBinding,
+} from "@excalidraw/element/types";
 
 import type { TransformMatrix } from "./transform";
 
@@ -341,6 +344,23 @@ export type LogOperation =
       /** Parent group id at the time of dissolution. */
       parentGroupId: string | null;
     }
+  // Hard alignment ----------------------------------------------------
+  //
+  // Locking (Alt+L) / unlocking (Alt+Shift+L) hard alignments is
+  // multi-entry like grouping: one gesture writes the `alignments`
+  // field on several elements at once. We model the whole gesture as a
+  // single op carrying each member's before/after link arrays so replay
+  // can set them in either direction.
+  | {
+      kind: "alignment";
+      /** "lock" = links added, "unlock" = links removed. */
+      action: "lock" | "unlock";
+      /** Element ids whose `alignments` field changed. */
+      elementIds: string[];
+      /** Per-element link arrays before / after, keyed by element id. */
+      before: Record<string, readonly ElementAlignment[]>;
+      after: Record<string, readonly ElementAlignment[]>;
+    }
   // Fallback ----------------------------------------------------------
   | {
       kind: "raw";
@@ -374,6 +394,8 @@ export const getOperationElementIds = (op: LogOperation): string[] => {
     case "group":
     case "ungroup":
       return collectElementIdsFromGroupNode(op.group);
+    case "alignment":
+      return op.elementIds;
     case "raw":
       return [op.entry.elementId];
   }

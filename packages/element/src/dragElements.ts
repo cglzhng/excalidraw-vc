@@ -15,6 +15,7 @@ import type {
 
 import type { NonDeletedExcalidrawElement } from "@excalidraw/element/types";
 
+import { dragAlignedElements } from "./alignmentLock";
 import {
   getFrameArrowIdsToReattach,
   getSimultaneouslyUpdatedElementIds,
@@ -181,6 +182,16 @@ export const dragSelectedElements = (
     originalElements: pointerDownState.originalElements,
     renderEnvironment,
   });
+
+  // Hard alignment: drag any elements hard-aligned to the moved set so
+  // the alignment is preserved. Runs after the direct moves so partners
+  // inherit the snapped / grid-adjusted offset.
+  dragAlignedElements(
+    pointerDownState.originalElements,
+    elementsToUpdateIds,
+    adjustedOffset,
+    scene,
+  );
 };
 
 const calculateOffset = (

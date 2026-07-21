@@ -457,6 +457,11 @@ const getWrittenProperties = (
         elementId: id,
         property: "groupIds",
       }));
+    case "alignment":
+      return op.elementIds.map((id) => ({
+        elementId: id,
+        property: "alignments",
+      }));
     case "raw": {
       const out: Array<{ elementId: string; property: string }> = [];
       for (const key of Object.keys(op.entry.after)) {

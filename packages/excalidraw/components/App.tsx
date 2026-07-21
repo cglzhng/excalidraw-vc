@@ -97,6 +97,7 @@ import {
 import {
   getObservedAppState,
   getCommonBounds,
+  lockDraggedAlignments,
   bindOrUnbindBindingElements,
   getHoveredElementForBinding,
   isBindingEnabled,
@@ -276,6 +277,7 @@ import {
   actionUnbindText,
   actionBindText,
   actionUngroup,
+  actionUnlockAlignment,
   actionLink,
   actionToggleElementLock,
   actionToggleLinearEditor,
@@ -3892,6 +3894,14 @@ class App extends React.Component<AppProps, AppState> {
     this.versionLog.subscribe(this.store.onDurableIncrementEmitter, {
       getElement: (id) => this.scene.getNonDeletedElementsMap().get(id),
       getAllElements: () => this.scene.getNonDeletedElements(),
+      // Read at ingest (pointer-up) time, so it reflects what the user
+      // directly manipulated — hard-alignment followers aren't selected.
+      getSelectedElementIds: () =>
+        new Set(
+          Object.keys(this.state.selectedElementIds).filter(
+            (id) => this.state.selectedElementIds[id],
+          ),
+        ),
     });
 
     // per. optimmisation, only subscribe if there is the `onIncrement` prop registered, to avoid unnecessary computation
@@ -10228,6 +10238,28 @@ class App extends React.Component<AppProps, AppState> {
         }
       }
 
+      // Hard-alignment gesture: if Alt was held for this drag, commit the
+      // soft snaps under the pointer to persistent alignment links (see
+      // `lockDraggedAlignments`). Spliced in before the drag's capture
+      // below, so the move and the new links land in one undo step.
+      if (
+        childEvent.altKey &&
+        pointerDownState.drag.hasOccurred &&
+        !this.state.selectedLinearElement
+      ) {
+        const updated = lockDraggedAlignments(
+          this.scene.getSelectedElements(this.state),
+          this.scene.getNonDeletedElementsMap(),
+        );
+        if (updated.size > 0) {
+          this.scene.replaceAllElements(
+            this.scene
+              .getElementsIncludingDeleted()
+              .map((el) => updated.get(el.id) ?? el),
+          );
+        }
+      }
+
       if (resizingElement) {
         this.store.scheduleCapture();
       }
@@ -11491,6 +11523,7 @@ class App extends React.Component<AppProps, AppState> {
       actionBindText,
       actionWrapTextInContainer,
       actionUngroup,
+      actionUnlockAlignment,
       CONTEXT_MENU_SEPARATOR,
       actionAddToLibrary,
       ...zIndexActions,

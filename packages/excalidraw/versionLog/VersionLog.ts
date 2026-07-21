@@ -26,6 +26,13 @@ export interface VersionLogSceneContext {
   getElement: (id: string) => ExcalidrawElement | undefined;
   /** Returns the iterable of all non-deleted elements in the current scene. */
   getAllElements: () => Iterable<ExcalidrawElement>;
+  /**
+   * The currently-selected element ids. Read at ingest time (i.e. when
+   * the gesture commits), so this is the set the user directly
+   * manipulated — used by the classifier to tell a driver apart from an
+   * element that only followed via a hard-alignment link.
+   */
+  getSelectedElementIds: () => ReadonlySet<string>;
 }
 
 /**
@@ -411,6 +418,7 @@ export class VersionLog {
       rawEntries,
       changedElements,
       groupSizeCache,
+      scene.getSelectedElementIds(),
     );
 
     const logMoment: LogMoment = {

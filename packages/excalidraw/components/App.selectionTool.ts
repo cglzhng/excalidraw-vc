@@ -84,6 +84,10 @@ import type React from "react";
 import type { PointerDownState } from "../types";
 import type App from "./App";
 
+// Alt+drag is repurposed as the hard-alignment gesture in this fork, so
+// the upstream "alt-drag duplicates the selection" behaviour is disabled.
+const ALT_DRAG_DUPLICATES = false;
+
 /**
  * The selection tool's (and the lasso's) selection: what a pointer down
  * selects, what a click (a pointer up without a drag) does to the selection —
@@ -366,7 +370,8 @@ export class AppSelectionTool {
           // If we click on something
         } else if (hitElement != null) {
           // == deep selection ==
-          // on CMD/CTRL, drill down to hit element regardless of groups etc.
+          // on CMD/CTRL, drill down to the hit element regardless of
+          // groups etc. — but only on pointer-up, see below
           if (event[KEYS.CTRL_OR_CMD]) {
             if (event.altKey) {
               // ctrl + alt means we're lasso selecting - start lasso trail and switch to lasso tool
@@ -383,15 +388,13 @@ export class AppSelectionTool {
               this.app.setActiveTool({ type: "lasso", fromSelection: true });
               return false;
             }
-            if (!this.app.state.selectedElementIds[hitElement.id]) {
-              pointerDownState.hit.wasAddedToSelection = true;
-            }
-            this.app.setState({
-              previousSelectedElementIds: this.app.state.selectedElementIds,
-            });
-            this.app.selection.select(hitElement, { deep: true });
-            // mark as not completely handled so as to allow dragging etc.
-            return false;
+            // Drilling into the group is deferred to pointer-up (see the
+            // deferred deep-select there). Doing it here would narrow the
+            // selection to this single element before any drag begins, so
+            // a cmd/ctrl *drag* would pull the element out of its group
+            // instead of moving the group. Falling through selects the
+            // group as a plain click would; a click that never becomes a
+            // drag then drills down on pointer-up.
           }
 
           // deselect if item is selected
@@ -835,9 +838,22 @@ export class AppSelectionTool {
       // prevent dragging even if we're no longer holding cmd/ctrl otherwise
       // it would have weird results (stuff jumping all over the screen)
       // Checking for editingTextElement to avoid jump while editing on mobile #6503
+      //
+      // Exception: when the gesture started on an element, cmd/ctrl
+      // unambiguously means "move it, with snapping toggled" rather than
+      // "start a box selection", so allow the drag. Cmd/ctrl pointer-down
+      // on an element falls through as a plain click (the deep-select is
+      // deferred to pointer-up) precisely so dragging can follow. Box
+      // selection is still what you get when the gesture starts on empty
+      // canvas. Decided from pointer-down state only, so the mode cannot
+      // flip mid-gesture.
+      const grabbedElement =
+        !!pointerDownState.hit.element ||
+        pointerDownState.hit.hasHitCommonBoundingBoxOfSelectedElements;
+
       if (
         selectedElements.length > 0 &&
-        !pointerDownState.withCmdOrCtrl &&
+        (!pointerDownState.withCmdOrCtrl || grabbedElement) &&
         !this.app.state.editingTextElement &&
         this.app.state.activeEmbeddable?.state !== "active"
       ) {
@@ -1007,8 +1023,11 @@ export class AppSelectionTool {
           selectionElement: null,
         });
 
-        // We duplicate the selected element if alt is pressed on pointer move
-        if (event.altKey && !pointerDownState.hit.hasBeenDuplicated) {
+        // Alt+drag is repurposed as the hard-alignment gesture (the
+        // soft snap under the pointer is committed to a persistent
+        // link on release — see the pointer-up handler), so it no
+        // longer duplicates the selection.
+        if (ALT_DRAG_DUPLICATES && !pointerDownState.hit.hasBeenDuplicated) {
           this.app.duplicate.duplicateDraggedSelection(pointerDownState, event);
         }
 
@@ -1402,7 +1421,18 @@ export class AppSelectionTool {
           }));
         }
       } else {
-        this.app.selection.select(hitElement);
+        // Deferred cmd/ctrl deep-select (counterpart of the pointer-down
+        // branch). Cmd/ctrl+click drills into a group to select the
+        // single element under the cursor, but the drill-down happens
+        // here so that a cmd/ctrl *drag* moves the whole group instead
+        // of pulling one element out of it.
+        const deep = pointerDownState.withCmdOrCtrl;
+        if (deep) {
+          this.app.setState({
+            previousSelectedElementIds: this.app.state.selectedElementIds,
+          });
+        }
+        this.app.selection.select(hitElement, { deep });
       }
     }
 

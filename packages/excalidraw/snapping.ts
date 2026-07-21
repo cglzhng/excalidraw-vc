@@ -9,11 +9,12 @@ import {
 
 import { TOOL_TYPE, KEYS } from "@excalidraw/common";
 import {
+  getAlignmentMovers,
   getCommonBounds,
   getDraggedElementsBounds,
   getElementAbsoluteCoords,
 } from "@excalidraw/element";
-import { isBoundToContainer } from "@excalidraw/element";
+import { isBoundToContainer, isLinearElement } from "@excalidraw/element";
 
 import { getMaximumGroups } from "@excalidraw/element";
 
@@ -101,6 +102,14 @@ export type Snaps = Snap[];
 export type PointSnapLine = {
   type: "points";
   points: GlobalPoint[];
+  /**
+   * True while the hard-alignment gesture is active (Alt held during a
+   * drag), meaning this snap is about to be committed to a persistent
+   * link on release. Rendered in the lock style rather than the usual
+   * transient snap style. Only point snaps become links — gap snaps
+   * never do, so they stay in the soft style.
+   */
+  hard?: boolean;
 };
 
 export type PointerSnapLine = {
@@ -119,15 +128,30 @@ export type SnapLine = PointSnapLine | GapSnapLine | PointerSnapLine;
 
 // -----------------------------------------------------------------------------
 
+/**
+ * A cached reference snap point, with a per-axis mask. `snapX`/`snapY`
+ * are normally both true; a point is masked off on an axis when its
+ * element is hard-aligned to the dragged selection on that axis, so it
+ * moves along with the drag and its (frozen, pre-drag) coordinate on
+ * that axis would otherwise produce a stale snap.
+ */
+export type ReferenceSnapPoint = {
+  point: GlobalPoint;
+  snapX: boolean;
+  snapY: boolean;
+};
+
 export class SnapCache {
-  private static referenceSnapPoints: GlobalPoint[] | null = null;
+  private static referenceSnapPoints: ReferenceSnapPoint[] | null = null;
 
   private static visibleGaps: {
     verticalGaps: Gap[];
     horizontalGaps: Gap[];
   } | null = null;
 
-  public static setReferenceSnapPoints = (snapPoints: GlobalPoint[] | null) => {
+  public static setReferenceSnapPoints = (
+    snapPoints: ReferenceSnapPoint[] | null,
+  ) => {
     SnapCache.referenceSnapPoints = snapPoints;
   };
 
@@ -168,6 +192,17 @@ export const isSnappingEnabled = ({
   event: KeyboardModifiersObject;
   selectedElements: readonly NonDeletedExcalidrawElement[];
 }) => {
+  // Linear elements (arrows and lines) never participate in soft
+  // alignment — they are neither snapped nor used as snap targets (the
+  // reference set filters them out separately). Placed before the
+  // `event` branch below so it also applies during live gestures.
+  if (
+    selectedElements.length > 0 &&
+    selectedElements.every((element) => isLinearElement(element))
+  ) {
+    return false;
+  }
+
   if (event) {
     // Allow snapping for lasso tool when dragging selected elements
     // but not during lasso selection phase
@@ -175,19 +210,24 @@ export const isSnappingEnabled = ({
       app.state.activeTool.type === "lasso" &&
       app.state.selectedElementsAreBeingDragged;
 
+    // Holding Alt while dragging is the hard-alignment gesture: the snap
+    // the user sees is committed to a persistent link on release (see
+    // `lockDraggedAlignments` + App's pointer-up). Force snapping on so
+    // there is always a visible guide to commit, regardless of the
+    // current snap-mode toggle.
+    const hardAlignDrag =
+      event.altKey && app.state.selectedElementsAreBeingDragged;
+
     return (
       (app.state.activeTool.type !== "lasso" || isLassoDragging) &&
-      ((app.state.objectsSnapModeEnabled && !event[KEYS.CTRL_OR_CMD]) ||
+      (hardAlignDrag ||
+        (app.state.objectsSnapModeEnabled && !event[KEYS.CTRL_OR_CMD]) ||
         (!app.state.objectsSnapModeEnabled &&
           event[KEYS.CTRL_OR_CMD] &&
           !isGridModeEnabled(app)))
     );
   }
 
-  // do not suggest snaps for an arrow to give way to binding
-  if (selectedElements.length === 1 && selectedElements[0].type === "arrow") {
-    return false;
-  }
   return app.state.objectsSnapModeEnabled;
 };
 
@@ -323,7 +363,8 @@ const getReferenceElements = (
     selectedElements,
     appState,
     elementsMap,
-  );
+    // Linear elements (arrows and lines) are never snap targets.
+  ).filter((element) => !isLinearElement(element));
 
 export const getVisibleGaps = (
   elements: readonly NonDeletedExcalidrawElement[],
@@ -625,12 +666,28 @@ export const getReferenceSnapPoints = (
     appState,
     elementsMap,
   );
+  // Elements hard-aligned to the dragged selection move along with it,
+  // per axis. Their pre-drag coordinate on that axis is frozen in this
+  // cache, so we mask those points off on the axis they comove, keeping
+  // them as valid snap targets on the free axis.
+  const movers = getAlignmentMovers(
+    new Set(selectedElements.map((element) => element.id)),
+    elementsMap,
+  );
   return getMaximumGroups(referenceElements, elementsMap)
     .filter(
       (elementsGroup) =>
         !(elementsGroup.length === 1 && isBoundToContainer(elementsGroup[0])),
     )
-    .flatMap((elementGroup) => getElementsCorners(elementGroup, elementsMap));
+    .flatMap((elementGroup): ReferenceSnapPoint[] => {
+      const comovesX = elementGroup.some((element) => movers.x.has(element.id));
+      const comovesY = elementGroup.some((element) => movers.y.has(element.id));
+      return getElementsCorners(elementGroup, elementsMap).map((point) => ({
+        point,
+        snapX: !comovesX,
+        snapY: !comovesY,
+      }));
+    });
 };
 
 const getPointSnaps = (
@@ -641,6 +698,12 @@ const getPointSnaps = (
   nearestSnapsX: Snaps,
   nearestSnapsY: Snaps,
   minOffset: Vector2D,
+  // Offset the dragged selection has been moved by. A reference point
+  // hard-aligned to the selection comoves by this amount on its masked
+  // axis, so we shift its (frozen, pre-drag) coordinate there to its
+  // current position — otherwise the rendered snap line would stretch
+  // back to where the partner used to be.
+  comoveOffset: Vector2D = { x: 0, y: 0 },
 ) => {
   if (
     !isSnappingEnabled({ app, event, selectedElements }) ||
@@ -654,31 +717,40 @@ const getPointSnaps = (
   if (referenceSnapPoints) {
     for (const thisSnapPoint of selectionSnapPoints) {
       for (const otherSnapPoint of referenceSnapPoints) {
-        const offsetX = otherSnapPoint[0] - thisSnapPoint[0];
-        const offsetY = otherSnapPoint[1] - thisSnapPoint[1];
+        const { snapX, snapY } = otherSnapPoint;
+        // On the snapping axis the coordinate is unchanged (the partner
+        // does not move there); on the masked axis it is corrected to
+        // the partner's current position. This only affects the point
+        // stored for line rendering — masked axes never snap.
+        const point = pointFrom<GlobalPoint>(
+          otherSnapPoint.point[0] + (snapX ? 0 : comoveOffset.x),
+          otherSnapPoint.point[1] + (snapY ? 0 : comoveOffset.y),
+        );
+        const offsetX = point[0] - thisSnapPoint[0];
+        const offsetY = point[1] - thisSnapPoint[1];
 
-        if (Math.abs(offsetX) <= minOffset.x) {
+        if (snapX && Math.abs(offsetX) <= minOffset.x) {
           if (Math.abs(offsetX) < minOffset.x) {
             nearestSnapsX.length = 0;
           }
 
           nearestSnapsX.push({
             type: "point",
-            points: [thisSnapPoint, otherSnapPoint],
+            points: [thisSnapPoint, point],
             offset: offsetX,
           });
 
           minOffset.x = Math.abs(offsetX);
         }
 
-        if (Math.abs(offsetY) <= minOffset.y) {
+        if (snapY && Math.abs(offsetY) <= minOffset.y) {
           if (Math.abs(offsetY) < minOffset.y) {
             nearestSnapsY.length = 0;
           }
 
           nearestSnapsY.push({
             type: "point",
-            points: [thisSnapPoint, otherSnapPoint],
+            points: [thisSnapPoint, point],
             offset: offsetY,
           });
 
@@ -733,6 +805,7 @@ export const snapDraggedElements = (
     nearestSnapsX,
     nearestSnapsY,
     minOffset,
+    dragOffset,
   );
 
   getGapSnaps(
@@ -778,6 +851,7 @@ export const snapDraggedElements = (
     nearestSnapsX,
     nearestSnapsY,
     minOffset,
+    newDragOffset,
   );
 
   getGapSnaps(
@@ -790,7 +864,14 @@ export const snapDraggedElements = (
     minOffset,
   );
 
-  const pointSnapLines = createPointSnapLines(nearestSnapsX, nearestSnapsY);
+  // Alt during a drag is the hard-alignment gesture: these point snaps
+  // will be committed to persistent links on release, so flag them for
+  // the renderer to draw in the lock style.
+  const pointSnapLines = createPointSnapLines(
+    nearestSnapsX,
+    nearestSnapsY,
+    event.altKey,
+  );
 
   const gapSnapLines = createGapSnapLines(
     selectedElements,
@@ -828,6 +909,8 @@ const dedupePoints = (points: GlobalPoint[]): GlobalPoint[] => {
 const createPointSnapLines = (
   nearestSnapsX: Snaps,
   nearestSnapsY: Snaps,
+  // marks the resulting lines as about-to-become-persistent (Alt+drag)
+  hard: boolean = false,
 ): PointSnapLine[] => {
   const snapsX = {} as { [key: string]: GlobalPoint[] };
   const snapsY = {} as { [key: string]: GlobalPoint[] };
@@ -870,6 +953,7 @@ const createPointSnapLines = (
     .map(([key, points]) => {
       return {
         type: "points",
+        hard,
         points: dedupePoints(
           points
             .map((p) => {
@@ -883,6 +967,7 @@ const createPointSnapLines = (
       Object.entries(snapsY).map(([key, points]) => {
         return {
           type: "points",
+          hard,
           points: dedupePoints(
             points
               .map((p) => {

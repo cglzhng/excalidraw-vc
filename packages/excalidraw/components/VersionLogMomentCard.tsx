@@ -40,6 +40,7 @@ const OP_COLOR: Record<LogOperation["kind"], string> = {
   "arrow-rotate": "var(--vlog-op-arrow-rotate)",
   group: "var(--vlog-op-group)",
   ungroup: "var(--vlog-op-ungroup)",
+  alignment: "var(--vlog-op-alignment)",
   raw: "var(--vlog-op-raw)",
 };
 
@@ -365,6 +366,15 @@ export const renderOpContent = (op: LogOperation): React.ReactNode => {
         <>
           <strong>Ungrouped</strong>{" "}
           {collectElementIdsFromGroupNode(op.group).length} elements
+        </>
+      );
+    case "alignment":
+      return (
+        <>
+          <strong>
+            {op.action === "lock" ? "Locked" : "Unlocked"} alignment
+          </strong>{" "}
+          of {op.elementIds.length} elements
         </>
       );
     case "raw":

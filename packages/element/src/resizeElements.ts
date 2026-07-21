@@ -21,6 +21,7 @@ import type { PointerDownState } from "@excalidraw/excalidraw/types";
 
 import type { Mutable } from "@excalidraw/common/utility-types";
 
+import { resizeAlignedElements } from "./alignmentLock";
 import {
   getArrowLocalFixedPoints,
   unbindBindingElement,
@@ -155,6 +156,10 @@ export const transformElements = (
             renderEnvironment,
           },
         );
+
+        // Hard alignment: drag partners aligned to this element so the
+        // shared edge follows the resize.
+        resizeAlignedElements(originalElements, new Set([elementId]), scene);
       }
     }
     if (isTextElement(element)) {
@@ -206,6 +211,14 @@ export const transformElements = (
           originalBoundingBox,
           renderEnvironment,
         },
+      );
+
+      // Hard alignment: drag partners aligned to any resized element so
+      // their shared edges follow the resize.
+      resizeAlignedElements(
+        originalElements,
+        new Set(selectedElements.map((el) => el.id)),
+        scene,
       );
 
       return true;
