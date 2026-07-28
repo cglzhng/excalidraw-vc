@@ -83,7 +83,11 @@ import type {
   NonDeletedSceneElementsMap,
 } from "@excalidraw/element/types";
 
-import { renderAlignmentLocks } from "../renderer/renderAlignmentLocks";
+import {
+  renderAlignmentLocks,
+  renderElementAlignmentLocks,
+  renderAnchorLockOverlays,
+} from "../renderer/renderAlignmentLocks";
 import { renderSnaps } from "../renderer/renderSnaps";
 import { roundRect } from "../renderer/roundRect";
 import {
@@ -2230,6 +2234,20 @@ const _renderInteractiveScene = ({
   renderSnaps(context, appState);
 
   renderAlignmentLocks(context, appState, allElementsMap, selectedElements);
+  renderElementAlignmentLocks(
+    context,
+    appState,
+    allElementsMap,
+    selectedElements,
+    renderConfig.selectionColor,
+  );
+  renderAnchorLockOverlays(
+    context,
+    appState,
+    allElementsMap,
+    selectedElements,
+    renderConfig.selectionColor,
+  );
 
   context.restore();
 

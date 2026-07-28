@@ -448,9 +448,12 @@ const repairBinding = <T extends ExcalidrawArrowElement>(
 };
 
 const restoreElementWithProperties = <
-  T extends Required<Omit<ExcalidrawElement, "customData" | "alignments">> & {
+  T extends Required<
+    Omit<ExcalidrawElement, "customData" | "alignments" | "alignmentLocked">
+  > & {
     customData?: ExcalidrawElement["customData"];
     alignments?: ExcalidrawElement["alignments"];
+    alignmentLocked?: ExcalidrawElement["alignmentLocked"];
     /** @deprecated */
     boundElementIds?: readonly ExcalidrawElement["id"][];
     /** @deprecated */
@@ -524,6 +527,9 @@ const restoreElementWithProperties = <
   // empty array to every restored element).
   if (element.alignments?.length) {
     base.alignments = element.alignments;
+  }
+  if (element.alignmentLocked) {
+    base.alignmentLocked = true;
   }
 
   const ret = {

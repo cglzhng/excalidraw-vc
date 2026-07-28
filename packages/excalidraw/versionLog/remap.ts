@@ -52,6 +52,7 @@ export const applyRemapsToOp = (
     case "arrow-move-binding":
     case "arrow-resize":
     case "arrow-rotate":
+    case "alignment-anchor":
     case "raw": {
       const targetId =
         op.kind === "raw" ? op.entry.elementId : op.elementId;

@@ -65,6 +65,7 @@ export const computeHoverPreview = (
     case "arrow-bind":
     case "arrow-move-binding":
     case "alignment":
+    case "alignment-anchor":
     case "raw":
       return null;
 

@@ -395,7 +395,7 @@ export class AppText {
     updateElement(element.originalText, false);
   }
 
-  private getSelectedTextElement(
+  public getSelectedTextElement(
     container?: ExcalidrawTextContainer | null,
   ): NonDeleted<ExcalidrawTextElement> | null {
     const selectedElements = this.app.scene.getSelectedElements(this.app.state);

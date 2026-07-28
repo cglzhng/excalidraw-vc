@@ -97,7 +97,9 @@ import {
 import {
   getObservedAppState,
   getCommonBounds,
-  lockDraggedAlignments,
+  lockAlignmentPair,
+  unlockAlignmentPair,
+  type AlignmentGuide,
   bindOrUnbindBindingElements,
   getHoveredElementForBinding,
   isBindingEnabled,
@@ -427,6 +429,11 @@ import NewElementCanvas from "./canvases/NewElementCanvas";
 import { isPointHittingLink } from "./hyperlink/helpers";
 import { AppHost } from "./App.host";
 import { CursorHint, CursorHints } from "./CursorHint";
+import {
+  getAlignmentGuideLines,
+  getElementLockToggle,
+  ALIGNMENT_ICON_RADIUS,
+} from "../renderer/renderAlignmentLocks";
 import { MagicIcon, copyIcon, fullscreenIcon } from "./icons";
 import { AppStateObserver, type OnStateChange } from "./AppStateObserver";
 
@@ -6593,7 +6600,6 @@ class App extends React.Component<AppProps, AppState> {
       }
 
       // shouldn't edit/create text when inside line editor (often false positive)
-
       if (!this.state.selectedLinearElement?.isEditing) {
         const container =
           // skip binding to container on dblclick when holding ctrl
@@ -6605,6 +6611,14 @@ class App extends React.Component<AppProps, AppState> {
               ? selectedElements[0]
               : null
             : this.text.getTextBindableContainerAtPosition(sceneX, sceneY));
+
+      /*
+      
+      Double-click text *creation* is intentionally disabled — stray
+      double-clicks on the canvas or on shapes were producing accidental
+      text elements. We still allow editing text that already exists (a
+      standalone text, or a container's label) by entering the editor
+      only when such an element is found under the pointer.
 
         if (container) {
           if (
@@ -6638,6 +6652,23 @@ class App extends React.Component<AppProps, AppState> {
           insertAtParentCenter: !event.altKey,
           container: container || null,
         });
+
+      */
+
+        const textContainer = container || null;
+
+        const existingTextElement =
+          this.text.getSelectedTextElement(textContainer) ||
+          this.text.getTextElementAtPosition(sceneX, sceneY);
+
+        if (existingTextElement) {
+          this.text.startTextEditing({
+            sceneX,
+            sceneY,
+            insertAtParentCenter: !event.altKey,
+            container: textContainer,
+          });
+        }
       }
     }
   };
@@ -7993,6 +8024,23 @@ class App extends React.Component<AppProps, AppState> {
       return;
     }
 
+    // Clicking a padlock on an alignment guide toggles that link between
+    // soft and hard, instead of selecting / dragging. Checked before
+    // selection so a padlock sitting over empty canvas doesn't clear the
+    // selection (which would make the guide — and the padlock — vanish).
+    if (this.handleAlignmentIconOnPointerDown(pointerDownState.origin)) {
+      return;
+    }
+
+    // Clicking the centre element-lock badge toggles the alignment
+    // anchor. Consumed here (like the guide padlock) rather than deferred
+    // to pointer-up — the badge is a small target over the element, and
+    // not consuming it let the tiniest cursor jitter start a drag before
+    // the click registered. Drag the element by grabbing off the badge.
+    if (this.handleElementLockIconOnPointerDown(pointerDownState.origin)) {
+      return;
+    }
+
     this.selectionTool.clearSelectionIfNotUsingSelection();
 
     if (
@@ -8459,6 +8507,117 @@ class App extends React.Component<AppProps, AppState> {
     this.ownerWindow.addEventListener(EVENT.POINTER_MOVE, onPointerMove);
     this.ownerWindow.addEventListener(EVENT.POINTER_UP, onPointerUp);
     return true;
+  }
+
+  /**
+   * If `scenePointer` lands on an alignment guide's padlock, toggle that
+   * link between soft and hard and return true (the pointer-down is then
+   * consumed). Guides are recomputed on demand rather than cached —
+   * clicks are rare, mirroring the element-link icon hit-test.
+   */
+  private handleAlignmentIconOnPointerDown(scenePointer: {
+    x: number;
+    y: number;
+  }): boolean {
+    const selected = this.scene.getSelectedElements(this.state);
+    if (selected.length === 0) {
+      return false;
+    }
+    const lines = getAlignmentGuideLines(
+      selected,
+      this.scene.getNonDeletedElementsMap(),
+    );
+    const hitRadius = (ALIGNMENT_ICON_RADIUS + 4) / this.state.zoom.value;
+
+    let closest: { guide: AlignmentGuide; dist: number } | null = null;
+    for (const line of lines) {
+      const dist = Math.hypot(
+        scenePointer.x - line.icon[0],
+        scenePointer.y - line.icon[1],
+      );
+      if (dist <= hitRadius && (!closest || dist < closest.dist)) {
+        closest = { guide: line.guide, dist };
+      }
+    }
+    if (!closest) {
+      return false;
+    }
+    this.toggleAlignmentGuide(closest.guide);
+    return true;
+  }
+
+  /**
+   * Promote a soft guide to a hard link, or demote a hard link back to
+   * soft (the two padlock states). Captured immediately so it's one undo
+   * step / version-log moment; the reciprocal link on the partner is
+   * written too.
+   */
+  private toggleAlignmentGuide(guide: AlignmentGuide) {
+    const elementsMap = this.scene.getNonDeletedElementsMap();
+    const updated = guide.hard
+      ? unlockAlignmentPair(
+          guide.selfId,
+          guide.elementId,
+          guide.axis,
+          elementsMap,
+        )
+      : lockAlignmentPair(guide, elementsMap);
+    if (updated.size === 0) {
+      return;
+    }
+    this.updateScene({
+      elements: this.scene
+        .getElementsIncludingDeleted()
+        .map((el) => updated.get(el.id) ?? el),
+      captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+    });
+  }
+
+  /**
+   * If `scenePointer` lands on the centre element-lock badge of the
+   * selected element, toggle its alignment-anchor flag and return true
+   * (consuming the pointer-down). Mirrors the guide-padlock handler.
+   */
+  private handleElementLockIconOnPointerDown(scenePointer: {
+    x: number;
+    y: number;
+  }): boolean {
+    const toggle = getElementLockToggle(
+      this.scene.getSelectedElements(this.state),
+      this.scene.getNonDeletedElementsMap(),
+      this.state.zoom.value,
+    );
+    if (!toggle) {
+      return false;
+    }
+    const hitRadius = (ALIGNMENT_ICON_RADIUS + 4) / this.state.zoom.value;
+    const dist = Math.hypot(
+      scenePointer.x - toggle.center[0],
+      scenePointer.y - toggle.center[1],
+    );
+    if (dist > hitRadius) {
+      return false;
+    }
+    this.toggleElementAlignmentLock(toggle.elementId);
+    return true;
+  }
+
+  /** Toggle an element's alignment-anchor flag (the centre padlock). */
+  private toggleElementAlignmentLock(elementId: string) {
+    const el = this.scene.getNonDeletedElementsMap().get(elementId);
+    if (!el) {
+      return;
+    }
+    this.updateScene({
+      elements: this.scene
+        .getElementsIncludingDeleted()
+        .map((e) =>
+          e.id === elementId
+            ? newElementWith(e, { alignmentLocked: !e.alignmentLocked })
+            : e,
+        ),
+      captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+    });
   }
 
   private handleFreeDrawElementOnPointerDown = (
@@ -10235,28 +10394,6 @@ class App extends React.Component<AppProps, AppState> {
           }
         } else {
           this.selectionTool.handleSelectionDragOnPointerUp(childEvent);
-        }
-      }
-
-      // Hard-alignment gesture: if Alt was held for this drag, commit the
-      // soft snaps under the pointer to persistent alignment links (see
-      // `lockDraggedAlignments`). Spliced in before the drag's capture
-      // below, so the move and the new links land in one undo step.
-      if (
-        childEvent.altKey &&
-        pointerDownState.drag.hasOccurred &&
-        !this.state.selectedLinearElement
-      ) {
-        const updated = lockDraggedAlignments(
-          this.scene.getSelectedElements(this.state),
-          this.scene.getNonDeletedElementsMap(),
-        );
-        if (updated.size > 0) {
-          this.scene.replaceAllElements(
-            this.scene
-              .getElementsIncludingDeleted()
-              .map((el) => updated.get(el.id) ?? el),
-          );
         }
       }
 

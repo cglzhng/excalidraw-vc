@@ -448,6 +448,13 @@ const applyOpToScene = (
       break;
     }
 
+    case "alignment-anchor": {
+      updateElement(scene, op.elementId, {
+        alignmentLocked: forward ? op.anchored : !op.anchored,
+      } as Partial<OrderedExcalidrawElement>);
+      break;
+    }
+
     // -------------------- raw fallback --------------------
     case "raw": {
       // For unclassified entries we have the original before/after

@@ -9,6 +9,7 @@ import {
 
 import { TOOL_TYPE, KEYS } from "@excalidraw/common";
 import {
+  getAlignmentLockedAxes,
   getAlignmentMovers,
   getCommonBounds,
   getDraggedElementsBounds,
@@ -210,18 +211,9 @@ export const isSnappingEnabled = ({
       app.state.activeTool.type === "lasso" &&
       app.state.selectedElementsAreBeingDragged;
 
-    // Holding Alt while dragging is the hard-alignment gesture: the snap
-    // the user sees is committed to a persistent link on release (see
-    // `lockDraggedAlignments` + App's pointer-up). Force snapping on so
-    // there is always a visible guide to commit, regardless of the
-    // current snap-mode toggle.
-    const hardAlignDrag =
-      event.altKey && app.state.selectedElementsAreBeingDragged;
-
     return (
       (app.state.activeTool.type !== "lasso" || isLassoDragging) &&
-      (hardAlignDrag ||
-        (app.state.objectsSnapModeEnabled && !event[KEYS.CTRL_OR_CMD]) ||
+      ((app.state.objectsSnapModeEnabled && !event[KEYS.CTRL_OR_CMD]) ||
         (!app.state.objectsSnapModeEnabled &&
           event[KEYS.CTRL_OR_CMD] &&
           !isGridModeEnabled(app)))
@@ -782,14 +774,27 @@ export const snapDraggedElements = (
       snapLines: [],
     };
   }
-  dragOffset.x = round(dragOffset.x);
-  dragOffset.y = round(dragOffset.y);
+  // An alignment anchor freezes its whole hard-aligned component on an
+  // axis, so the dragged element doesn't actually go where the pointer
+  // says. `dragSelectedElements` zeroes the offset there; do the same
+  // here first, or every snap below is computed against a position the
+  // element will never reach.
+  const lockedAxes = getAlignmentLockedAxes(
+    new Set(selectedElements.map((element) => element.id)),
+    elementsMap,
+  );
+  dragOffset.x = lockedAxes.x ? 0 : round(dragOffset.x);
+  dragOffset.y = lockedAxes.y ? 0 : round(dragOffset.y);
   const nearestSnapsX: Snaps = [];
   const nearestSnapsY: Snaps = [];
   const snapDistance = getSnapDistance(appState.zoom.value);
   const minOffset = {
-    x: snapDistance,
-    y: snapDistance,
+    // A frozen axis can't be nudged onto a reference, so a near-miss
+    // must not register: only an exact coincidence (offset 0) counts,
+    // which still draws the guide when the alignment genuinely holds
+    // and contributes a no-op snap offset.
+    x: lockedAxes.x ? 0 : snapDistance,
+    y: lockedAxes.y ? 0 : snapDistance,
   };
 
   const selectionPoints = getElementsCorners(selectedElements, elementsMap, {
@@ -864,14 +869,7 @@ export const snapDraggedElements = (
     minOffset,
   );
 
-  // Alt during a drag is the hard-alignment gesture: these point snaps
-  // will be committed to persistent links on release, so flag them for
-  // the renderer to draw in the lock style.
-  const pointSnapLines = createPointSnapLines(
-    nearestSnapsX,
-    nearestSnapsY,
-    event.altKey,
-  );
+  const pointSnapLines = createPointSnapLines(nearestSnapsX, nearestSnapsY);
 
   const gapSnapLines = createGapSnapLines(
     selectedElements,
