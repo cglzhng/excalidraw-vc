@@ -361,6 +361,16 @@ export type LogOperation =
       before: Record<string, readonly ElementAlignment[]>;
       after: Record<string, readonly ElementAlignment[]>;
     }
+  // Anchoring an element (the padlock badge) pins it against alignment
+  // propagation. Unlike `alignment` this is a single-element flag, not a
+  // link, so it gets its own op rather than riding along as a `restyle`.
+  | {
+      kind: "alignment-anchor";
+      elementId: string;
+      elementType?: string;
+      /** `true` = anchored (locked), `false` = released. */
+      anchored: boolean;
+    }
   // Fallback ----------------------------------------------------------
   | {
       kind: "raw";
@@ -382,6 +392,7 @@ export const getOperationElementIds = (op: LogOperation): string[] => {
     case "arrow-move-binding":
     case "arrow-resize":
     case "arrow-rotate":
+    case "alignment-anchor":
       return [op.elementId];
     case "move":
     case "resize":

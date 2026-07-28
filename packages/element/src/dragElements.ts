@@ -15,7 +15,7 @@ import type {
 
 import type { NonDeletedExcalidrawElement } from "@excalidraw/element/types";
 
-import { dragAlignedElements } from "./alignmentLock";
+import { dragAlignedElements, getAlignmentLockedAxes } from "./alignmentLock";
 import { unbindBindingElement, updateBoundElements } from "./binding";
 import { getCommonBounds } from "./bounds";
 import { getPerfectElementSize } from "./sizeHelpers";
@@ -97,7 +97,7 @@ export const dragSelectedElements = (
     origElements.push(origElement);
   }
 
-  const adjustedOffset = calculateOffset(
+  const rawOffset = calculateOffset(
     getCommonBounds(origElements),
     offset,
     snapOffset,
@@ -107,6 +107,20 @@ export const dragSelectedElements = (
   const elementsToUpdateIds = new Set(
     Array.from(elementsToUpdate, (el) => el.id),
   );
+
+  // Alignment anchors freeze the shared axis: if a hard-aligned component
+  // of the dragged set contains a locked element (that isn't itself being
+  // dragged), the component can't move on that axis at all, so zero the
+  // offset there before it's applied to the dragged elements or flooded
+  // to their partners.
+  const lockedAxes = getAlignmentLockedAxes(
+    elementsToUpdateIds,
+    scene.getNonDeletedElementsMap(),
+  );
+  const adjustedOffset = {
+    x: lockedAxes.x ? 0 : rawOffset.x,
+    y: lockedAxes.y ? 0 : rawOffset.y,
+  };
 
   elementsToUpdate.forEach((element) => {
     const isArrow = !isArrowElement(element);

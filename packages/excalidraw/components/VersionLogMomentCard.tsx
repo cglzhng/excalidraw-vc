@@ -41,6 +41,7 @@ const OP_COLOR: Record<LogOperation["kind"], string> = {
   group: "var(--vlog-op-group)",
   ungroup: "var(--vlog-op-ungroup)",
   alignment: "var(--vlog-op-alignment)",
+  "alignment-anchor": "var(--vlog-op-alignment)",
   raw: "var(--vlog-op-raw)",
 };
 
@@ -375,6 +376,13 @@ export const renderOpContent = (op: LogOperation): React.ReactNode => {
             {op.action === "lock" ? "Locked" : "Unlocked"} alignment
           </strong>{" "}
           of {op.elementIds.length} elements
+        </>
+      );
+    case "alignment-anchor":
+      return (
+        <>
+          <strong>{op.anchored ? "Anchored" : "Un-Anchored"}</strong>{" "}
+          {op.elementType ?? "element"}
         </>
       );
     case "raw":

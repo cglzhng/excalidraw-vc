@@ -454,6 +454,17 @@ const classifyEntry = (
     }
   }
 
+  // Toggling the anchor padlock writes `alignmentLocked` on its own, so
+  // a single-key check is enough — no multi-entry pre-pass needed.
+  if (changed.has("alignmentLocked")) {
+    return {
+      kind: "alignment-anchor",
+      elementId: entry.elementId,
+      elementType: current?.type,
+      anchored: !!entry.after.alignmentLocked,
+    };
+  }
+
   for (const prop of STYLE_PROPS) {
     if (changed.has(prop)) {
       return {

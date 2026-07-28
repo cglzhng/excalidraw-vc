@@ -228,6 +228,7 @@ export type InteractiveCanvasAppState = Readonly<
     selectedLinearElement: AppState["selectedLinearElement"];
     multiElement: AppState["multiElement"];
     newElement: AppState["newElement"];
+    selectedElementsAreBeingDragged: AppState["selectedElementsAreBeingDragged"];
     isBindingEnabled: AppState["isBindingEnabled"];
     isMidpointSnappingEnabled: AppState["isMidpointSnappingEnabled"];
     gridModeEnabled: AppState["gridModeEnabled"];

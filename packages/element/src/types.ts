@@ -107,6 +107,13 @@ type _ExcalidrawElementBase = Readonly<{
       stored on the partner. Optional/undefined for the common case of
       no links. See `alignmentLock.ts`. */
   alignments?: readonly ElementAlignment[];
+  /** Alignment anchor: when true, the element is never moved by hard-
+      alignment propagation. Because an aligned component moves rigidly,
+      an anchor freezes its whole component on the shared axis — dragging
+      a partner can't move along that axis at all. Distinct from `locked`
+      (which blocks selection/drag entirely); an anchored element is still
+      freely draggable itself. See `alignmentLock.ts`. */
+  alignmentLocked?: boolean;
   /** epoch (ms) timestamp of last element update */
   updated: number;
   link: string | null;

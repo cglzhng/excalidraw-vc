@@ -266,6 +266,179 @@ export const unlockAlignments = (
 };
 
 /**
+ * A single alignment line to surface for a selected element. `hard`
+ * links are the persisted `alignments`; `soft` ones are live edge
+ * coincidences detected on the fly (never stored) that the user can
+ * promote to hard by clicking the line's lock icon. `selfId` is the
+ * selected element the line hangs off; the fields otherwise mirror
+ * `ElementAlignment`.
+ */
+export type AlignmentGuide = {
+  selfId: string;
+  elementId: string;
+  axis: Axis;
+  selfEdge: Edge;
+  otherEdge: Edge;
+  hard: boolean;
+};
+
+/** Canonical key for an unordered (element, edge) pair on an axis, so a
+ * link and its reciprocal — or the same pair reached from two selected
+ * elements — collapse to one guide. */
+const guideKey = (g: {
+  selfId: string;
+  elementId: string;
+  axis: Axis;
+  selfEdge: Edge;
+  otherEdge: Edge;
+}): string => {
+  const ends = [`${g.selfId}:${g.selfEdge}`, `${g.elementId}:${g.otherEdge}`]
+    .sort()
+    .join("|");
+  return `${g.axis}:${ends}`;
+};
+
+/**
+ * Every alignment line to draw for the current selection: the persisted
+ * hard links, plus every *other* current edge coincidence as a soft,
+ * convertible guide. Soft guides are detected with the same
+ * `getAlignedLinks` geometry hard links use, so the two are defined
+ * consistently; a coincidence already stored as hard is not re-emitted
+ * as soft. Linear elements and container-bound labels are never
+ * partners (they aren't snap targets either).
+ */
+export const getAlignmentGuides = (
+  selected: readonly NonDeletedExcalidrawElement[],
+  elementsMap: ElementsMap,
+): AlignmentGuide[] => {
+  const guides: AlignmentGuide[] = [];
+  const seen = new Set<string>();
+
+  // Hard links first, so a hard pair is never also emitted as soft.
+  for (const el of selected) {
+    for (const link of el.alignments ?? []) {
+      const guide: AlignmentGuide = {
+        selfId: el.id,
+        elementId: link.elementId,
+        axis: link.axis,
+        selfEdge: link.selfEdge,
+        otherEdge: link.otherEdge,
+        hard: true,
+      };
+      const key = guideKey(guide);
+      if (!seen.has(key)) {
+        seen.add(key);
+        guides.push(guide);
+      }
+    }
+  }
+
+  // Soft coincidences: any current alignment not already stored as hard.
+  const isHardWith = (el: NonDeletedExcalidrawElement, otherId: string, axis: Axis) =>
+    (el.alignments ?? []).some((l) => l.elementId === otherId && l.axis === axis);
+
+  for (const el of selected) {
+    for (const other of elementsMap.values()) {
+      if (
+        other.id === el.id ||
+        other.isDeleted ||
+        isLinearElement(other) ||
+        isBoundToContainer(other)
+      ) {
+        continue;
+      }
+      for (const link of getAlignedLinks(el, other, elementsMap)) {
+        if (isHardWith(el, other.id, link.axis)) {
+          continue;
+        }
+        const guide: AlignmentGuide = {
+          selfId: el.id,
+          elementId: other.id,
+          axis: link.axis,
+          selfEdge: link.selfEdge,
+          otherEdge: link.otherEdge,
+          hard: false,
+        };
+        const key = guideKey(guide);
+        if (!seen.has(key)) {
+          seen.add(key);
+          guides.push(guide);
+        }
+      }
+    }
+  }
+
+  return guides;
+};
+
+/**
+ * Promote a single soft guide to a hard link (the lock icon). Writes the
+ * reciprocal pair, mirroring `lockAlignments` for one pair.
+ */
+export const lockAlignmentPair = (
+  guide: AlignmentGuide,
+  elementsMap: ElementsMap,
+): Map<string, ExcalidrawElement> => {
+  const a = elementsMap.get(guide.selfId);
+  const b = elementsMap.get(guide.elementId);
+  const updated = new Map<string, ExcalidrawElement>();
+  if (!a || !b) {
+    return updated;
+  }
+  updated.set(
+    a.id,
+    newElementWith(a, {
+      alignments: withLink(a.alignments, b.id, {
+        axis: guide.axis,
+        selfEdge: guide.selfEdge,
+        otherEdge: guide.otherEdge,
+      }),
+    }),
+  );
+  updated.set(
+    b.id,
+    newElementWith(b, {
+      alignments: withLink(b.alignments, a.id, {
+        axis: guide.axis,
+        selfEdge: guide.otherEdge,
+        otherEdge: guide.selfEdge,
+      }),
+    }),
+  );
+  return updated;
+};
+
+/**
+ * Demote a single hard link back to soft (the unlock icon): drop just
+ * this pair's link on the given axis, on both sides. The elements stay
+ * edge-coincident, so `getAlignmentGuides` re-surfaces it as a soft
+ * guide immediately.
+ */
+export const unlockAlignmentPair = (
+  aId: string,
+  bId: string,
+  axis: Axis,
+  elementsMap: ElementsMap,
+): Map<string, ExcalidrawElement> => {
+  const updated = new Map<string, ExcalidrawElement>();
+  const drop = (fromId: string, toId: string) => {
+    const el = elementsMap.get(fromId);
+    if (!el?.alignments?.length) {
+      return;
+    }
+    const filtered = el.alignments.filter(
+      (l) => !(l.elementId === toId && l.axis === axis),
+    );
+    if (filtered.length !== el.alignments.length) {
+      updated.set(el.id, newElementWith(el, { alignments: filtered }));
+    }
+  };
+  drop(aId, bId);
+  drop(bId, aId);
+  return updated;
+};
+
+/**
  * Transitive set of elements reachable from `seeds` by following
  * alignment links restricted to a single `axis`. Includes the seeds.
  */
@@ -308,6 +481,30 @@ export const getAlignmentMovers = (
   x: collectAlignedComponent(seeds, "x", elementsMap),
   y: collectAlignedComponent(seeds, "y", elementsMap),
 });
+
+/**
+ * Which axes a drag of `directlyMovedIds` is frozen on by an alignment
+ * anchor. If the aligned component on an axis contains an
+ * `alignmentLocked` element that isn't itself being dragged, that
+ * element can't be pushed; since the component moves rigidly, nothing in
+ * it — including the dragged elements — can move on that axis, so the
+ * offset is zeroed there. A locked element that *is* being dragged is
+ * the direct target and doesn't freeze itself.
+ */
+export const getAlignmentLockedAxes = (
+  directlyMovedIds: Set<string>,
+  elementsMap: ElementsMap,
+): { x: boolean; y: boolean } => {
+  const frozenOn = (axis: Axis): boolean => {
+    for (const id of collectAlignedComponent(directlyMovedIds, axis, elementsMap)) {
+      if (!directlyMovedIds.has(id) && elementsMap.get(id)?.alignmentLocked) {
+        return true;
+      }
+    }
+    return false;
+  };
+  return { x: frozenOn("x"), y: frozenOn("y") };
+};
 
 /**
  * After the directly-dragged elements have been moved by `offset`, drag
@@ -393,7 +590,9 @@ const floodAxis = (
       if (
         link.axis === axis &&
         !barriers.has(link.elementId) &&
-        !deltaById.has(link.elementId)
+        !deltaById.has(link.elementId) &&
+        // an anchor stops propagation — the chain doesn't move past it
+        !elementsMap.get(link.elementId)?.alignmentLocked
       ) {
         deltaById.set(link.elementId, delta);
         queue.push(link.elementId);
@@ -443,7 +642,12 @@ export const resizeAlignedElements = (
     const origBounds = getElementBounds(origDriver, elementsMap);
 
     for (const link of driver.alignments) {
-      if (resizedIds.has(link.elementId)) {
+      if (
+        resizedIds.has(link.elementId) ||
+        // an anchored partner is never pushed (resize just falls out of
+        // alignment with it)
+        elementsMap.get(link.elementId)?.alignmentLocked
+      ) {
         continue;
       }
       // The driver's own edge is what moved; the partner translates

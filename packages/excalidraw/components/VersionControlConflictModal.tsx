@@ -224,6 +224,8 @@ const describeOp = (op: LogOperation): string => {
       return `${op.action === "lock" ? "Lock" : "Unlock"} alignment (${
         op.elementIds.length
       })`;
+    case "alignment-anchor":
+      return `${op.anchored ? "Anchor" : "Un-Anchor"} ${ids}`;
     case "create":
     case "group":
       // Shouldn't appear in conflicts (no missing referent), but

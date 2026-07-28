@@ -306,6 +306,7 @@ const enumerateMissingReferents = (
     case "arrow-resize":
     case "arrow-edit-points":
     case "restyle":
+    case "alignment-anchor":
       if (!isLive(op.elementId)) {
         out.push({
           kind: "element",

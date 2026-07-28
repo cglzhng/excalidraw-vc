@@ -462,6 +462,8 @@ const getWrittenProperties = (
         elementId: id,
         property: "alignments",
       }));
+    case "alignment-anchor":
+      return [{ elementId: op.elementId, property: "alignmentLocked" }];
     case "raw": {
       const out: Array<{ elementId: string; property: string }> = [];
       for (const key of Object.keys(op.entry.after)) {
