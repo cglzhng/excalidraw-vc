@@ -1,5 +1,12 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 
+import {
+  findDependencies,
+  findRelatedOps,
+} from "../versionLog/dependencyAnalysis";
+import { computeHoverPreview } from "../versionLog/hoverPreview";
+
+import { useApp, useExcalidrawSetAppState } from "./App";
 import {
   VersionLogMomentCard,
   renderOpContent,
@@ -132,34 +139,56 @@ const useVersionLogFilter = (
 
 // ----------------------------- panel --------------------------------
 
-export interface VersionLogPanelProps {
-  log: VersionLog;
-  /**
-   * Called when the user clicks "Jump" on a non-current card.
-   */
-  onJump?: (momentId: string) => void;
-  /**
-   * Called when the user clicks the "Skip" / "Restore" toggle on a card.
-   */
-  onToggleActive?: (momentId: string) => void;
-  /**
-   * Called on op mouse-enter (with op) and mouse-leave (null).
-   */
-  onHoverOperation?: (op: LogOperation | null) => void;
-  /**
-   * Called when the user clicks an op to filter the log to that op's
-   * dependency neighbourhood, or `null` to clear the filter.
-   */
-  onFilterOperation?: (op: LogOperation | null) => void;
-}
+export const VersionLogPanel: React.FC = () => {
+  const app = useApp();
+  const setAppState = useExcalidrawSetAppState();
+  const log: VersionLog = app.versionLog;
 
-export const VersionLogPanel: React.FC<VersionLogPanelProps> = ({
-  log,
-  onJump,
-  onToggleActive,
-  onHoverOperation,
-  onFilterOperation,
-}) => {
+  /**
+   * Hover: compute the ghost / bbox preview for this op and hand it to
+   * the interactive canvas via appState. Also (debug) compute the op's
+   * dependency set so the panel can tint hard / soft dependency rows.
+   */
+  const onHoverOperation = useCallback(
+    (op: LogOperation | null) => {
+      if (op == null) {
+        setAppState({ versionLogHoverPreview: null });
+        log.setDependencyHighlight(null);
+        return;
+      }
+      const elementsMap = app.scene.getElementsMapIncludingDeleted();
+      setAppState({
+        versionLogHoverPreview: computeHoverPreview(
+          op,
+          log,
+          new Map(elementsMap),
+        ),
+      });
+      log.setDependencyHighlight(findDependencies(op, log));
+    },
+    [app, log, setAppState],
+  );
+
+  /**
+   * Click-to-filter, as a toggle: clicking the current focus (or the
+   * banner's Clear, which passes null) drops the filter; any other op
+   * focuses its dependency neighbourhood.
+   */
+  const onFilterOperation = useCallback(
+    (op: LogOperation | null) => {
+      const current = log.getFilter();
+      if (op == null || current?.focus === op) {
+        log.setFilter(null);
+        return;
+      }
+      log.setFilter({ focus: op, ops: findRelatedOps(op, log) });
+    },
+    [log],
+  );
+
+  const onJump = app.jumpToVersionLogMoment;
+  const onToggleActive = app.toggleVersionLogMoment;
+
   const moments = useVersionLogMoments(log);
   const cursorId = useVersionLogCursor(log);
   const depHighlight = useVersionLogDependencyHighlight(log);
@@ -232,7 +261,7 @@ export const VersionLogPanel: React.FC<VersionLogPanelProps> = ({
           </span>
           <button
             type="button"
-            onClick={() => onFilterOperation?.(null)}
+            onClick={() => onFilterOperation(null)}
             style={{
               all: "unset",
               cursor: "pointer",

@@ -17,18 +17,24 @@ import type {
 } from "./types";
 
 /**
- * Hard alignment ("alignment lock").
+ * VERSION-LOG: New feature hard alignment ("alignment lock")
  *
- * Excalidraw ships a *soft* alignment system — snapping — that nudges a
- * dragged element onto guide lines but never moves the reference
- * elements. Hard alignment persists a chosen alignment as data on the
+ * Excalidraw ships a soft alignment system: snapping.
+ * Dragged elements can be nudged onto guides based on other elements, 
+ * but aren't permanently attached to them.
+ * 
+ * Hard alignment persists a chosen alignment as data on the
  * elements (`ExcalidrawElement.alignments`) so that afterwards moving
  * one element drags its aligned partners to preserve the alignment.
  *
- * The relationship is per-axis: two elements sharing a vertical edge
- * (left / right / horizontal-center) are locked on the **x** axis, so
- * moving one horizontally moves the other, while vertical motion is
- * unconstrained. Sharing a horizontal edge locks the **y** axis.
+ * 
+ * TERMINOLOGY:
+ *  
+ *  Two elements sharing a vertical edge (left / right / horizontal-center) 
+ *  are locked on the **x** axis, so moving one horizontally moves the other,
+ *  while vertical motion is unconstrained. 
+ * 
+ *  Sharing a horizontal edge locks the **y** axis.
  */
 
 type Axis = "x" | "y";
@@ -46,12 +52,6 @@ type AlignAxisEdge = { axis: Axis; selfEdge: Edge; otherEdge: Edge };
  *    two abutting elements lock,
  * 3. centre-to-edge.
  *
- * The centre-to-edge pairs are last because they're the weakest reading
- * of a coincidence, but they *are* included: soft snapping already
- * offers them (`getElementsCorners` exposes the centre as an anchor
- * alongside the corners), and hard alignment is committed from a snap
- * the user can see, so refusing to lock one would silently drop an
- * alignment the guide just promised.
  */
 const EDGE_PAIRS: readonly (readonly [Edge, Edge])[] = [
   ["min", "min"],
@@ -81,8 +81,16 @@ const edgeCoord = (bounds: Bounds, axis: Axis, edge: Edge): number => {
  * The directional links (from A's perspective) two elements are aligned
  * on, judged from their current axis-aligned bounds. A coinciding pair
  * of vertical edges yields an "x" lock; horizontal edges yield "y". The
- * edges may match (left-to-left) or differ (A's right to B's left). At
- * most one link per axis, using the first matching pair in `EDGE_PAIRS`.
+ * edges may match (left-to-left) or differ (A's right to B's left).
+ *
+ * A pair can align at several *places* on one axis — two same-width
+ * elements share their left edge, their centre and their right edge, at
+ * three distinct coordinates — and each of those is an independently
+ * lockable alignment, so we emit one link per place rather than one per
+ * axis. What we do collapse is redundant *descriptions* of a single
+ * place: when several edge pairs land on the same coordinate, only the
+ * highest-priority one (per `EDGE_PAIRS`) survives, so a shared line is
+ * never reported twice under different names.
  */
 export const getAlignedLinks = (
   a: ExcalidrawElement,
@@ -94,16 +102,19 @@ export const getAlignedLinks = (
 
   const links: AlignAxisEdge[] = [];
   for (const axis of ["x", "y"] as const) {
+    // coordinates already claimed on this axis, so a second edge pair
+    // describing the same line is dropped
+    const claimed: number[] = [];
     for (const [selfEdge, otherEdge] of EDGE_PAIRS) {
-      if (
-        roughlyEqual(
-          edgeCoord(boundsA, axis, selfEdge),
-          edgeCoord(boundsB, axis, otherEdge),
-        )
-      ) {
-        links.push({ axis, selfEdge, otherEdge });
-        break; // one link per axis
+      const coord = edgeCoord(boundsA, axis, selfEdge);
+      if (!roughlyEqual(coord, edgeCoord(boundsB, axis, otherEdge))) {
+        continue;
       }
+      if (claimed.some((claimedCoord) => roughlyEqual(coord, claimedCoord))) {
+        continue;
+      }
+      claimed.push(coord);
+      links.push({ axis, selfEdge, otherEdge });
     }
   }
   return links;
@@ -115,7 +126,17 @@ const withLink = (
   { axis, selfEdge, otherEdge }: AlignAxisEdge,
 ): ElementAlignment[] => {
   const existing = links ?? [];
-  if (existing.some((l) => l.elementId === partnerId && l.axis === axis)) {
+  // Identity is (partner, axis, *edges*): a pair may be locked at several
+  // places on one axis, so only the exact same edge pair is a duplicate.
+  if (
+    existing.some(
+      (l) =>
+        l.elementId === partnerId &&
+        l.axis === axis &&
+        l.selfEdge === selfEdge &&
+        l.otherEdge === otherEdge,
+    )
+  ) {
     return existing.slice();
   }
   return [...existing, { elementId: partnerId, axis, selfEdge, otherEdge }];
@@ -144,67 +165,6 @@ export const lockAlignments = (
     for (let j = i + 1; j < elements.length; j++) {
       const a = elements[i];
       const b = elements[j];
-      for (const link of getAlignedLinks(a, b, elementsMap)) {
-        nextLinks.set(a.id, withLink(linksFor(a), b.id, link));
-        // reciprocal link from B's perspective — edges swap
-        nextLinks.set(
-          b.id,
-          withLink(linksFor(b), a.id, {
-            axis: link.axis,
-            selfEdge: link.otherEdge,
-            otherEdge: link.selfEdge,
-          }),
-        );
-        touched.add(a.id);
-        touched.add(b.id);
-      }
-    }
-  }
-
-  const updated = new Map<string, ExcalidrawElement>();
-  for (const id of touched) {
-    const el = elementsMap.get(id);
-    if (el) {
-      updated.set(id, newElementWith(el, { alignments: nextLinks.get(id) }));
-    }
-  }
-  return updated;
-};
-
-/**
- * The hard-align-on-drag gesture (Alt held while dragging): the drag's
- * *soft* snapping has just placed the moved elements edge-to-edge with
- * other elements, and we persist those coincidences as hard links.
- *
- * Unlike {@link lockAlignments} (which only pairs elements *within* the
- * selection), here each moved element is paired against every other
- * scene element it now shares an edge with. Linear elements and
- * container-bound labels are skipped — they aren't soft-snap targets
- * either (see `snapping.ts`), so they should never become hard targets.
- */
-export const lockDraggedAlignments = (
-  movedElements: readonly NonDeletedExcalidrawElement[],
-  elementsMap: ElementsMap,
-): Map<string, ExcalidrawElement> => {
-  const movedIds = new Set(movedElements.map((el) => el.id));
-  const nextLinks = new Map<string, ElementAlignment[]>();
-  const touched = new Set<string>();
-
-  const linksFor = (el: ExcalidrawElement) =>
-    nextLinks.get(el.id) ?? (el.alignments ? el.alignments.slice() : []);
-
-  for (const a of movedElements) {
-    for (const b of elementsMap.values()) {
-      if (
-        b.id === a.id ||
-        isLinearElement(b) ||
-        isBoundToContainer(b) ||
-        // moved/moved pairs are handled once, from the lower-id side, to
-        // avoid linking a pair twice (harmless, but wasteful)
-        (movedIds.has(b.id) && b.id < a.id)
-      ) {
-        continue;
-      }
       for (const link of getAlignedLinks(a, b, elementsMap)) {
         nextLinks.set(a.id, withLink(linksFor(a), b.id, link));
         // reciprocal link from B's perspective — edges swap
@@ -334,8 +294,20 @@ export const getAlignmentGuides = (
   }
 
   // Soft coincidences: any current alignment not already stored as hard.
-  const isHardWith = (el: NonDeletedExcalidrawElement, otherId: string, axis: Axis) =>
-    (el.alignments ?? []).some((l) => l.elementId === otherId && l.axis === axis);
+  // Matched on the edges too, so a pair locked at one place on an axis
+  // still surfaces its *other* coincidences on that axis as soft.
+  const isHardWith = (
+    el: NonDeletedExcalidrawElement,
+    otherId: string,
+    link: AlignAxisEdge,
+  ) =>
+    (el.alignments ?? []).some(
+      (l) =>
+        l.elementId === otherId &&
+        l.axis === link.axis &&
+        l.selfEdge === link.selfEdge &&
+        l.otherEdge === link.otherEdge,
+    );
 
   for (const el of selected) {
     for (const other of elementsMap.values()) {
@@ -348,7 +320,7 @@ export const getAlignmentGuides = (
         continue;
       }
       for (const link of getAlignedLinks(el, other, elementsMap)) {
-        if (isHardWith(el, other.id, link.axis)) {
+        if (isHardWith(el, other.id, link)) {
           continue;
         }
         const guide: AlignmentGuide = {
@@ -409,34 +381,57 @@ export const lockAlignmentPair = (
 };
 
 /**
- * Demote a single hard link back to soft (the unlock icon): drop just
- * this pair's link on the given axis, on both sides. The elements stay
- * edge-coincident, so `getAlignmentGuides` re-surfaces it as a soft
- * guide immediately.
+ * Demote a single hard link back to soft (the unlock icon): drop exactly
+ * the guide's edge pair, on both sides. Matching on the edges — not just
+ * the axis — matters because the same two elements may be locked at
+ * several places on one axis; unlocking one padlock must leave the
+ * others alone. The elements stay edge-coincident, so
+ * `getAlignmentGuides` re-surfaces the dropped one as a soft guide
+ * immediately.
  */
 export const unlockAlignmentPair = (
-  aId: string,
-  bId: string,
-  axis: Axis,
+  guide: AlignmentGuide,
   elementsMap: ElementsMap,
 ): Map<string, ExcalidrawElement> => {
   const updated = new Map<string, ExcalidrawElement>();
-  const drop = (fromId: string, toId: string) => {
+  const drop = (fromId: string, toId: string, selfEdge: Edge, otherEdge: Edge) => {
     const el = elementsMap.get(fromId);
     if (!el?.alignments?.length) {
       return;
     }
     const filtered = el.alignments.filter(
-      (l) => !(l.elementId === toId && l.axis === axis),
+      (l) =>
+        !(
+          l.elementId === toId &&
+          l.axis === guide.axis &&
+          l.selfEdge === selfEdge &&
+          l.otherEdge === otherEdge
+        ),
     );
     if (filtered.length !== el.alignments.length) {
       updated.set(el.id, newElementWith(el, { alignments: filtered }));
     }
   };
-  drop(aId, bId);
-  drop(bId, aId);
+  drop(guide.selfId, guide.elementId, guide.selfEdge, guide.otherEdge);
+  // the reciprocal link stores the edges swapped
+  drop(guide.elementId, guide.selfId, guide.otherEdge, guide.selfEdge);
   return updated;
 };
+
+/**
+ * Whether an element holds still against alignment propagation.
+ *
+ * Two independent reasons, and either is sufficient:
+ *   - `alignmentLocked`, our anvil badge — "keep this one put while its
+ *     partners move";
+ *   - `locked`, upstream's element lock — the user can't edit it at all,
+ *     so alignment must not move it either. Without this an aligned
+ *     partner could shove a locked element around, which is exactly what
+ *     the lock is supposed to forbid.
+ */
+export const isAlignmentAnchor = (
+  element: ExcalidrawElement | undefined,
+): boolean => !!element && (!!element.alignmentLocked || element.locked);
 
 /**
  * Transitive set of elements reachable from `seeds` by following
@@ -484,12 +479,12 @@ export const getAlignmentMovers = (
 
 /**
  * Which axes a drag of `directlyMovedIds` is frozen on by an alignment
- * anchor. If the aligned component on an axis contains an
- * `alignmentLocked` element that isn't itself being dragged, that
- * element can't be pushed; since the component moves rigidly, nothing in
- * it — including the dragged elements — can move on that axis, so the
- * offset is zeroed there. A locked element that *is* being dragged is
- * the direct target and doesn't freeze itself.
+ * anchor. If the aligned component on an axis contains an anchored
+ * element that isn't itself being dragged, that element can't be pushed;
+ * since the component moves rigidly, nothing in it — including the
+ * dragged elements — can move on that axis, so the offset is zeroed
+ * there. An anchor that *is* being dragged is the direct target and
+ * doesn't freeze itself.
  */
 export const getAlignmentLockedAxes = (
   directlyMovedIds: Set<string>,
@@ -497,13 +492,90 @@ export const getAlignmentLockedAxes = (
 ): { x: boolean; y: boolean } => {
   const frozenOn = (axis: Axis): boolean => {
     for (const id of collectAlignedComponent(directlyMovedIds, axis, elementsMap)) {
-      if (!directlyMovedIds.has(id) && elementsMap.get(id)?.alignmentLocked) {
+      if (!directlyMovedIds.has(id) && isAlignmentAnchor(elementsMap.get(id))) {
         return true;
       }
     }
     return false;
   };
   return { x: frozenOn("x"), y: frozenOn("y") };
+};
+
+/**
+ * Which axes a resize of `resizedIds` is frozen on because the alignment
+ * constraints there are over-determined.
+ *
+ * Partners are translated, never resized, so every alignment a partner
+ * holds with a resized element demands one translation of it. Locking A
+ * and B on x at *both* their left and right edges says "A and B span the
+ * same x range", which pins A's width to B's: widening A moves its right
+ * edge but not its left, so B is asked to shift by two different amounts
+ * at once. No translation satisfies both, and rather than silently
+ * dropping one alignment we refuse the size change on that axis — the
+ * same move alignment anchors make for drags.
+ *
+ * Detection needs no geometry: it's enough that a rigid partner
+ * component receives demands from two distinct `(driver, selfEdge)`
+ * sources, since two different driver edges never move together under a
+ * resize. Demands from two *different* drivers are treated as conflicting
+ * too — they can move independently, and we can't prove otherwise
+ * up front.
+ */
+export const getAlignmentResizeLockedAxes = (
+  resizedIds: Set<string>,
+  elementsMap: ElementsMap,
+): { x: boolean; y: boolean } => {
+  const overConstrainedOn = (axis: Axis): boolean => {
+    // The links the resize itself imposes: partner id -> demand source.
+    // Mirrors the seeding in `resizeAlignedElements`, including its two
+    // exclusions (a resized element moved under the pointer, an anchored
+    // one is never pushed).
+    const isDrivable = (id: string) =>
+      !resizedIds.has(id) && !isAlignmentAnchor(elementsMap.get(id));
+
+    const seeds = new Map<string, string>();
+    for (const driverId of resizedIds) {
+      for (const link of elementsMap.get(driverId)?.alignments ?? []) {
+        if (link.axis !== axis || !isDrivable(link.elementId)) {
+          continue;
+        }
+        const source = `${driverId}:${link.selfEdge}`;
+        const existing = seeds.get(link.elementId);
+        if (existing !== undefined && existing !== source) {
+          return true;
+        }
+        seeds.set(link.elementId, source);
+      }
+    }
+
+    // A demand doesn't stop at the direct partner: it floods through
+    // same-axis links (as `floodAxis` does), and everything it reaches
+    // moves rigidly with it. So two seeds meeting in one component
+    // conflict just as surely as two demands on one element.
+    const sourceOf = new Map<string, string>();
+    for (const [seedId, source] of seeds) {
+      const queue = [seedId];
+      while (queue.length > 0) {
+        const id = queue.pop()!;
+        const seen = sourceOf.get(id);
+        if (seen !== undefined) {
+          if (seen !== source) {
+            return true;
+          }
+          continue;
+        }
+        sourceOf.set(id, source);
+        for (const link of elementsMap.get(id)?.alignments ?? []) {
+          if (link.axis === axis && isDrivable(link.elementId)) {
+            queue.push(link.elementId);
+          }
+        }
+      }
+    }
+    return false;
+  };
+
+  return { x: overConstrainedOn("x"), y: overConstrainedOn("y") };
 };
 
 /**
@@ -592,7 +664,7 @@ const floodAxis = (
         !barriers.has(link.elementId) &&
         !deltaById.has(link.elementId) &&
         // an anchor stops propagation — the chain doesn't move past it
-        !elementsMap.get(link.elementId)?.alignmentLocked
+        !isAlignmentAnchor(elementsMap.get(link.elementId))
       ) {
         deltaById.set(link.elementId, delta);
         queue.push(link.elementId);
@@ -646,7 +718,7 @@ export const resizeAlignedElements = (
         resizedIds.has(link.elementId) ||
         // an anchored partner is never pushed (resize just falls out of
         // alignment with it)
-        elementsMap.get(link.elementId)?.alignmentLocked
+        isAlignmentAnchor(elementsMap.get(link.elementId))
       ) {
         continue;
       }
@@ -655,8 +727,14 @@ export const resizeAlignedElements = (
       const delta =
         edgeCoord(newBounds, link.axis, link.selfEdge) -
         edgeCoord(origBounds, link.axis, link.selfEdge);
-      // Direct partners are authoritative (last driver wins on conflict).
-      (link.axis === "x" ? dxById : dyById).set(link.elementId, delta);
+      // Direct partners are authoritative. Conflicting demands should
+      // not reach here — `getAlignmentResizeLockedAxes` freezes the
+      // resize on an over-determined axis before any geometry changes —
+      // so first-wins is just a deterministic backstop.
+      const deltaById = link.axis === "x" ? dxById : dyById;
+      if (!deltaById.has(link.elementId)) {
+        deltaById.set(link.elementId, delta);
+      }
     }
   }
 

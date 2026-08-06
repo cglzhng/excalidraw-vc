@@ -20,7 +20,10 @@ import type { PointerDownState } from "@excalidraw/excalidraw/types";
 
 import type { Mutable } from "@excalidraw/common/utility-types";
 
-import { resizeAlignedElements } from "./alignmentLock";
+import {
+  getAlignmentResizeLockedAxes,
+  resizeAlignedElements,
+} from "./alignment";
 import {
   getArrowLocalFixedPoints,
   unbindBindingElement,
@@ -85,6 +88,40 @@ import type {
 import type { ElementUpdate } from "./mutateElement";
 
 // Returns true when transform (resizing/rotation) happened
+/**
+ * Hold a proposed size at its original value on any dimension whose
+ * alignment constraints are over-determined (see
+ * `getAlignmentResizeLockedAxes`) — locking a pair at two places on one
+ * axis pins that dimension, so the resize is refused there rather than
+ * silently breaking one of the alignments.
+ *
+ * A width maps to the x axis and a height to y only while the element is
+ * unrotated: once rotated, either dimension moves both bounds, so a
+ * freeze on either axis has to freeze both dimensions. Same for a
+ * maintained aspect ratio, where changing one dimension changes the
+ * other.
+ */
+const clampSizeToFrozenAlignmentAxes = (
+  size: { nextWidth: number; nextHeight: number },
+  original: { width: number; height: number },
+  resizedIds: Set<string>,
+  elementsMap: ElementsMap,
+  opts: { rotated: boolean; shouldMaintainAspectRatio: boolean },
+): { nextWidth: number; nextHeight: number } => {
+  const frozen = getAlignmentResizeLockedAxes(resizedIds, elementsMap);
+  if (!frozen.x && !frozen.y) {
+    return size;
+  }
+  const coupled =
+    opts.rotated || opts.shouldMaintainAspectRatio
+      ? frozen.x || frozen.y
+      : false;
+  return {
+    nextWidth: coupled || frozen.x ? original.width : size.nextWidth,
+    nextHeight: coupled || frozen.y ? original.height : size.nextHeight,
+  };
+};
+
 export const transformElements = (
   originalElements: PointerDownState["originalElements"],
   transformHandleType: MaybeTransformHandleType,
@@ -118,7 +155,7 @@ export const transformElements = (
       const origElement = originalElements.get(elementId);
 
       if (latestElement && origElement) {
-        const { nextWidth, nextHeight } =
+        const { nextWidth, nextHeight } = clampSizeToFrozenAlignmentAxes(
           getNextSingleWidthAndHeightFromPointer(
             latestElement,
             origElement,
@@ -129,7 +166,15 @@ export const transformElements = (
               shouldMaintainAspectRatio,
               shouldResizeFromCenter,
             },
-          );
+          ),
+          origElement,
+          new Set([elementId]),
+          elementsMap,
+          {
+            rotated: latestElement.angle !== 0,
+            shouldMaintainAspectRatio,
+          },
+        );
 
         resizeSingleElement(
           nextWidth,
@@ -168,19 +213,33 @@ export const transformElements = (
       );
       return true;
     } else if (transformHandleType) {
-      const { nextWidth, nextHeight, flipByX, flipByY, originalBoundingBox } =
-        getNextMultipleWidthAndHeightFromPointer(
-          selectedElements,
-          originalElements,
-          elementsMap,
-          transformHandleType,
-          pointerX,
-          pointerY,
-          {
-            shouldMaintainAspectRatio,
-            shouldResizeFromCenter,
-          },
-        );
+      const next = getNextMultipleWidthAndHeightFromPointer(
+        selectedElements,
+        originalElements,
+        elementsMap,
+        transformHandleType,
+        pointerX,
+        pointerY,
+        {
+          shouldMaintainAspectRatio,
+          shouldResizeFromCenter,
+        },
+      );
+      const { flipByX, flipByY, originalBoundingBox } = next;
+      // The selection scales as one box, so a freeze from any member
+      // holds the whole box — and a rotated member couples both
+      // dimensions for everyone.
+      const resizedIds = new Set(selectedElements.map((el) => el.id));
+      const { nextWidth, nextHeight } = clampSizeToFrozenAlignmentAxes(
+        next,
+        originalBoundingBox,
+        resizedIds,
+        elementsMap,
+        {
+          rotated: selectedElements.some((el) => el.angle !== 0),
+          shouldMaintainAspectRatio,
+        },
+      );
 
       resizeMultipleElements(
         selectedElements,
@@ -201,11 +260,7 @@ export const transformElements = (
 
       // Hard alignment: drag partners aligned to any resized element so
       // their shared edges follow the resize.
-      resizeAlignedElements(
-        originalElements,
-        new Set(selectedElements.map((el) => el.id)),
-        scene,
-      );
+      resizeAlignedElements(originalElements, resizedIds, scene);
 
       return true;
     }

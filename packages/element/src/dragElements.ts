@@ -15,7 +15,7 @@ import type {
 
 import type { NonDeletedExcalidrawElement } from "@excalidraw/element/types";
 
-import { dragAlignedElements, getAlignmentLockedAxes } from "./alignmentLock";
+import { dragAlignedElements, getAlignmentLockedAxes } from "./alignment";
 import { unbindBindingElement, updateBoundElements } from "./binding";
 import { getCommonBounds } from "./bounds";
 import { getPerfectElementSize } from "./sizeHelpers";

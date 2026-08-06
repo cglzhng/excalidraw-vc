@@ -3,6 +3,60 @@ import { COLOR_WHITE, THEME, applyDarkModeFilter } from "@excalidraw/common";
 import type { StaticCanvasRenderConfig } from "../scene/types";
 import type { AppState, StaticCanvasAppState } from "../types";
 
+/**
+ * The one colour for alignment indicators — snap guides and hard/soft
+ * alignment guides alike. They are the same idea at different levels of
+ * commitment, so they must not drift apart; these lived as two separate
+ * pairs of hexes before and did exactly that.
+ *
+ * Zen mode takes the light colour in either theme: there we draw little
+ * more than the crosses, and they need the contrast.
+ */
+const INDICATOR_COLOR_LIGHT = "#e03131";
+const INDICATOR_COLOR_DARK = "#ffa8a8";
+
+export const getIndicatorColor = (
+  theme: AppState["theme"],
+  zenModeEnabled: boolean,
+): string =>
+  theme === THEME.LIGHT || zenModeEnabled
+    ? INDICATOR_COLOR_LIGHT
+    : INDICATOR_COLOR_DARK;
+
+/** Half-diagonal, in screen px, of the cross marking an anchor point. */
+export const INDICATOR_CROSS_SIZE = 2;
+
+/**
+ * The X marking a point an indicator line is anchored to — an element
+ * corner or centre. `size` is already zoom-scaled by the caller.
+ */
+export const drawIndicatorCross = (
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+) => {
+  context.save();
+  context.beginPath();
+  context.moveTo(x - size, y - size);
+  context.lineTo(x + size, y + size);
+  context.moveTo(x + size, y - size);
+  context.lineTo(x - size, y + size);
+  context.stroke();
+  context.restore();
+};
+
+export const getWideIndicatorLineDash = (zoom: number): number[] => [
+  5 / zoom,
+  4 / zoom,
+];
+
+export const getNarrowIndicatorLineDash = (zoom: number): number[] => [
+  3 / zoom,
+  2 / zoom,
+];
+
+
 export const fillCircle = (
   context: CanvasRenderingContext2D,
   cx: number,

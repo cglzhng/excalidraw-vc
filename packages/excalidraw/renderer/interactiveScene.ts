@@ -103,6 +103,7 @@ import {
 import {
   bootstrapCanvas,
   fillCircle,
+  getWideIndicatorLineDash,
   getNormalizedCanvasDimensions,
   strokeRectWithRotation_simple,
 } from "./helpers";
@@ -803,7 +804,7 @@ const renderBindingHighlightForBindableElement_complex = (
 
     context.strokeStyle = "rgba(0, 0, 0, 0.2)";
     context.lineWidth = 1 / appState.zoom.value;
-    context.setLineDash([4 / appState.zoom.value, 4 / appState.zoom.value]);
+    context.setLineDash(getWideIndicatorLineDash(appState.zoom.value));
     context.lineDashOffset = (-PROGRESS_RATIO * 10) / appState.zoom.value;
 
     context.beginPath();
@@ -1250,7 +1251,7 @@ const renderFocusPointConnectionLine = (
 
   context.strokeStyle = "rgba(134, 131, 226, 0.6)";
   context.lineWidth = 1 / appState.zoom.value;
-  context.setLineDash([4 / appState.zoom.value, 4 / appState.zoom.value]);
+  context.setLineDash(getWideIndicatorLineDash(appState.zoom.value));
 
   context.beginPath();
   context.moveTo(fromPoint[0], fromPoint[1]);

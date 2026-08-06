@@ -599,9 +599,10 @@ export const useExcalidrawAPI = () => useContext(ExcalidrawAPIContext);
 
 let didTapTwice: boolean = false;
 let tappedTwiceTimer = 0;
-// Alt+drag is repurposed as the hard-alignment gesture in this fork, so
-// the upstream "alt-drag duplicates the selection" behaviour is disabled.
-const ALT_DRAG_DUPLICATES = false;
+
+// VERSION-LOG: Set to false to disable alt+drag duplication
+// if you want to use alt+drag for another gesture. 
+const ALT_DRAG_DUPLICATES = true;
 
 let firstTapPosition: { x: number; y: number } | null = null;
 let isHoldingSpace: boolean = false;
@@ -715,6 +716,21 @@ class App extends React.Component<AppProps, AppState> {
     null;
 
   hitLinkElement?: NonDeletedExcalidrawElement;
+  /**
+   * An alignment padlock / anchor badge pressed but not yet released.
+   * The press consumes the pointer-down (so a jittery click on this small
+   * target can't start dragging the element underneath), but the toggle
+   * itself waits for pointer-up over the same badge — ordinary button
+   * semantics, and releasing elsewhere cancels.
+   */
+  private pendingAlignmentIconPress:
+    | {
+        target:
+          | { kind: "guide"; guide: AlignmentGuide }
+          | { kind: "anchor"; elementId: string };
+        center: [number, number];
+      }
+    | null = null;
   lastPointerDownEvent: React.PointerEvent<HTMLElement> | null = null;
   lastPointerUpEvent: React.PointerEvent<HTMLElement> | PointerEvent | null =
     null;
@@ -7291,12 +7307,8 @@ class App extends React.Component<AppProps, AppState> {
           this.getTextBindableContainerAtPosition(sceneX, sceneY);
 
       /*
-      
-      Double-click text *creation* is intentionally disabled — stray
-      double-clicks on the canvas or on shapes were producing accidental
-      text elements. We still allow editing text that already exists (a
-      standalone text, or a container's label) by entering the editor
-      only when such an element is found under the pointer.
+       * Disabled double-clicking text creation on the canvas or elements
+       *
 
         if (container) {
           if (
@@ -7335,6 +7347,7 @@ class App extends React.Component<AppProps, AppState> {
 
         const textContainer = container || null;
 
+        // Only allow editing text if an element was found under the cursor
         const existingTextElement =
           this.getSelectedTextElement(textContainer) ||
           this.getTextElementAtPosition(sceneX, sceneY);
@@ -8501,6 +8514,10 @@ class App extends React.Component<AppProps, AppState> {
 
     const selectedElements = this.scene.getSelectedElements(this.state);
 
+    // Drop any badge press that never got its pointer-up (released off
+    // the canvas, say) so it can't fire against a later interaction.
+    this.pendingAlignmentIconPress = null;
+
     // If Ctrl is not held, ensure isBindingEnabled reflects the user preference.
     if (!event.ctrlKey) {
       const preferenceEnabled = this.state.bindingPreference === "enabled";
@@ -8746,19 +8763,20 @@ class App extends React.Component<AppProps, AppState> {
       return;
     }
 
-    // Clicking a padlock on an alignment guide toggles that link between
-    // soft and hard, instead of selecting / dragging. Checked before
+    // Pressing a padlock on an alignment guide arms that link's soft /
+    // hard toggle, instead of selecting / dragging. Checked before
     // selection so a padlock sitting over empty canvas doesn't clear the
     // selection (which would make the guide — and the padlock — vanish).
+    //
+    // Both badges consume the pointer-down but fire on pointer-up: they
+    // are small targets sitting over draggable things, so not consuming
+    // the press let the tiniest cursor jitter start a drag before the
+    // click registered. Drag the element by grabbing off the badge.
     if (this.handleAlignmentIconOnPointerDown(pointerDownState.origin)) {
       return;
     }
 
-    // Clicking the centre element-lock badge toggles the alignment
-    // anchor. Consumed here (like the guide padlock) rather than deferred
-    // to pointer-up — the badge is a small target over the element, and
-    // not consuming it let the tiniest cursor jitter start a drag before
-    // the click registered. Drag the element by grabbing off the badge.
+    // Same for the element-lock badge (the alignment anchor).
     if (this.handleElementLockIconOnPointerDown(pointerDownState.origin)) {
       return;
     }
@@ -9032,6 +9050,13 @@ class App extends React.Component<AppProps, AppState> {
       x: scenePointerX,
       y: scenePointerY,
     };
+
+    // Resolve an armed padlock / anchor badge before anything else can
+    // consume this pointer-up, and so a cancelled press is cleared even
+    // when a later branch returns early.
+    if (this.commitAlignmentIconPress(scenePointer)) {
+      return;
+    }
 
     if (this.handleIframeLikeCenterClick()) {
       return;
@@ -9420,11 +9445,17 @@ class App extends React.Component<AppProps, AppState> {
     }
   };
 
+  /** Screen-space slop around a badge's centre that still counts as a hit. */
+  private get alignmentIconHitRadius() {
+    return (ALIGNMENT_ICON_RADIUS + 4) / this.state.zoom.value;
+  }
+
   /**
-   * If `scenePointer` lands on an alignment guide's padlock, toggle that
-   * link between soft and hard and return true (the pointer-down is then
-   * consumed). Guides are recomputed on demand rather than cached —
-   * clicks are rare, mirroring the element-link icon hit-test.
+   * If `scenePointer` lands on an alignment guide's padlock, arm it for
+   * toggling and return true (the pointer-down is then consumed; the
+   * toggle happens on pointer-up). Guides are recomputed on demand rather
+   * than cached — clicks are rare, mirroring the element-link icon
+   * hit-test.
    */
   private handleAlignmentIconOnPointerDown(scenePointer: {
     x: number;
@@ -9438,22 +9469,29 @@ class App extends React.Component<AppProps, AppState> {
       selected,
       this.scene.getNonDeletedElementsMap(),
     );
-    const hitRadius = (ALIGNMENT_ICON_RADIUS + 4) / this.state.zoom.value;
+    const hitRadius = this.alignmentIconHitRadius;
 
-    let closest: { guide: AlignmentGuide; dist: number } | null = null;
+    let closest: {
+      guide: AlignmentGuide;
+      center: [number, number];
+      dist: number;
+    } | null = null;
     for (const line of lines) {
       const dist = Math.hypot(
         scenePointer.x - line.icon[0],
         scenePointer.y - line.icon[1],
       );
       if (dist <= hitRadius && (!closest || dist < closest.dist)) {
-        closest = { guide: line.guide, dist };
+        closest = { guide: line.guide, center: line.icon, dist };
       }
     }
     if (!closest) {
       return false;
     }
-    this.toggleAlignmentGuide(closest.guide);
+    this.pendingAlignmentIconPress = {
+      target: { kind: "guide", guide: closest.guide },
+      center: closest.center,
+    };
     return true;
   }
 
@@ -9466,12 +9504,7 @@ class App extends React.Component<AppProps, AppState> {
   private toggleAlignmentGuide(guide: AlignmentGuide) {
     const elementsMap = this.scene.getNonDeletedElementsMap();
     const updated = guide.hard
-      ? unlockAlignmentPair(
-          guide.selfId,
-          guide.elementId,
-          guide.axis,
-          elementsMap,
-        )
+      ? unlockAlignmentPair(guide, elementsMap)
       : lockAlignmentPair(guide, elementsMap);
     if (updated.size === 0) {
       return;
@@ -9485,9 +9518,10 @@ class App extends React.Component<AppProps, AppState> {
   }
 
   /**
-   * If `scenePointer` lands on the centre element-lock badge of the
-   * selected element, toggle its alignment-anchor flag and return true
-   * (consuming the pointer-down). Mirrors the guide-padlock handler.
+   * If `scenePointer` lands on the element-lock badge of the selected
+   * element, arm it for toggling and return true (consuming the
+   * pointer-down; the toggle happens on pointer-up). Mirrors the
+   * guide-padlock handler.
    */
   private handleElementLockIconOnPointerDown(scenePointer: {
     x: number;
@@ -9501,19 +9535,51 @@ class App extends React.Component<AppProps, AppState> {
     if (!toggle) {
       return false;
     }
-    const hitRadius = (ALIGNMENT_ICON_RADIUS + 4) / this.state.zoom.value;
     const dist = Math.hypot(
       scenePointer.x - toggle.center[0],
       scenePointer.y - toggle.center[1],
     );
-    if (dist > hitRadius) {
+    if (dist > this.alignmentIconHitRadius) {
       return false;
     }
-    this.toggleElementAlignmentLock(toggle.elementId);
+    this.pendingAlignmentIconPress = {
+      target: { kind: "anchor", elementId: toggle.elementId },
+      center: toggle.center,
+    };
     return true;
   }
 
-  /** Toggle an element's alignment-anchor flag (the centre padlock). */
+  /**
+   * Complete a badge press if the pointer came up on the same badge it
+   * went down on. Returns true when a toggle fired, so the caller can
+   * stop treating the pointer-up as a canvas click. Releasing away from
+   * the badge cancels — the press is cleared either way.
+   */
+  private commitAlignmentIconPress(scenePointer: {
+    x: number;
+    y: number;
+  }): boolean {
+    const press = this.pendingAlignmentIconPress;
+    this.pendingAlignmentIconPress = null;
+    if (!press) {
+      return false;
+    }
+    const dist = Math.hypot(
+      scenePointer.x - press.center[0],
+      scenePointer.y - press.center[1],
+    );
+    if (dist > this.alignmentIconHitRadius) {
+      return false;
+    }
+    if (press.target.kind === "guide") {
+      this.toggleAlignmentGuide(press.target.guide);
+    } else {
+      this.toggleElementAlignmentLock(press.target.elementId);
+    }
+    return true;
+  }
+
+  /** Toggle an element's alignment-anchor flag (the badge off its edge). */
   private toggleElementAlignmentLock(elementId: string) {
     const el = this.scene.getNonDeletedElementsMap().get(elementId);
     if (!el) {
@@ -11294,11 +11360,8 @@ class App extends React.Component<AppProps, AppState> {
             selectionElement: null,
           });
 
-          // Alt+drag is repurposed as the hard-alignment gesture (the
-          // soft snap under the pointer is committed to a persistent
-          // link on release — see the pointer-up handler), so it no
-          // longer duplicates the selection.
-          if (ALT_DRAG_DUPLICATES && !pointerDownState.hit.hasBeenDuplicated) {
+          // VERSION-LOG: Only duplicate on alt+drag if ALT_DRAG_DUPLICATES is true
+          if (ALT_DRAG_DUPLICATES && event.altKey && !pointerDownState.hit.hasBeenDuplicated) {
             // Move the currently selected elements to the top of the z index stack, and
             // put the duplicates where the selected elements used to be.
             // (the origin point where the dragging started)

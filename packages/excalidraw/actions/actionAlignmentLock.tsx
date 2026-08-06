@@ -5,12 +5,7 @@ import type { ExcalidrawElement } from "@excalidraw/element/types";
 import { register } from "./register";
 
 /**
- * Hard-alignment actions (see `alignmentLock.ts`).
- *
- * Locking is now a drag gesture — hold Alt while dragging and the soft
- * snap under the pointer is committed to a persistent link on release
- * (see `lockDraggedAlignments` and App's pointer-up handler). This file
- * only retains the keyboard unlock.
+ * Hard-alignment actions (see `alignment.ts`).
  *
  * `unlockAlignment` (Alt+Shift+L): remove all alignment links from the
  * selection (and the reciprocal links pointing back at it).
