@@ -84,9 +84,9 @@ import type React from "react";
 import type { PointerDownState } from "../types";
 import type App from "./App";
 
-// Alt+drag is repurposed as the hard-alignment gesture in this fork, so
-// the upstream "alt-drag duplicates the selection" behaviour is disabled.
-const ALT_DRAG_DUPLICATES = false;
+// VERSION-LOG: Set to false to disable alt+drag duplication
+// if you want to use alt+drag for another gesture.
+const ALT_DRAG_DUPLICATES = true;
 
 /**
  * The selection tool's (and the lasso's) selection: what a pointer down
@@ -1023,11 +1023,12 @@ export class AppSelectionTool {
           selectionElement: null,
         });
 
-        // Alt+drag is repurposed as the hard-alignment gesture (the
-        // soft snap under the pointer is committed to a persistent
-        // link on release — see the pointer-up handler), so it no
-        // longer duplicates the selection.
-        if (ALT_DRAG_DUPLICATES && !pointerDownState.hit.hasBeenDuplicated) {
+        // VERSION-LOG: Only duplicate on alt+drag if ALT_DRAG_DUPLICATES is true
+        if (
+          ALT_DRAG_DUPLICATES &&
+          event.altKey &&
+          !pointerDownState.hit.hasBeenDuplicated
+        ) {
           this.app.duplicate.duplicateDraggedSelection(pointerDownState, event);
         }
 

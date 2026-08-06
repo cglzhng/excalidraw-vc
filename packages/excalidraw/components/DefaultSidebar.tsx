@@ -15,16 +15,11 @@ import { useUIAppState } from "../context/ui-appState";
 
 import "../components/dropdownMenu/DropdownMenu.scss";
 
-import { useApp, useExcalidrawSetAppState } from "./App";
+import { useExcalidrawSetAppState } from "./App";
 import { LibraryMenu } from "./LibraryMenu";
 import { SearchMenu } from "./SearchMenu";
 import { Sidebar } from "./Sidebar/Sidebar";
 import { VersionLogPanel } from "./VersionLogPanel";
-import { computeHoverPreview } from "../versionLog/hoverPreview";
-import {
-  findDependencies,
-  findRelatedOps,
-} from "../versionLog/dependencyAnalysis";
 import { withInternalFallback } from "./hoc/withInternalFallback";
 import { LibraryIcon, historyIcon, searchIcon } from "./icons";
 
@@ -78,7 +73,6 @@ export const DefaultSidebar = Object.assign(
     >) => {
       const appState = useUIAppState();
       const setAppState = useExcalidrawSetAppState();
-      const app = useApp();
 
       const { DefaultSidebarTabTriggersTunnel } = useTunnels();
 
@@ -126,46 +120,7 @@ export const DefaultSidebar = Object.assign(
               <SearchMenu />
             </Sidebar.Tab>
             <Sidebar.Tab tab={VERSION_LOG_SIDEBAR_TAB}>
-              <VersionLogPanel
-                log={app.versionLog}
-                onJump={app.jumpToVersionLogMoment}
-                onToggleActive={app.toggleVersionLogMoment}
-                onHoverOperation={(op) => {
-                  // Compute the ghost / bbox preview for this op and
-                  // hand it to the interactive canvas via appState.
-                  // Also (debug) compute the op's dependency set so
-                  // the panel can tint hard / soft dependency rows.
-                  if (op == null) {
-                    setAppState({ versionLogHoverPreview: null });
-                    app.versionLog.setDependencyHighlight(null);
-                    return;
-                  }
-                  const elementsMap = app.scene.getElementsMapIncludingDeleted();
-                  const preview = computeHoverPreview(
-                    op,
-                    app.versionLog,
-                    new Map(elementsMap),
-                  );
-                  setAppState({ versionLogHoverPreview: preview });
-                  app.versionLog.setDependencyHighlight(
-                    findDependencies(op, app.versionLog),
-                  );
-                }}
-                onFilterOperation={(op) => {
-                  // Toggle: clicking the current focus (or the banner's
-                  // Clear, which passes null) drops the filter; any
-                  // other op focuses its dependency neighbourhood.
-                  const current = app.versionLog.getFilter();
-                  if (op == null || current?.focus === op) {
-                    app.versionLog.setFilter(null);
-                    return;
-                  }
-                  app.versionLog.setFilter({
-                    focus: op,
-                    ops: findRelatedOps(op, app.versionLog),
-                  });
-                }}
-              />
+              <VersionLogPanel />
             </Sidebar.Tab>
             {children}
           </Sidebar.Tabs>

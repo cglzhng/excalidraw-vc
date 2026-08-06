@@ -103,14 +103,6 @@ export type Snaps = Snap[];
 export type PointSnapLine = {
   type: "points";
   points: GlobalPoint[];
-  /**
-   * True while the hard-alignment gesture is active (Alt held during a
-   * drag), meaning this snap is about to be committed to a persistent
-   * link on release. Rendered in the lock style rather than the usual
-   * transient snap style. Only point snaps become links — gap snaps
-   * never do, so they stay in the soft style.
-   */
-  hard?: boolean;
 };
 
 export type PointerSnapLine = {
@@ -907,8 +899,6 @@ const dedupePoints = (points: GlobalPoint[]): GlobalPoint[] => {
 const createPointSnapLines = (
   nearestSnapsX: Snaps,
   nearestSnapsY: Snaps,
-  // marks the resulting lines as about-to-become-persistent (Alt+drag)
-  hard: boolean = false,
 ): PointSnapLine[] => {
   const snapsX = {} as { [key: string]: GlobalPoint[] };
   const snapsY = {} as { [key: string]: GlobalPoint[] };
@@ -951,7 +941,6 @@ const createPointSnapLines = (
     .map(([key, points]) => {
       return {
         type: "points",
-        hard,
         points: dedupePoints(
           points
             .map((p) => {
@@ -965,7 +954,6 @@ const createPointSnapLines = (
       Object.entries(snapsY).map(([key, points]) => {
         return {
           type: "points",
-          hard,
           points: dedupePoints(
             points
               .map((p) => {
