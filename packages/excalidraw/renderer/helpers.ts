@@ -23,6 +23,83 @@ export const getIndicatorColor = (
     ? INDICATOR_COLOR_LIGHT
     : INDICATOR_COLOR_DARK;
 
+/** Radius, in screen px, of a round indicator badge (divided by zoom at
+ * draw time). Shared so every badge is the same size and every hit-test
+ * agrees with what was drawn. */
+export const INDICATOR_BADGE_RADIUS = 9;
+
+/** The inactive state of an icon — an open padlock, a lifted anchor —
+ * is drawn faded to read as the weaker of the two. */
+export const INACTIVE_ICON_OPACITY = 0.45;
+
+/**
+ * A padlock badge on a white disc: closed when the thing it marks is
+ * committed, open (and faded) when it isn't.
+ *
+ * Shared by everything that means "this relationship is pinned" — the
+ * alignment guides' soft/hard toggle and the bound endpoints of a
+ * selected arrow. Anchors use an anvil instead, deliberately: a padlock
+ * is about a *relationship between two things*, an anvil about one
+ * element's own weight.
+ *
+ * `radius` (screen px, defaulting to {@link INDICATOR_BADGE_RADIUS}) lets a
+ * caller match a badge it is drawn on top of; everything else scales off it.
+ *
+ * `backingOpacity` is the white disc behind the icon. At 1 it keeps the
+ * icon legible over any artwork and reads as a *control* — a chip sitting
+ * on the canvas. Drop it for a purely informational mark: enough to lift
+ * the lock off a busy background, too faint to look pressable. 0 omits
+ * the fill entirely.
+ */
+export const drawPadlock = (
+  context: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  zoom: number,
+  color: string,
+  locked: boolean,
+  radius: number = INDICATOR_BADGE_RADIUS,
+  backingOpacity: number = 1,
+) => {
+  const r = radius / zoom;
+  const bodyW = r * 0.9;
+  const bodyH = r * 0.75;
+  const bodyTop = cy - bodyH * 0.15;
+  const shackleR = bodyW * 0.42;
+  // open padlock lifts and tilts the shackle to one side
+  const shackleCx = cx + (locked ? 0 : shackleR * 0.6);
+  const shackleCy = bodyTop - (locked ? 0 : r * 0.12);
+
+  context.save();
+  context.lineWidth = Math.max(1 / zoom, r * 0.14);
+
+  // badge background so whatever is underneath doesn't show through — its
+  // own opacity, independent of the fade the padlock itself gets below
+  context.beginPath();
+  context.arc(cx, cy, r, 0, Math.PI * 2);
+  if (backingOpacity > 0) {
+    context.globalAlpha = backingOpacity;
+    context.fillStyle = "#ffffff";
+    context.fill();
+  }
+
+  context.globalAlpha = locked ? 1 : INACTIVE_ICON_OPACITY;
+  context.strokeStyle = color;
+  context.stroke();
+
+  // shackle (arc)
+  context.beginPath();
+  context.arc(shackleCx, shackleCy, shackleR, Math.PI, locked ? 0 : -0.15);
+  context.stroke();
+
+  // body
+  context.beginPath();
+  context.rect(cx - bodyW / 2, bodyTop, bodyW, bodyH);
+  context.fillStyle = color;
+  context.fill();
+  context.restore();
+};
+
 /** Half-diagonal, in screen px, of the cross marking an anchor point. */
 export const INDICATOR_CROSS_SIZE = 2;
 

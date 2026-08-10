@@ -102,6 +102,7 @@ import {
 
 import {
   bootstrapCanvas,
+  drawPadlock,
   fillCircle,
   getWideIndicatorLineDash,
   getNormalizedCanvasDimensions,
@@ -1240,6 +1241,12 @@ const renderLinearPointHandles = (
   context.restore();
 };
 
+/** Colour of the binding affordances — the focus-point padlock and its
+ * connection line. A violet kept distinct from the red alignment
+ * vocabulary, because a binding is a different kind of relationship. */
+const BINDING_INDICATOR_COLOR = "rgba(134, 131, 226, 0.6)";
+const BINDING_INDICATOR_COLOR_HOVER = "rgba(134, 131, 226, 0.9)";
+
 const renderFocusPointConnectionLine = (
   context: CanvasRenderingContext2D,
   appState: InteractiveCanvasAppState,
@@ -1249,7 +1256,7 @@ const renderFocusPointConnectionLine = (
   context.save();
   context.translate(appState.scrollX, appState.scrollY);
 
-  context.strokeStyle = "rgba(134, 131, 226, 0.6)";
+  context.strokeStyle = BINDING_INDICATOR_COLOR;
   context.lineWidth = 1 / appState.zoom.value;
   context.setLineDash(getWideIndicatorLineDash(appState.zoom.value));
 
@@ -1270,11 +1277,11 @@ const renderFocusPointCicle = (
 ) => {
   context.save();
   context.translate(appState.scrollX, appState.scrollY);
-  context.strokeStyle = "rgba(134, 131, 226, 0.6)";
+  context.strokeStyle = BINDING_INDICATOR_COLOR;
   context.lineWidth = 1 / appState.zoom.value;
   context.setLineDash([]);
   context.fillStyle = isHovered
-    ? "rgba(134, 131, 226, 0.9)"
+    ? BINDING_INDICATOR_COLOR_HOVER
     : "rgba(255, 255, 255, 0.9)";
 
   fillCircle(
@@ -1285,6 +1292,148 @@ const renderFocusPointCicle = (
     true,
     true,
   );
+  context.restore();
+};
+
+/**
+ * Colour of the endpoint padlocks — the point handles' own stroke, so the
+ * badge reads as part of that control rather than a separate mark.
+ */
+const BINDING_LOCK_COLOR = "#5e5ad8";
+
+/**
+ * The same padlock, washed out, for an endpoint surfaced because the
+ * *shape* is selected rather than the arrow. There is no point handle
+ * under it then — nothing to grab, nothing to drag — so it is pure
+ * annotation, and the lighter weight says so before the user tries.
+ */
+const BINDING_LOCK_COLOR_PASSIVE = "#aeacec";
+
+/** Just enough white behind the passive padlock to keep it readable when
+ * the arrow's own stroke runs through it — well short of the solid disc
+ * that makes the interactive badge look pressable. */
+const BINDING_LOCK_PASSIVE_BACKING = 0.6;
+
+/**
+ * A padlock over each bound arrow endpoint the current selection makes
+ * relevant, saying "this end is attached to that shape". Drawn on top of
+ * the point handle it belongs to, so it marks the thing the user would
+ * grab to detach it.
+ *
+ * A binding is a relationship, so either end of it can be the reason to
+ * show the badge: selecting the arrow surfaces both of its bound ends,
+ * and selecting a shape surfaces the ends bound *to that shape* — not the
+ * far ends, which belong to a relationship the user hasn't asked about.
+ *
+ * This is the product-facing half of what Visual Debug shows as the ∞ on
+ * a binding; the debug view draws both directions of the relationship
+ * because it is checking them against each other, whereas here one badge
+ * per bound endpoint is the whole story.
+ */
+const renderBindingLocks = (
+  context: CanvasRenderingContext2D,
+  appState: InteractiveCanvasAppState,
+  selectedElements: readonly NonDeletedExcalidrawElement[],
+  elementsMap: NonDeletedSceneElementsMap,
+) => {
+  // (arrow, end) pairs to mark, deduped — a selected arrow bound to a
+  // selected shape is reached from both sides. `onHandle` records whether
+  // the arrow itself is selected, i.e. whether there is a point handle
+  // under the badge; reaching the same endpoint both ways keeps it.
+  const marks = new Map<
+    string,
+    {
+      arrow: NonDeleted<ExcalidrawArrowElement>;
+      type: "start" | "end";
+      onHandle: boolean;
+    }
+  >();
+
+  const mark = (
+    arrow: NonDeleted<ExcalidrawArrowElement>,
+    type: "start" | "end",
+    onHandle: boolean,
+  ) => {
+    const binding = type === "start" ? arrow.startBinding : arrow.endBinding;
+    const bindableElement =
+      binding?.elementId && elementsMap.get(binding.elementId);
+
+    if (
+      !bindableElement ||
+      !isBindableElement(bindableElement) ||
+      bindableElement.isDeleted
+    ) {
+      return;
+    }
+    const key = `${arrow.id}:${type}`;
+    marks.set(key, {
+      arrow,
+      type,
+      onHandle: onHandle || !!marks.get(key)?.onHandle,
+    });
+  };
+
+  for (const element of selectedElements) {
+    if (element.locked) {
+      continue;
+    }
+
+    if (isArrowElement(element)) {
+      mark(element, "start", true);
+      mark(element, "end", true);
+    }
+
+    // arrows bound to this shape, via its own record of them
+    for (const bound of element.boundElements ?? []) {
+      if (bound.type !== "arrow") {
+        continue;
+      }
+      const arrow = elementsMap.get(bound.id);
+      if (!arrow || !isArrowElement(arrow) || arrow.isDeleted) {
+        continue;
+      }
+      if (arrow.startBinding?.elementId === element.id) {
+        mark(arrow, "start", false);
+      }
+      if (arrow.endBinding?.elementId === element.id) {
+        mark(arrow, "end", false);
+      }
+    }
+  }
+
+  if (marks.size === 0) {
+    return;
+  }
+
+  context.save();
+  context.translate(appState.scrollX, appState.scrollY);
+  context.setLineDash([]);
+
+  for (const { arrow, type, onHandle } of marks.values()) {
+    const point = LinearElementEditor.getPointAtIndexGlobalCoordinates(
+      arrow,
+      type === "start" ? 0 : arrow.points.length - 1,
+      elementsMap,
+    );
+
+    drawPadlock(
+      context,
+      point[0],
+      point[1],
+      appState.zoom.value,
+      onHandle ? BINDING_LOCK_COLOR : BINDING_LOCK_COLOR_PASSIVE,
+      true,
+      // sized off the handle it covers, so the badge reads as that control
+      // rather than as something sitting over it — but a couple of px
+      // wider, because the padlock inside the disc makes a same-radius
+      // badge look smaller than the plain dot it replaces
+      LinearElementEditor.POINT_HANDLE_SIZE / 2 + 2,
+      // the solid white disc is what makes a badge look like a chip you
+      // can press; the passive mark keeps only a hint of it
+      onHandle ? 1 : BINDING_LOCK_PASSIVE_BACKING,
+    );
+  }
+
   context.restore();
 };
 
@@ -1885,8 +2034,16 @@ const _renderInteractiveScene = ({
   }
 
   const linearState = appState.selectedLinearElement;
+  // `selectedLinearElement` outlives the selection: clicking a shape while
+  // an arrow is selected leaves the editor pointing at that arrow (see the
+  // `: prevState.selectedLinearElement` fallback in App's pointer-up
+  // selection). Its affordances — endpoint highlights, focus points — must
+  // follow the actual selection, or they appear on an arrow the user has
+  // already moved on from. `renderLinearPointHandles` below always made
+  // this check; the hover affordances did not.
   const selectedLinearElement =
     linearState &&
+    appState.selectedElementIds[linearState.elementId] &&
     LinearElementEditor.getElement(linearState.elementId, allElementsMap);
   // Arrows have a different highlight behavior when
   // they are the only selected element
@@ -1951,6 +2108,10 @@ const _renderInteractiveScene = ({
         elementsMap,
       );
     }
+
+    // after the point handles, so a badge sits on top of the endpoint dot
+    renderBindingLocks(context, appState, selectedElements, allElementsMap);
+
     const selectionColor = renderConfig.selectionColor || "#000";
 
     if (showBoundingBox) {
@@ -2203,13 +2364,7 @@ const _renderInteractiveScene = ({
     selectedElements,
     renderConfig.selectionColor,
   );
-  renderAnchorLockOverlays(
-    context,
-    appState,
-    allElementsMap,
-    selectedElements,
-    renderConfig.selectionColor,
-  );
+  renderAnchorLockOverlays(context, appState, allElementsMap, selectedElements);
 
   context.restore();
 

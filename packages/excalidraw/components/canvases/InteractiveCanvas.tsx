@@ -271,6 +271,7 @@ const getRelevantAppStateProps = (
   croppingElementId: appState.croppingElementId,
   searchMatches: appState.searchMatches,
   activeLockedId: appState.activeLockedId,
+  hoveredAlignmentAnchorId: appState.hoveredAlignmentAnchorId,
   hoveredElementIds: appState.hoveredElementIds,
   debugVersionLogHighlightedElementIds:
     appState.debugVersionLogHighlightedElementIds,

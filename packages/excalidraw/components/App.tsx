@@ -461,8 +461,8 @@ import { CursorHint, CursorHints } from "./CursorHint";
 import {
   getAlignmentGuideLines,
   getElementLockToggle,
-  ALIGNMENT_ICON_RADIUS,
 } from "../renderer/renderAlignmentLocks";
+import { INDICATOR_BADGE_RADIUS } from "../renderer/helpers";
 import { MagicIcon, copyIcon, fullscreenIcon } from "./icons";
 import { AppStateObserver, type OnStateChange } from "./AppStateObserver";
 
@@ -729,6 +729,8 @@ class App extends React.Component<AppProps, AppState> {
           | { kind: "guide"; guide: AlignmentGuide }
           | { kind: "anchor"; elementId: string };
         center: [number, number];
+        /** scene-space slop, since the two badges are different sizes */
+        hitRadius: number;
       }
     | null = null;
   lastPointerDownEvent: React.PointerEvent<HTMLElement> | null = null;
@@ -8125,9 +8127,9 @@ class App extends React.Component<AppProps, AppState> {
     ) {
       // for linear elements, we'd like to prioritize point dragging over edge resizing
       // therefore, we update and check hovered point index first
-      if (this.state.selectedLinearElement) {
+      if (this.activeLinearElement) {
         this.handleHoverSelectedLinearElement(
-          this.state.selectedLinearElement,
+          this.activeLinearElement,
           scenePointerX,
           scenePointerY,
         );
@@ -8230,7 +8232,19 @@ class App extends React.Component<AppProps, AppState> {
       if (isLaserTool) {
         return;
       }
-      if (
+
+      // The anchor toggle sits over the middle of the element, so it has to
+      // claim the cursor ahead of the move/grab branches below — otherwise
+      // the whole chain resolves to MOVE before reaching it.
+      const hoveredAnchorId =
+        this.getElementLockToggleAt(scenePointer)?.elementId ?? null;
+      if (this.state.hoveredAlignmentAnchorId !== hoveredAnchorId) {
+        this.setState({ hoveredAlignmentAnchorId: hoveredAnchorId });
+      }
+
+      if (hoveredAnchorId) {
+        this.cursor.set(CURSOR_TYPE.POINTER);
+      } else if (
         hitElement &&
         (hitElement.link || isEmbeddableElement(hitElement)) &&
         this.state.selectedElementIds[hitElement.id] &&
@@ -8292,9 +8306,9 @@ class App extends React.Component<AppProps, AppState> {
         this.cursor.set(CURSOR_TYPE.AUTO);
       }
 
-      if (this.state.selectedLinearElement) {
+      if (this.activeLinearElement) {
         this.handleHoverSelectedLinearElement(
-          this.state.selectedLinearElement,
+          this.activeLinearElement,
           scenePointerX,
           scenePointerY,
         );
@@ -8349,6 +8363,21 @@ class App extends React.Component<AppProps, AppState> {
     }
     invalidateContextMenu = true;
   };
+
+  /**
+   * `selectedLinearElement` outlives the selection: clicking a shape leaves
+   * it pointing at the arrow you had selected before (see the
+   * `: prevState.selectedLinearElement` fallback in the pointer-up selection
+   * path). Anything that offers an *interaction* — endpoint hover, point
+   * dragging — has to ask for this rather than the raw field, or it acts on
+   * an arrow the user has already moved on from.
+   */
+  private get activeLinearElement(): LinearElementEditor | null {
+    const editor = this.state.selectedLinearElement;
+    return editor && this.state.selectedElementIds[editor.elementId]
+      ? editor
+      : null;
+  }
 
   handleHoverSelectedLinearElement(
     linearElementEditor: LinearElementEditor,
@@ -9447,7 +9476,7 @@ class App extends React.Component<AppProps, AppState> {
 
   /** Screen-space slop around a badge's centre that still counts as a hit. */
   private get alignmentIconHitRadius() {
-    return (ALIGNMENT_ICON_RADIUS + 4) / this.state.zoom.value;
+    return (INDICATOR_BADGE_RADIUS + 4) / this.state.zoom.value;
   }
 
   /**
@@ -9491,6 +9520,7 @@ class App extends React.Component<AppProps, AppState> {
     this.pendingAlignmentIconPress = {
       target: { kind: "guide", guide: closest.guide },
       center: closest.center,
+      hitRadius,
     };
     return true;
   }
@@ -9518,6 +9548,27 @@ class App extends React.Component<AppProps, AppState> {
   }
 
   /**
+   * The selected element's anchor toggle, if `scenePointer` is over it —
+   * the one hit-test shared by the hover affordance and the press, so the
+   * cursor can never promise a click the pointer-down won't take.
+   */
+  private getElementLockToggleAt(scenePointer: { x: number; y: number }) {
+    const toggle = getElementLockToggle(
+      this.scene.getSelectedElements(this.state),
+      this.scene.getNonDeletedElementsMap(),
+      this.state.zoom.value,
+    );
+    if (!toggle) {
+      return null;
+    }
+    const dist = Math.hypot(
+      scenePointer.x - toggle.center[0],
+      scenePointer.y - toggle.center[1],
+    );
+    return dist <= toggle.hitRadius ? toggle : null;
+  }
+
+  /**
    * If `scenePointer` lands on the element-lock badge of the selected
    * element, arm it for toggling and return true (consuming the
    * pointer-down; the toggle happens on pointer-up). Mirrors the
@@ -9527,24 +9578,14 @@ class App extends React.Component<AppProps, AppState> {
     x: number;
     y: number;
   }): boolean {
-    const toggle = getElementLockToggle(
-      this.scene.getSelectedElements(this.state),
-      this.scene.getNonDeletedElementsMap(),
-      this.state.zoom.value,
-    );
+    const toggle = this.getElementLockToggleAt(scenePointer);
     if (!toggle) {
-      return false;
-    }
-    const dist = Math.hypot(
-      scenePointer.x - toggle.center[0],
-      scenePointer.y - toggle.center[1],
-    );
-    if (dist > this.alignmentIconHitRadius) {
       return false;
     }
     this.pendingAlignmentIconPress = {
       target: { kind: "anchor", elementId: toggle.elementId },
       center: toggle.center,
+      hitRadius: toggle.hitRadius,
     };
     return true;
   }
@@ -9568,7 +9609,7 @@ class App extends React.Component<AppProps, AppState> {
       scenePointer.x - press.center[0],
       scenePointer.y - press.center[1],
     );
-    if (dist > this.alignmentIconHitRadius) {
+    if (dist > press.hitRadius) {
       return false;
     }
     if (press.target.kind === "guide") {
@@ -9686,8 +9727,13 @@ class App extends React.Component<AppProps, AppState> {
           );
         }
       } else {
-        if (this.state.selectedLinearElement) {
-          const linearElementEditor = this.state.selectedLinearElement;
+        // Without `activeLinearElement`'s selection check, a stale editor
+        // leaves its arrow's points grabbable. Worse, the first press arms
+        // the editor (`selectedPointsIndices` / `lastClickedPoint`) even
+        // when it doesn't drag, so the *second* press on the same spot
+        // moves a point of an arrow the user never selected.
+        if (this.activeLinearElement) {
+          const linearElementEditor = this.activeLinearElement;
           const ret = LinearElementEditor.handlePointerDown(
             event,
             this,

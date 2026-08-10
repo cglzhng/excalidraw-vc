@@ -65,6 +65,21 @@ const EDGE_PAIRS: readonly (readonly [Edge, Edge])[] = [
   ["max", "center"],
 ];
 
+/**
+ * Whether an element can take part in hard alignment at all.
+ *
+ * Alignment is a statement about two boxes sharing an edge, so it only
+ * means anything for elements whose bounding box *is* the shape. Lines
+ * and arrows are excluded: their bounds are an artefact of where their
+ * points happen to sit rather than a drawn edge, so aligning to one
+ * couples elements along a line nobody can see — and an arrow bound to a
+ * shape is already moved by its binding, which would fight the
+ * propagator. Container-bound labels are excluded for the same reason
+ * they aren't snap targets: they move with their container.
+ */
+export const isAlignable = (element: ExcalidrawElement | null): boolean =>
+  element != null && !isLinearElement(element) && !isBoundToContainer(element);
+
 const EDGE_EPSILON = 1;
 
 const roughlyEqual = (a: number, b: number, epsilon = EDGE_EPSILON) =>
@@ -165,6 +180,9 @@ export const lockAlignments = (
     for (let j = i + 1; j < elements.length; j++) {
       const a = elements[i];
       const b = elements[j];
+      if (!isAlignable(a) || !isAlignable(b)) {
+        continue;
+      }
       for (const link of getAlignedLinks(a, b, elementsMap)) {
         nextLinks.set(a.id, withLink(linksFor(a), b.id, link));
         // reciprocal link from B's perspective — edges swap
@@ -276,6 +294,9 @@ export const getAlignmentGuides = (
 
   // Hard links first, so a hard pair is never also emitted as soft.
   for (const el of selected) {
+    if (!isAlignable(el)) {
+      continue;
+    }
     for (const link of el.alignments ?? []) {
       const guide: AlignmentGuide = {
         selfId: el.id,
@@ -310,13 +331,11 @@ export const getAlignmentGuides = (
     );
 
   for (const el of selected) {
+    if (!isAlignable(el)) {
+      continue;
+    }
     for (const other of elementsMap.values()) {
-      if (
-        other.id === el.id ||
-        other.isDeleted ||
-        isLinearElement(other) ||
-        isBoundToContainer(other)
-      ) {
+      if (other.id === el.id || other.isDeleted || !isAlignable(other)) {
         continue;
       }
       for (const link of getAlignedLinks(el, other, elementsMap)) {

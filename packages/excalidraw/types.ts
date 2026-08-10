@@ -250,6 +250,7 @@ export type InteractiveCanvasAppState = Readonly<
     // Search matches
     searchMatches: AppState["searchMatches"];
     activeLockedId: AppState["activeLockedId"];
+    hoveredAlignmentAnchorId: AppState["hoveredAlignmentAnchorId"];
     // Non-used but needed in binding highlight arrow overdraw
     hoveredElementIds: AppState["hoveredElementIds"];
     frameRendering: AppState["frameRendering"];
@@ -573,6 +574,10 @@ export interface AppState {
 
   /** the locked element/group that's active and shows unlock popup */
   activeLockedId: string | null;
+  /** element whose alignment-anchor toggle the pointer is over, if any —
+   * purely a hover affordance, so it is deliberately not observed by the
+   * store (it would otherwise emit a version-log moment per mouse move) */
+  hoveredAlignmentAnchorId: string | null;
   // when locking multiple units of elements together, we assign a temporary
   // groupId to them so we can unlock them together;
   // as elements are unlocked, we remove the groupId from the elements
