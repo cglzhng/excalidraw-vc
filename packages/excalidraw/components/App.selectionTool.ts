@@ -167,8 +167,13 @@ export class AppSelectionTool {
           );
         }
       } else {
-        if (this.app.state.selectedLinearElement) {
-          const linearElementEditor = this.app.state.selectedLinearElement;
+        // Without `activeLinearElement`'s selection check, a stale editor
+        // leaves its arrow's points grabbable. Worse, the first press arms
+        // the editor (`selectedPointsIndices` / `lastClickedPoint`) even
+        // when it doesn't drag, so the *second* press on the same spot
+        // moves a point of an arrow the user never selected.
+        if (this.app.activeLinearElement) {
+          const linearElementEditor = this.app.activeLinearElement;
           const ret = LinearElementEditor.handlePointerDown(
             event,
             this.app,

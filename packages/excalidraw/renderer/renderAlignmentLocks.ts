@@ -1,22 +1,24 @@
+import { THEME } from "@excalidraw/common";
+
 import {
   getAlignmentGuides,
   getAlignmentMovers,
-  getElementAbsoluteCoords,
   getElementBounds,
+  isAlignable,
   isAlignmentAnchor,
 } from "@excalidraw/element";
-import { pointFrom, pointRotateRads } from "@excalidraw/math";
 
 import {
+  INACTIVE_ICON_OPACITY,
   INDICATOR_CROSS_SIZE,
   drawIndicatorCross,
+  drawPadlock,
   getIndicatorColor,
   getWideIndicatorLineDash,
 } from "./helpers";
 
 import type { Bounds } from "@excalidraw/common";
 import type { AlignmentGuide } from "@excalidraw/element";
-import type { GlobalPoint } from "@excalidraw/math";
 import type {
   NonDeletedExcalidrawElement,
   NonDeletedSceneElementsMap,
@@ -37,13 +39,6 @@ import type { InteractiveCanvasAppState } from "../types";
  * creation UI. The geometry is shared with the pointer handler via
  * `getAlignmentGuideLines`, which hit-tests the same padlock positions.
  */
-
-/** Padlock badge radius, in screen px (divided by zoom at draw time). */
-export const ALIGNMENT_ICON_RADIUS = 9;
-
-/** The inactive state of an icon — an open padlock, a lifted anchor —
- * is drawn faded to read as the weaker of the two. */
-const UNLOCKED_ICON_OPACITY = 0.45;
 
 const edgeCoord = (
   bounds: Bounds,
@@ -139,54 +134,6 @@ export const getAlignmentGuideLines = (
   return lines;
 };
 
-/** Draw a small padlock badge, closed (hard) or open (soft). */
-const drawPadlock = (
-  context: CanvasRenderingContext2D,
-  cx: number,
-  cy: number,
-  zoom: number,
-  color: string,
-  locked: boolean,
-) => {
-  const r = ALIGNMENT_ICON_RADIUS / zoom;
-  const bodyW = r * 0.9;
-  const bodyH = r * 0.75;
-  const bodyTop = cy - bodyH * 0.15;
-  const shackleR = bodyW * 0.42;
-  // open padlock lifts and tilts the shackle to one side
-  const shackleCx = cx + (locked ? 0 : shackleR * 0.6);
-  const shackleCy = bodyTop - (locked ? 0 : r * 0.12);
-
-  context.save();
-  context.lineWidth = Math.max(1 / zoom, r * 0.14);
-
-  // badge background so the line doesn't show through — always opaque,
-  // the fade below applies only to the padlock itself
-  context.beginPath();
-  context.arc(cx, cy, r, 0, Math.PI * 2);
-  context.fillStyle = "#ffffff";
-  context.fill();
-
-  // An open padlock is the "not committed yet" state, so draw it faded;
-  // closed reads as the solid, active one.
-  context.globalAlpha = locked ? 1 : UNLOCKED_ICON_OPACITY;
-  context.strokeStyle = color;
-  context.stroke();
-
-  // shackle (arc)
-  context.beginPath();
-  context.arc(shackleCx, shackleCy, shackleR, Math.PI, locked ? 0 : -0.15);
-  context.stroke();
-
-  // body
-  context.beginPath();
-  const bx = cx - bodyW / 2;
-  context.rect(bx, bodyTop, bodyW, bodyH);
-  context.fillStyle = color;
-  context.fill();
-  context.restore();
-};
-
 /**
  * Anvil silhouette, as offsets from the icon's centre in units of its
  * height: overhanging horn on the left, wide face on top, pinched waist,
@@ -262,38 +209,6 @@ const drawAnvil = (
   context.restore();
 };
 
-/**
- * The anchor equivalent of {@link drawPadlock}: same white badge, same
- * fade for the inactive state, an anvil instead of a lock.
- */
-const drawAnchorBadge = (
-  context: CanvasRenderingContext2D,
-  cx: number,
-  cy: number,
-  zoom: number,
-  color: string,
-  anchored: boolean,
-) => {
-  const r = ALIGNMENT_ICON_RADIUS / zoom;
-  const lineWidth = Math.max(1 / zoom, r * 0.13);
-
-  context.save();
-
-  context.beginPath();
-  context.arc(cx, cy, r, 0, Math.PI * 2);
-  context.fillStyle = "#ffffff";
-  context.fill();
-
-  context.globalAlpha = anchored ? 1 : UNLOCKED_ICON_OPACITY;
-  context.strokeStyle = color;
-  context.lineWidth = lineWidth;
-  context.stroke();
-
-  // the anvil is wider than tall (1.14:1), so height is what has to fit
-  drawAnvil(context, cx, cy, r * 1.35, color, lineWidth, anchored);
-  context.restore();
-};
-
 export const renderAlignmentLocks = (
   context: CanvasRenderingContext2D,
   appState: InteractiveCanvasAppState,
@@ -348,49 +263,58 @@ export const renderAlignmentLocks = (
   context.restore();
 };
 
-/** Gap (screen px) between the element's left edge and the badge, beyond
- * the badge radius — mirrors the rotation handle's offset above the top
- * edge so the lock badge reads as a sibling handle. */
-const LOCK_ICON_GAP = 14;
+/** Where the anvil sits: the centre of the element's bounds — the same
+ * point {@link renderAnchorLockOverlays} uses, so the toggle and the
+ * drag-time overlay land in exactly the same place. */
+const anchorIconCenter = (
+  element: NonDeletedExcalidrawElement,
+  elementsMap: NonDeletedSceneElementsMap,
+): [number, number] => {
+  const b = getElementBounds(element, elementsMap);
+  return [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
+};
 
-/**
- * The lock badge's scene position: off the *left* edge of the element,
- * vertically centred, then rotated with the element about its centre —
- * placed like the rotation handle (which sits above the top edge) so it's
- * clear of the drag-grab area and tracks the element's rotation.
- */
-const lockBadgePosition = (
+/** The anvil's height for an element: scaled to the element, clamped to a
+ * sane screen-space range so it still reads on a tiny shape and doesn't
+ * swamp a huge one. */
+const anchorIconSize = (
   element: NonDeletedExcalidrawElement,
   elementsMap: NonDeletedSceneElementsMap,
   zoom: number,
-): [number, number] => {
-  const [x1, , , , cx, cy] = getElementAbsoluteCoords(element, elementsMap);
-  // left-middle of the element's own (unrotated) box, nudged outwards
-  const px = x1 - (ALIGNMENT_ICON_RADIUS + LOCK_ICON_GAP) / zoom;
-  const rotated = pointRotateRads<GlobalPoint>(
-    pointFrom(px, cy),
-    pointFrom(cx, cy),
-    element.angle,
-  );
-  return [rotated[0], rotated[1]];
+): number => {
+  const b = getElementBounds(element, elementsMap);
+  const minDim = Math.min(b[2] - b[0], b[3] - b[1]);
+  return Math.min(Math.max(minDim * 0.6, 16 / zoom), 60 / zoom);
 };
 
 /**
- * The clickable element-lock (alignment-anchor) toggle, if shown: an
- * anvil badge off the left edge of the single selected element. Like the
- * rotation handle it's available on any single selected element (you can
- * anchor before aligning) and only while selected. Returns the target for
- * the pointer handler to hit-test, or null when nothing single-selected.
+ * The clickable element-lock (alignment-anchor) toggle, if shown: a large
+ * translucent anvil over the middle of the single selected element — the
+ * same mark the drag-time overlay uses, so the control and the feedback
+ * it predicts are one image. Available on any single selected element
+ * (you can anchor before aligning) and only while selected. Returns the
+ * target for the pointer handler to hit-test, or null when nothing
+ * single-selected.
  */
 export const getElementLockToggle = (
   selectedElements: readonly NonDeletedExcalidrawElement[],
   elementsMap: NonDeletedSceneElementsMap,
   zoom: number,
-): { elementId: string; center: [number, number] } | null => {
+): {
+  elementId: string;
+  center: [number, number];
+  size: number;
+  hitRadius: number;
+} | null => {
   if (selectedElements.length !== 1) {
     return null;
   }
   const el = selectedElements[0];
+  // Anchoring only means "alignment must never move this", so it is
+  // meaningless on an element alignment ignores in the first place.
+  if (!isAlignable(el)) {
+    return null;
+  }
   // An upstream-locked element is anchored unconditionally and can't be
   // edited, so there's nothing to toggle — offering the badge would just
   // invite a click that appears to do nothing. Matches `getTransformHandles`,
@@ -398,17 +322,23 @@ export const getElementLockToggle = (
   if (el.locked) {
     return null;
   }
+  const size = anchorIconSize(el, elementsMap, zoom);
   return {
     elementId: el.id,
-    center: lockBadgePosition(el, elementsMap, zoom),
+    center: anchorIconCenter(el, elementsMap),
+    size,
+    // the anvil is `size` tall and 1.14x that wide, so half the height is
+    // a radius that stays inside the silhouette rather than claiming the
+    // corners of its box
+    hitRadius: size / 2,
   };
 };
 
 /**
- * Element-anchor UI: the anchor toggle off the left edge of the
- * single selected element — shown whenever an element is selected (and
- * while it's being dragged, so it tracks the element), like a transform
- * handle. `color` is the selection colour, matching the rotation handle.
+ * Element-anchor UI: the anchor toggle over the middle of the single
+ * selected element — shown whenever an element is selected (and while
+ * it's being dragged, so it tracks the element), like a transform handle.
+ * `color` is the selection colour, matching the rotation handle.
  */
 export const renderElementAlignmentLocks = (
   context: CanvasRenderingContext2D,
@@ -426,31 +356,71 @@ export const renderElementAlignmentLocks = (
 
   context.save();
   context.translate(appState.scrollX, appState.scrollY);
-  drawAnchorBadge(
+  drawAnchorOverlay(
     context,
     toggle.center[0],
     toggle.center[1],
-    zoom,
+    toggle.size,
     color,
     isAlignmentAnchor(el),
+    appState.hoveredAlignmentAnchorId === toggle.elementId,
   );
   context.restore();
 };
 
-/** A large, translucent anvil centred on and scaled to an element —
- * the "this anchor is holding you" overlay shown while dragging. Unlike
- * the badge it has no white backing. */
+/** Opacity of the anvil overlay when the element *is* anchored. It sits
+ * over the element's own fill, so it has to stay translucent enough to
+ * read as an annotation rather than as part of the drawing. */
+const ANCHOR_OVERLAY_OPACITY = 0.6;
+
+/**
+ * The drag-time anvil's red — deliberately darker than the alignment
+ * indicator red the guide lines use.
+ *
+ * The overlay is drawn at {@link ANCHOR_OVERLAY_OPACITY} over the element's
+ * own artwork, and a mid red washes out to pink at that alpha: it reads
+ * light and thin, which is the opposite of what an anvil is for. Starting
+ * from a darker red leaves it heavy once the alpha has taken its cut.
+ * On a dark canvas "darker" means deeper and more saturated rather than
+ * closer to black, which would vanish into the background.
+ */
+const ANCHOR_OVERLAY_COLOR_LIGHT = "#a51111";
+const ANCHOR_OVERLAY_COLOR_DARK = "#ff6b6b";
+
+const getAnchorOverlayColor = (
+  theme: InteractiveCanvasAppState["theme"],
+  zenModeEnabled: boolean,
+): string =>
+  theme === THEME.LIGHT || zenModeEnabled
+    ? ANCHOR_OVERLAY_COLOR_LIGHT
+    : ANCHOR_OVERLAY_COLOR_DARK;
+
+/** Outline weight as a fraction of the anvil's height. The resting weight
+ * is thin enough to sit quietly over the element's own artwork; hover
+ * thickens it to the drag-overlay's weight, which is the affordance —
+ * the icon firms up under the pointer to say it can be clicked. */
+const ANCHOR_LINE_RATIO = 0.03;
+const ANCHOR_LINE_RATIO_HOVER = 0.06;
+
+/** A large, translucent anvil centred on and scaled to an element — both
+ * the anchor toggle and the "this anchor is holding you" overlay shown
+ * while dragging. Solid when anchored, and a fainter hollow outline when
+ * not, so an offered toggle never competes with the element under it. */
 const drawAnchorOverlay = (
   context: CanvasRenderingContext2D,
   cx: number,
   cy: number,
   size: number,
   color: string,
+  anchored: boolean,
+  hovered: boolean,
 ) => {
+  const ratio = hovered ? ANCHOR_LINE_RATIO_HOVER : ANCHOR_LINE_RATIO;
   context.save();
-  context.globalAlpha = 0.4;
-  // only ever drawn for an element that *is* anchored
-  drawAnvil(context, cx, cy, size, color, Math.max(size * 0.06, 1), true);
+  context.globalAlpha = anchored
+    ? ANCHOR_OVERLAY_OPACITY
+    : ANCHOR_OVERLAY_OPACITY * INACTIVE_ICON_OPACITY;
+  drawAnvil(context, cx, cy, size, color, Math.max(size * ratio, 1), anchored);
   context.restore();
 };
 
@@ -461,13 +431,19 @@ const drawAnchorOverlay = (
  * regardless of drag direction, since the anchor is what holds the
  * component together, and covers upstream-locked elements too (they
  * anchor without carrying the badge).
+ *
+ * Drawn in the alignment red rather than the selection colour the toggle
+ * uses. The two anvils say different things: on a selected element it is a
+ * control offering a choice, here it is the explanation for a drag that
+ * just refused to move. Red is already this fork's alignment vocabulary
+ * (the guides and their padlocks), so the overlay reads as part of the
+ * constraint it is reporting — and never as something to click.
  */
 export const renderAnchorLockOverlays = (
   context: CanvasRenderingContext2D,
   appState: InteractiveCanvasAppState,
   elementsMap: NonDeletedSceneElementsMap,
   selectedElements: readonly NonDeletedExcalidrawElement[],
-  color: string,
 ) => {
   if (!appState.selectedElementsAreBeingDragged || selectedElements.length === 0) {
     return;
@@ -488,6 +464,7 @@ export const renderAnchorLockOverlays = (
   }
 
   const zoom = appState.zoom.value;
+  const color = getAnchorOverlayColor(appState.theme, appState.zenModeEnabled);
   context.save();
   context.translate(appState.scrollX, appState.scrollY);
   for (const id of anchors) {
@@ -495,19 +472,17 @@ export const renderAnchorLockOverlays = (
     if (!el) {
       continue;
     }
-    const b = getElementBounds(el, elementsMap);
-    const minDim = Math.min(b[2] - b[0], b[3] - b[1]);
-    // scale with the element, but clamp to a sane screen-space range
-    const size = Math.min(
-      Math.max(minDim * 0.6, 16 / zoom),
-      60 / zoom,
-    );
+    const center = anchorIconCenter(el, elementsMap);
     drawAnchorOverlay(
       context,
-      (b[0] + b[2]) / 2,
-      (b[1] + b[3]) / 2,
-      size,
+      center[0],
+      center[1],
+      anchorIconSize(el, elementsMap, zoom),
       color,
+      // only ever drawn for an element that *is* anchored, and never a
+      // hover target — this is feedback during a drag, not a control
+      true,
+      true,
     );
   }
   context.restore();
