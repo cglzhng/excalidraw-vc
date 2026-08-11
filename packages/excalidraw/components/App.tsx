@@ -8242,7 +8242,13 @@ class App extends React.Component<AppProps, AppState> {
         this.setState({ hoveredAlignmentAnchorId: hoveredAnchorId });
       }
 
-      if (hoveredAnchorId) {
+      // Same for a guide padlock. They're only drawn at rest (see
+      // `renderAlignmentLocks`), so don't offer the cursor mid-drag.
+      const overGuideIcon =
+        !this.state.selectedElementsAreBeingDragged &&
+        !!this.getAlignmentGuideIconAt(scenePointer);
+
+      if (hoveredAnchorId || overGuideIcon) {
         this.cursor.set(CURSOR_TYPE.POINTER);
       } else if (
         hitElement &&
@@ -9480,19 +9486,16 @@ class App extends React.Component<AppProps, AppState> {
   }
 
   /**
-   * If `scenePointer` lands on an alignment guide's padlock, arm it for
-   * toggling and return true (the pointer-down is then consumed; the
-   * toggle happens on pointer-up). Guides are recomputed on demand rather
-   * than cached — clicks are rare, mirroring the element-link icon
-   * hit-test.
+   * The alignment-guide padlock under `scenePointer`, if any (the nearest
+   * one, when two lines' badges overlap) — the one hit-test shared by the
+   * hover affordance and the press, so the cursor can never promise a
+   * click the pointer-down won't take. Guides are recomputed on demand
+   * rather than cached — this mirrors the element-link icon hit-test.
    */
-  private handleAlignmentIconOnPointerDown(scenePointer: {
-    x: number;
-    y: number;
-  }): boolean {
+  private getAlignmentGuideIconAt(scenePointer: { x: number; y: number }) {
     const selected = this.scene.getSelectedElements(this.state);
     if (selected.length === 0) {
-      return false;
+      return null;
     }
     const lines = getAlignmentGuideLines(
       selected,
@@ -9503,6 +9506,7 @@ class App extends React.Component<AppProps, AppState> {
     let closest: {
       guide: AlignmentGuide;
       center: [number, number];
+      hitRadius: number;
       dist: number;
     } | null = null;
     for (const line of lines) {
@@ -9511,16 +9515,29 @@ class App extends React.Component<AppProps, AppState> {
         scenePointer.y - line.icon[1],
       );
       if (dist <= hitRadius && (!closest || dist < closest.dist)) {
-        closest = { guide: line.guide, center: line.icon, dist };
+        closest = { guide: line.guide, center: line.icon, hitRadius, dist };
       }
     }
-    if (!closest) {
+    return closest;
+  }
+
+  /**
+   * If `scenePointer` lands on an alignment guide's padlock, arm it for
+   * toggling and return true (the pointer-down is then consumed; the
+   * toggle happens on pointer-up).
+   */
+  private handleAlignmentIconOnPointerDown(scenePointer: {
+    x: number;
+    y: number;
+  }): boolean {
+    const hit = this.getAlignmentGuideIconAt(scenePointer);
+    if (!hit) {
       return false;
     }
     this.pendingAlignmentIconPress = {
-      target: { kind: "guide", guide: closest.guide },
-      center: closest.center,
-      hitRadius,
+      target: { kind: "guide", guide: hit.guide },
+      center: hit.center,
+      hitRadius: hit.hitRadius,
     };
     return true;
   }

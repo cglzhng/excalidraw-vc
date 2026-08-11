@@ -51,7 +51,11 @@ import {
 
 import { renderElement, renderSelectionElement } from "@excalidraw/element";
 
-import { getCommonBounds, getElementAbsoluteCoords } from "@excalidraw/element";
+import {
+  getCommonBounds,
+  getElementAbsoluteCoords,
+  getElementLineSegments,
+} from "@excalidraw/element";
 import {
   getGlobalFixedPointForBindableElement,
   isFocusPointVisible,
@@ -1035,6 +1039,75 @@ const renderSelectionBorder = (
       angle,
     );
   }
+  context.restore();
+};
+
+/**
+ * VERSION-LOG: the selection halo — a thick green tracing of each
+ * selected element's own silhouette.
+ *
+ * The dashed boxes upstream draws are a poor answer to "what is selected"
+ * in this fork: an arrow has no box at all now (see `hasBoundingBox`), a
+ * single selection's box is easily read as a transform frame rather than
+ * a membership marker, and a multi-selection stacks per-element boxes,
+ * group boxes and the common box until none of them reads as anything.
+ * Tracing the shape itself can't be ambiguous — the mark is *on* the
+ * thing that's selected.
+ *
+ * Green, not blue: blue is already spoken for several times over in this
+ * editor — frame highlights, binding suggestions, the link affordance,
+ * remote cursors — so a blue halo would be one more thing to
+ * disambiguate rather than the unambiguous answer it's meant to be.
+ *
+ * It also has to be unmistakably editor chrome rather than artwork,
+ * since a user can draw a green stroke of any width. Nothing about the
+ * colour alone can guarantee that, so the halo leans on properties a
+ * drawn stroke doesn't have: it's translucent while the shape underneath
+ * stays fully opaque, it's much wider than any default stroke width, and
+ * it holds that width in *screen* space, so it doesn't scale with zoom.
+ *
+ * Drawn as one path per element and stroked once, so the overlaps where
+ * segments meet don't compound the alpha into darker blobs at corners.
+ */
+const SELECTION_HALO_COLOR = "rgba(0, 184, 100, 0.4)";
+/** Screen-space px, i.e. divided by zoom before use. */
+const SELECTION_HALO_WIDTH = 10;
+
+const renderSelectionHalo = (
+  context: CanvasRenderingContext2D,
+  appState: InteractiveCanvasAppState,
+  selectedElements: readonly NonDeletedExcalidrawElement[],
+  elementsMap: ElementsMap,
+) => {
+  if (selectedElements.length === 0) {
+    return;
+  }
+
+  context.save();
+  context.translate(appState.scrollX, appState.scrollY);
+  context.setLineDash([]);
+  context.strokeStyle = SELECTION_HALO_COLOR;
+  context.lineWidth = SELECTION_HALO_WIDTH / appState.zoom.value;
+  context.lineCap = "round";
+  context.lineJoin = "round";
+
+  for (const element of selectedElements) {
+    // a frame's own border already reads as a container edge, and a halo
+    // on it would swamp everything inside
+    if (isFrameLikeElement(element)) {
+      continue;
+    }
+    context.beginPath();
+    // `getElementLineSegments` samples curves and rounded corners into
+    // segments, so this follows the real outline for every element type —
+    // including arrows, which is the case the boxes never covered.
+    for (const [from, to] of getElementLineSegments(element, elementsMap)) {
+      context.moveTo(from[0], from[1]);
+      context.lineTo(to[0], to[1]);
+    }
+    context.stroke();
+  }
+
   context.restore();
 };
 
@@ -2092,6 +2165,9 @@ const _renderInteractiveScene = ({
       appState,
       editorInterface,
     );
+
+    // under the point handles / badges, so those stay legible on top of it
+    renderSelectionHalo(context, appState, selectedElements, elementsMap);
 
     const isSingleLinearElementSelected =
       selectedElements.length === 1 && isLinearElement(selectedElements[0]);

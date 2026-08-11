@@ -13,11 +13,16 @@ import type {
   PointerDownState,
 } from "@excalidraw/excalidraw/types";
 
+import { pointFrom, pointRotateRads } from "@excalidraw/math";
+
+import type { LocalPoint, Radians } from "@excalidraw/math";
+
 import type { NonDeletedExcalidrawElement } from "@excalidraw/element/types";
 
 import { dragAlignedElements, getAlignmentLockedAxes } from "./alignment";
-import { unbindBindingElement, updateBoundElements } from "./binding";
+import { updateBoundElements } from "./binding";
 import { getCommonBounds } from "./bounds";
+import { LinearElementEditor } from "./linearElementEditor";
 import { getPerfectElementSize } from "./sizeHelpers";
 import { getBoundTextElement } from "./textElement";
 import { getMinTextElementWidth } from "./textMeasurements";
@@ -26,12 +31,19 @@ import {
   isElbowArrow,
   isFrameLikeElement,
   isImageElement,
+  isLinearElement,
   isTextElement,
 } from "./typeChecks";
 
 import type { Scene } from "./Scene";
 
-import type { ExcalidrawElement, ExcalidrawTextElement } from "./types";
+import type {
+  ExcalidrawElement,
+  ExcalidrawLinearElement,
+  ExcalidrawTextElement,
+  NonDeleted,
+  PointsPositionUpdates,
+} from "./types";
 
 export const dragSelectedElements = (
   pointerDownState: PointerDownState,
@@ -164,22 +176,31 @@ export const dragSelectedElements = (
         DRAGGING_THRESHOLD ||
       (!element.startBinding && !element.endBinding)
     ) {
-      updateElementCoords(pointerDownState, element, scene, adjustedOffset);
+      // VERSION-LOG: dragging a bound arrow moves its free points, and
+      // never breaks the binding.
+      //
+      // Upstream unbinds instead: translating the whole arrow drags a bound
+      // endpoint off its shape, and the alternative to unbinding there was
+      // the endpoint snapping back and collapsing the arrow. But that makes
+      // a plain drag — the least deliberate gesture there is — destroy a
+      // relationship that is fiddly to rebuild.
+      //
+      // An endpoint bound to a shape that is being dragged too travels with
+      // it, so only bindings to something staying put pin a point. Applying
+      // the offset to the remaining points keeps every pinned endpoint
+      // exactly where it is, so nothing has to be unbound and the arrow
+      // stretches rather than travelling. Unbinding stays available where it
+      // belongs: drag the endpoint itself, off the shape.
+      const pinnedStart = !!element.startBinding && !isStartBoundElementSelected;
+      const pinnedEnd = !!element.endBinding && !isEndBoundElementSelected;
 
-      const shouldUnbindStart =
-        element.startBinding && !isStartBoundElementSelected;
-      const shouldUnbindEnd = element.endBinding && !isEndBoundElementSelected;
-      if (shouldUnbindStart || shouldUnbindEnd) {
-        // NOTE: Moving the bound arrow should unbind it, otherwise we would
-        // have weird situations, like 0 lenght arrow when the user moves
-        // the arrow outside a filled shape suddenly forcing the arrow start
-        // and end point to jump "outside" the shape.
-        if (shouldUnbindStart) {
-          unbindBindingElement(element, "start", scene);
-        }
-        if (shouldUnbindEnd) {
-          unbindBindingElement(element, "end", scene);
-        }
+      if (!pinnedStart && !pinnedEnd) {
+        updateElementCoords(pointerDownState, element, scene, adjustedOffset);
+      } else {
+        dragArrowFreePoints(pointerDownState, element, scene, adjustedOffset, {
+          start: pinnedStart,
+          end: pinnedEnd,
+        });
       }
     }
   });
@@ -224,6 +245,59 @@ const calculateOffset = (
     x: nextX - x,
     y: nextY - y,
   };
+};
+
+/**
+ * Applies a drag offset to the points of an arrow that has at least one
+ * endpoint pinned by a binding, leaving the pinned endpoints untouched.
+ *
+ * The offset is taken from the *original* points each frame rather than
+ * applied incrementally, and re-expressed in the element's current frame:
+ * moving point 0 shifts `x`/`y` (point 0 is invariantly `[0,0]`), so by the
+ * next frame the element's origin has already moved under us.
+ */
+const dragArrowFreePoints = (
+  pointerDownState: PointerDownState,
+  element: NonDeleted<ExcalidrawLinearElement>,
+  scene: Scene,
+  dragOffset: { x: number; y: number },
+  pinned: { start: boolean; end: boolean },
+) => {
+  const original = pointerDownState.originalElements.get(element.id);
+  if (!original || !isLinearElement(original)) {
+    return;
+  }
+
+  const lastIndex = original.points.length - 1;
+  // points live in the element's unrotated frame, so a global translation
+  // has to be rotated into it
+  const localOffset = pointRotateRads(
+    pointFrom(dragOffset.x, dragOffset.y),
+    pointFrom(0, 0),
+    -element.angle as Radians,
+  );
+
+  const pointUpdates: PointsPositionUpdates = new Map();
+  for (let idx = 0; idx <= lastIndex; idx++) {
+    if ((idx === 0 && pinned.start) || (idx === lastIndex && pinned.end)) {
+      continue;
+    }
+    pointUpdates.set(idx, {
+      point: pointFrom<LocalPoint>(
+        original.x + original.points[idx][0] + localOffset[0] - element.x,
+        original.y + original.points[idx][1] + localOffset[1] - element.y,
+      ),
+      isDragging: true,
+    });
+  }
+
+  // every point pinned — a two-point arrow bound at both ends. There is
+  // nothing it can do without breaking a binding, so it holds still.
+  if (pointUpdates.size === 0) {
+    return;
+  }
+
+  LinearElementEditor.movePoints(element, scene, pointUpdates);
 };
 
 const updateElementCoords = (

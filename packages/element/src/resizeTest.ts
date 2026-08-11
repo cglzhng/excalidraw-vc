@@ -22,7 +22,11 @@ import {
   getOmitSidesForEditorInterface,
   canResizeFromSides,
 } from "./transformHandles";
-import { isImageElement, isLinearElement } from "./typeChecks";
+import {
+  isArrowElement,
+  isImageElement,
+  isLinearElement,
+} from "./typeChecks";
 
 import type {
   TransformHandleType,
@@ -57,6 +61,15 @@ export const resizeTest = <Point extends GlobalPoint | LocalPoint>(
   editorInterface: EditorInterface,
 ): MaybeTransformHandleType => {
   if (!appState.selectedElementIds[element.id]) {
+    return false;
+  }
+
+  // VERSION-LOG: an arrow has no bounding box, so nothing on one can be
+  // grabbed. This has to be tested here rather than relying on
+  // `getTransformHandles` returning nothing: the side-resize check below
+  // derives its grab targets from the element's coords directly, so the
+  // edges of the box stayed live — and resizable — while invisible.
+  if (isArrowElement(element)) {
     return false;
   }
 

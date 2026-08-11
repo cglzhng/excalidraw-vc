@@ -10,6 +10,7 @@ import {
 import {
   MIN_FONT_SIZE,
   SHIFT_LOCKING_ANGLE,
+  getSizeFromPoints,
   rescalePoints,
   getFontString,
 } from "@excalidraw/common";
@@ -350,6 +351,88 @@ export const rescalePointsInElement = (
       }
     : {};
 
+/**
+ * VERSION-LOG: which of an arrow's endpoints a group transform must not move.
+ *
+ * An endpoint bound to an element that is *also* in the selection travels
+ * with it, so the binding survives on its own. One bound to something
+ * outside the selection does not: transforming it drags the endpoint off its
+ * shape, which is what used to force an unbind. Those are pinned.
+ *
+ * Applies to elbow arrows too, but they are answered differently — see
+ * {@link isFollowerElbowArrow}.
+ */
+const getPinnedArrowEndpoints = (
+  element: NonDeletedExcalidrawElement,
+  transformedIds: ReadonlySet<string>,
+): { start: boolean; end: boolean } => {
+  if (!isArrowElement(element)) {
+    return { start: false, end: false };
+  }
+  return {
+    start:
+      !!element.startBinding &&
+      !transformedIds.has(element.startBinding.elementId),
+    end:
+      !!element.endBinding && !transformedIds.has(element.endBinding.elementId),
+  };
+};
+
+/**
+ * Whether a group transform should leave this elbow arrow alone entirely and
+ * let its bindings place it.
+ *
+ * An elbow arrow's whole route is derived — `updateElbowArrowPoints` rebuilds
+ * it from the two bindings on every mutation — so there is no meaningful way
+ * to transform it: the only correct geometry is whatever the router
+ * produces. Transforming it anyway is what made a *still-bound* elbow arrow
+ * drift visibly off its shape: the scaled endpoints stuck, because a
+ * transformed arrow is passed to `updateBoundElements` as
+ * `simultaneouslyUpdated`, which skips it on the assumption that it is
+ * already being moved deliberately. Excluding it from the transform also
+ * excludes it from that list, which is what lets the router run.
+ */
+const isFollowerElbowArrow = (
+  element: NonDeletedExcalidrawElement,
+  transformedIds: ReadonlySet<string>,
+): boolean => {
+  if (!isElbowArrow(element)) {
+    return false;
+  }
+  const pinned = getPinnedArrowEndpoints(element, transformedIds);
+  return pinned.start || pinned.end;
+};
+
+/**
+ * Re-derives an arrow's geometry for a group transform, holding its pinned
+ * endpoints still while the rest of its points follow `transformPoint`.
+ *
+ * Mirrors what dragging does (see `dragArrowFreePoints`): the free points
+ * take the transform, the pinned ones keep the position their binding gave
+ * them, and nothing has to be unbound. Points are read in the element's
+ * unrotated frame — the same approximation `rescalePointsInElement` makes.
+ */
+const transformArrowFreePoints = (
+  orig: NonDeletedExcalidrawElement & { points: ExcalidrawLinearElement["points"] },
+  pinned: { start: boolean; end: boolean },
+  transformPoint: (x: number, y: number) => [number, number],
+) => {
+  const lastIndex = orig.points.length - 1;
+  const moved = orig.points.map(([px, py], idx) => {
+    const [gx, gy] = [orig.x + px, orig.y + py];
+    return (idx === 0 && pinned.start) || (idx === lastIndex && pinned.end)
+      ? ([gx, gy] as [number, number])
+      : transformPoint(gx, gy);
+  });
+
+  const [originX, originY] = moved[0];
+  const points = moved.map(([gx, gy]) =>
+    pointFrom<LocalPoint>(gx - originX, gy - originY),
+  ) as ExcalidrawLinearElement["points"];
+
+  return { x: originX, y: originY, points, ...getSizeFromPoints(points) };
+};
+
 export const measureFontSizeFromWidth = (
   element: NonDeleted<ExcalidrawTextElement>,
   elementsMap: ElementsMap,
@@ -487,13 +570,49 @@ const rotateMultipleElements = (
     centerAngle -= centerAngle % SHIFT_LOCKING_ANGLE;
   }
 
-  const rotatedElementsMap = new Map<
-    ExcalidrawElement["id"],
-    NonDeletedExcalidrawElement
-  >(elements.map((element) => [element.id, element]));
+  const rotatedIds = new Set(elements.map((element) => element.id));
 
-  for (const element of elements) {
+  // Follower elbow arrows are placed by their bindings, so they must not be
+  // rotated *and* must not be reported as simultaneously updated — that flag
+  // is what stops `updateBoundElements` re-routing them.
+  const rotatedElements = elements.filter(
+    (element) => !isFollowerElbowArrow(element, rotatedIds),
+  );
+
+  for (const element of rotatedElements) {
     if (!isFrameLikeElement(element)) {
+      // VERSION-LOG: an arrow pinned by a binding outside the selection
+      // rotates its free points about the selection centre instead of
+      // turning as a body, so the pinned endpoints stay on their shapes.
+      // `centerAngle` is measured from the handle's rest position, so it is
+      // the rotation delta; the arrow keeps its own original angle.
+      const pinned = getPinnedArrowEndpoints(element, rotatedIds);
+      const origArrow = originalElements.get(element.id);
+      if (
+        (pinned.start || pinned.end) &&
+        isLinearElement(element) &&
+        origArrow &&
+        isLinearElement(origArrow)
+      ) {
+        scene.mutateElement(element, {
+          ...transformArrowFreePoints(origArrow, pinned, (gx, gy) => {
+            const rotated = pointRotateRads(
+              pointFrom(gx, gy),
+              pointFrom(centerX, centerY),
+              centerAngle as Radians,
+            );
+            return [rotated[0], rotated[1]];
+          }),
+          angle: origArrow.angle,
+        });
+
+        updateBoundElements(element, scene, {
+          simultaneouslyUpdated: rotatedElements,
+        });
+        // arrow labels are positioned at render time, so nothing else to do
+        continue;
+      }
+
       const [x1, y1, x2, y2] = getElementAbsoluteCoords(element, elementsMap);
       const cx = (x1 + x2) / 2;
       const cy = (y1 + y2) / 2;
@@ -519,21 +638,12 @@ const rotateMultipleElements = (
       scene.mutateElement(element, updates);
 
       updateBoundElements(element, scene, {
-        simultaneouslyUpdated: elements,
+        simultaneouslyUpdated: rotatedElements,
       });
 
-      if (isBindingElement(element)) {
-        if (element.startBinding) {
-          if (!rotatedElementsMap.has(element.startBinding.elementId)) {
-            unbindBindingElement(element, "start", scene);
-          }
-        }
-        if (element.endBinding) {
-          if (!rotatedElementsMap.has(element.endBinding.elementId)) {
-            unbindBindingElement(element, "end", scene);
-          }
-        }
-      }
+      // VERSION-LOG: no unbinding — an arrow with an endpoint bound outside
+      // the selection took the pinned-points path above and never turned as
+      // a body, so its bound endpoints are untouched.
 
       const boundText = getBoundTextElement(element, elementsMap);
       if (boundText && !isArrowElement(element)) {
@@ -1415,9 +1525,17 @@ export const resizeMultipleElements = (
       };
     }[] = [];
 
+    const transformedIds = new Set(targetElements.map(({ orig }) => orig.id));
+
     for (const { orig, latest } of targetElements) {
       // bounded text elements are updated along with their container elements
       if (isTextElement(orig) && isBoundToContainer(orig)) {
+        continue;
+      }
+
+      // VERSION-LOG: an elbow arrow still tied to something outside the
+      // selection is a follower, not a target — its bindings place it.
+      if (isFollowerElbowArrow(orig, transformedIds)) {
         continue;
       }
 
@@ -1451,6 +1569,20 @@ export const resizeMultipleElements = (
         angle,
         ...rescaledPoints,
       };
+
+      // VERSION-LOG: hold bound arrow endpoints still instead of unbinding.
+      // The scale above maps every point through the same affine about the
+      // selection anchor, which would drag a pinned endpoint off its shape.
+      const pinned = getPinnedArrowEndpoints(orig, transformedIds);
+      if ((pinned.start || pinned.end) && isLinearElement(orig)) {
+        Object.assign(
+          update,
+          transformArrowFreePoints(orig, pinned, (gx, gy) => [
+            anchorX + flipFactorX * ((gx - anchorX) * scaleX),
+            anchorY + flipFactorY * ((gy - anchorY) * scaleY),
+          ]),
+        );
+      }
 
       if (isElbowArrow(orig)) {
         // Mirror fixed point binding for elbow arrows
@@ -1545,18 +1677,9 @@ export const resizeMultipleElements = (
         simultaneouslyUpdated: elementsToUpdate,
       });
 
-      if (isBindingElement(element)) {
-        if (element.startBinding) {
-          if (!resizedElementsMap.has(element.startBinding.elementId)) {
-            unbindBindingElement(element, "start", scene);
-          }
-        }
-        if (element.endBinding) {
-          if (!resizedElementsMap.has(element.endBinding.elementId)) {
-            unbindBindingElement(element, "end", scene);
-          }
-        }
-      }
+      // VERSION-LOG: no unbinding here — endpoints bound outside the
+      // selection were pinned above, so they are still exactly where their
+      // shape put them and the binding remains true.
 
       const boundTextElement = getBoundTextElement(element, elementsMap);
       if (boundTextElement && boundTextFontSize) {
