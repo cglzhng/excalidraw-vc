@@ -15,6 +15,7 @@ import type { Bounds } from "@excalidraw/common";
 
 import { getElementAbsoluteCoords } from "./bounds";
 import {
+  isArrowElement,
   isElbowArrow,
   isFrameLikeElement,
   isImageElement,
@@ -281,8 +282,12 @@ export const getTransformHandles = (
   // you can't move/resize
   if (
     element.locked ||
-    // Elbow arrows cannot be rotated
-    isElbowArrow(element)
+    // VERSION-LOG: arrows have no box, so they have no handles either.
+    // `hasBoundingBox` only stops the handles being *drawn*; the pointer
+    // reaches them through `resizeTest`, which reads this function instead.
+    // Without this an arrow still resized (and unbound) from handles that
+    // weren't on screen. Subsumes upstream's elbow-arrow case.
+    isArrowElement(element)
   ) {
     return {};
   }
@@ -340,8 +345,19 @@ export const hasBoundingBox = (
     return true;
   }
   const element = elements[0];
-  if (isElbowArrow(element)) {
-    // Elbow arrows cannot be resized as single selected elements
+  if (isArrowElement(element)) {
+    // VERSION-LOG: arrows are edited through their points, never a box.
+    //
+    // Every box operation acts on all the points at once — resize scales
+    // them, rotate spins them, and the box is also what drag hit-tests
+    // against — so any of them drags a bound endpoint off its shape, and
+    // the drag/resize paths respond by silently unbinding. Bindings are
+    // expensive to rebuild and easy to lose by accident that way.
+    //
+    // Elbow arrows already worked like this upstream; this extends it to
+    // the rest. Without a box, a selected arrow hit-tests against its own
+    // stroke (see `hitElement`), so it still drags by the line itself.
+    // Lines keep their box: they have no bindings to lose.
     return false;
   }
   if (!isLinearElement(element)) {
