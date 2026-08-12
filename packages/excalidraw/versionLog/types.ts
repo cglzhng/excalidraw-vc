@@ -17,6 +17,7 @@
 import type { StoreDelta } from "@excalidraw/element";
 import type {
   ElementAlignment,
+  ElementGapAlignment,
   FixedPointBinding,
 } from "@excalidraw/element/types";
 
@@ -351,16 +352,32 @@ export type LogOperation =
   // field on several elements at once. We model the whole gesture as a
   // single op carrying each member's before/after link arrays so replay
   // can set them in either direction.
-  | {
+  | ({
       kind: "alignment";
       /** "lock" = links added, "unlock" = links removed. */
       action: "lock" | "unlock";
-      /** Element ids whose `alignments` field changed. */
+      /** Element ids whose link field changed. */
       elementIds: string[];
-      /** Per-element link arrays before / after, keyed by element id. */
-      before: Record<string, readonly ElementAlignment[]>;
-      after: Record<string, readonly ElementAlignment[]>;
-    }
+    } & (
+      | {
+          /**
+           * Which link field the op writes. Edge alignments and equal-gap
+           * triples are the same gesture ("lock what you can see") with
+           * incompatible payloads — a triple has no single partner id —
+           * so they share the kind and split here rather than adding a
+           * second op kind and eight more switch arms.
+           */
+          field: "alignments";
+          /** Per-element link arrays before / after, keyed by element id. */
+          before: Record<string, readonly ElementAlignment[]>;
+          after: Record<string, readonly ElementAlignment[]>;
+        }
+      | {
+          field: "gapAlignments";
+          before: Record<string, readonly ElementGapAlignment[]>;
+          after: Record<string, readonly ElementGapAlignment[]>;
+        }
+    ))
   // Anchoring an element (the padlock badge) pins it against alignment
   // propagation. Unlike `alignment` this is a single-element flag, not a
   // link, so it gets its own op rather than riding along as a `restyle`.

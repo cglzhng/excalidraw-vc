@@ -413,12 +413,24 @@ const enumerateMissingReferents = (
       // owners that are themselves still live, since a dead owner's
       // links never get written anyway.
       const partnerIds = new Set<string>();
-      for (const [ownerId, links] of Object.entries(op.after)) {
+      for (const [ownerId, links] of Object.entries(
+        op.after as Record<string, readonly unknown[]>,
+      )) {
         if (!isLive(ownerId)) {
           continue;
         }
         for (const link of links) {
-          partnerIds.add(link.elementId);
+          // an edge link names one partner; a gap triple names all three
+          // (the owner among them, which `isLive` filters out below)
+          if (typeof link === "object" && link != null) {
+            if ("elementId" in link) {
+              partnerIds.add((link as { elementId: string }).elementId);
+            } else if ("ids" in link) {
+              for (const id of (link as { ids: readonly string[] }).ids) {
+                partnerIds.add(id);
+              }
+            }
+          }
         }
       }
       for (const id of partnerIds) {

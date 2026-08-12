@@ -43,7 +43,6 @@ import {
   isTextElement,
   getTextElementWithAccuratePosition,
   LinearElementEditor,
-  maxBindingDistance_simple,
   getActiveTextElement,
   getElementsInGroup,
   getSelectedGroupIds,
@@ -90,6 +89,7 @@ import type {
 import {
   renderAlignmentLocks,
   renderElementAlignmentLocks,
+  renderGapAlignmentLocks,
   renderAnchorLockOverlays,
 } from "../renderer/renderAlignmentLocks";
 import { renderSnaps } from "../renderer/renderSnaps";
@@ -110,6 +110,7 @@ import {
   bootstrapCanvas,
   drawPadlock,
   fillCircle,
+  getNarrowIndicatorLineDash,
   getWideIndicatorLineDash,
   getNormalizedCanvasDimensions,
   strokeRectWithRotation_simple,
@@ -479,36 +480,31 @@ const renderBindingHighlightForBindableElement_simple = (
         overrideShouldTestInside: true,
       });
 
-    // Simple arrows only snap to midpoints from outside the element
-    if (!cursorIsInsideBindable || isElbow) {
+    // VERSION-LOG: the four midpoints are drawn for every arrow type,
+    // and all four at once, rather than only the one being approached.
+    //
+    // They are the only places on the outline an arrow may attach (see
+    // `isAtEdgeMidpoint` in binding.ts), so they have to be visible
+    // *before* the pointer is near one — revealing a port only once you
+    // have already found it is no help in finding it. This is what elbow
+    // arrows have always done; the branch below now takes it for
+    // everything.
+    {
       context.save();
 
       const midpointRadius = 4 / appState.zoom.value;
-      const highlightedMidpoint = suggestedBinding.midPoint;
+      // Every other midpoint is drawn in the resting style. Only the
+      // highlight stays conditional on the cursor being outside the
+      // shape: inside, the arrow binds to the interior, so highlighting
+      // a port would promise an attachment that won't happen.
+      const highlightedMidpoint =
+        !cursorIsInsideBindable || isElbow
+          ? suggestedBinding.midPoint
+          : undefined;
       const midpoints = getAllMidpoints(suggestedBinding.element, elementsMap);
 
-      // Elbow arrows show all midpoints, simple arrows only the one closest to
-      // the pointer, once the pointer gets near it
-      let shownMidpoints = midpoints;
-      if (!isElbow) {
-        const threshold =
-          maxBindingDistance_simple(appState.zoom) +
-          suggestedBinding.element.strokeWidth / 2;
-        const closest =
-          pointerCoords &&
-          midpoints.reduce((a, b) =>
-            pointDistance(a, pointerCoords) <= pointDistance(b, pointerCoords)
-              ? a
-              : b,
-          );
-        shownMidpoints =
-          closest && pointDistance(closest, pointerCoords) <= threshold * 2
-            ? [closest]
-            : [];
-      }
-
       context.fillStyle = BINDING_MIDPOINT_COLOR[appState.theme];
-      for (const midpoint of shownMidpoints) {
+      for (const midpoint of midpoints) {
         if (highlightedMidpoint && pointsEqual(midpoint, highlightedMidpoint)) {
           continue;
         }
@@ -1442,6 +1438,16 @@ const renderBindingLocks = (
       elementsMap,
     );
 
+    renderMidpointBindingLeader(
+      context,
+      appState,
+      arrow,
+      type,
+      point,
+      elementsMap,
+      onHandle ? BINDING_LOCK_COLOR : BINDING_LOCK_COLOR_PASSIVE,
+    );
+
     drawPadlock(
       context,
       point[0],
@@ -1460,6 +1466,89 @@ const renderBindingLocks = (
     );
   }
 
+  context.restore();
+};
+
+/** Fixed-point ratios of the four edge midpoints, and how far a stored
+ * ratio may sit from one and still be that port. Loose enough to absorb
+ * `normalizeFixedPoint`'s 0.5 → 0.5001 nudge and any rounding on the way
+ * in, tight enough that an interior binding is never mistaken for one. */
+const MIDPOINT_FIXED_POINTS: readonly (readonly [number, number])[] = [
+  [0.5, 0],
+  [1, 0.5],
+  [0.5, 1],
+  [0, 0.5],
+];
+const MIDPOINT_FIXED_POINT_EPSILON = 0.02;
+
+/** Below this screen-space distance the endpoint is close enough to its
+ * port that a leader would be a smudge rather than an explanation. */
+const MIDPOINT_LEADER_MIN_GAP = 6;
+
+/**
+ * VERSION-LOG: a dashed leader from an arrow's endpoint to the edge
+ * midpoint it is bound to, drawn only when the two aren't in the same
+ * place.
+ *
+ * An arrow bound to a port does not necessarily *touch* it: the visible
+ * attachment is resolved to the outline crossing nearest the arrow's
+ * other end (`updateBoundPoint`), so an arrow approaching from a shallow
+ * angle lands somewhere else on the perimeter entirely. The binding is
+ * correct and behaves correctly, but on screen it looks arbitrary —
+ * there is nothing to say which port it belongs to.
+ *
+ * The leader says it. It is the same relationship debug mode draws
+ * between an arrow and its binding, promoted to something a user can
+ * see, and it costs nothing when the endpoint is already on its port.
+ */
+const renderMidpointBindingLeader = (
+  context: CanvasRenderingContext2D,
+  appState: InteractiveCanvasAppState,
+  arrow: NonDeleted<ExcalidrawArrowElement>,
+  type: "start" | "end",
+  endpoint: GlobalPoint,
+  elementsMap: NonDeletedSceneElementsMap,
+  color: string,
+) => {
+  const binding = type === "start" ? arrow.startBinding : arrow.endBinding;
+  const target = binding && elementsMap.get(binding.elementId);
+  if (!binding || !target || !isBindableElement(target)) {
+    return;
+  }
+  const isMidpoint = MIDPOINT_FIXED_POINTS.some(
+    ([mx, my]) =>
+      Math.abs(binding.fixedPoint[0] - mx) <= MIDPOINT_FIXED_POINT_EPSILON &&
+      Math.abs(binding.fixedPoint[1] - my) <= MIDPOINT_FIXED_POINT_EPSILON,
+  );
+  if (!isMidpoint) {
+    return;
+  }
+
+  const zoom = appState.zoom.value;
+  const port = getGlobalFixedPointForBindableElement(
+    binding.fixedPoint,
+    target,
+    elementsMap,
+  );
+  if (pointDistance(endpoint, port) <= MIDPOINT_LEADER_MIN_GAP / zoom) {
+    return;
+  }
+
+  context.save();
+  context.strokeStyle = color;
+  context.fillStyle = color;
+  context.lineWidth = 1 / zoom;
+  context.setLineDash(getNarrowIndicatorLineDash(zoom));
+  context.beginPath();
+  context.moveTo(endpoint[0], endpoint[1]);
+  context.lineTo(port[0], port[1]);
+  context.stroke();
+
+  // a dot on the port end, so the leader reads as pointing *at* something
+  context.setLineDash([]);
+  context.beginPath();
+  context.arc(port[0], port[1], 2 / zoom, 0, Math.PI * 2);
+  context.fill();
   context.restore();
 };
 
@@ -2472,6 +2561,7 @@ const _renderInteractiveScene = ({
   renderSnaps(context, appState);
 
   renderAlignmentLocks(context, appState, allElementsMap, selectedElements);
+  renderGapAlignmentLocks(context, appState, allElementsMap, selectedElements);
   renderElementAlignmentLocks(
     context,
     appState,

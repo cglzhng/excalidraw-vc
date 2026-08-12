@@ -1,5 +1,6 @@
 import type {
   ElementAlignment,
+  ElementGapAlignment,
   ExcalidrawElement,
   OrderedExcalidrawElement,
 } from "@excalidraw/element/types";
@@ -341,6 +342,7 @@ const classifyEntry = (
     // change so that an `alignments` + non-geometry entry — which the
     // detector skips entirely — still reaches `raw` with nothing lost.
     changed.delete("alignments");
+    changed.delete("gapAlignments");
   }
 
   if (hasGeometryChange && current && changed.size === 0) {
@@ -493,14 +495,30 @@ const classifyEntry = (
 const alignmentsEqual = (
   a: readonly ElementAlignment[] | undefined,
   b: readonly ElementAlignment[] | undefined,
+): boolean =>
+  linkArraysEqual(
+    a,
+    b,
+    (l) => `${l.elementId}:${l.axis}:${l.selfEdge}:${l.otherEdge}`,
+  );
+
+/** Same, for equal-gap triples: axis plus the ordered member ids. */
+const gapAlignmentsEqual = (
+  a: readonly ElementGapAlignment[] | undefined,
+  b: readonly ElementGapAlignment[] | undefined,
+): boolean =>
+  linkArraysEqual(a, b, (l) => `${l.axis}:${l.ids.join("|")}`);
+
+const linkArraysEqual = <T>(
+  a: readonly T[] | undefined,
+  b: readonly T[] | undefined,
+  key: (link: T) => string,
 ): boolean => {
   const aa = a ?? [];
   const bb = b ?? [];
   if (aa.length !== bb.length) {
     return false;
   }
-  const key = (l: ElementAlignment) =>
-    `${l.elementId}:${l.axis}:${l.selfEdge}:${l.otherEdge}`;
   const keysA = new Set(aa.map(key));
   return bb.every((l) => keysA.has(key(l)));
 };
@@ -533,6 +551,16 @@ const getChangedKeys = (entry: LogEntry): Set<string> => {
     )
   ) {
     keys.delete("alignments");
+  }
+  // same for equal-gap triples, for the same reason
+  if (
+    keys.has("gapAlignments") &&
+    gapAlignmentsEqual(
+      entry.before.gapAlignments as readonly ElementGapAlignment[] | undefined,
+      entry.after.gapAlignments as readonly ElementGapAlignment[] | undefined,
+    )
+  ) {
+    keys.delete("gapAlignments");
   }
   return keys;
 };
@@ -711,64 +739,79 @@ const detectAlignmentChange = (
   entries: readonly LogEntry[],
 ): { alignmentOps: LogOperation[]; consumed: Set<LogEntry> } => {
   const consumed = new Set<LogEntry>();
-  const before: Record<string, readonly ElementAlignment[]> = {};
-  const after: Record<string, readonly ElementAlignment[]> = {};
-  const elementIds: string[] = [];
-  let added = 0;
-  let removed = 0;
+  const alignmentOps: LogOperation[] = [];
 
-  for (const entry of entries) {
-    if (entry.type !== "update") {
-      continue;
+  // The two link fields are scanned independently: a gesture only ever
+  // writes one of them, and if some future one wrote both, two ops
+  // ("locked an alignment", "locked a gap") reads better than one op
+  // claiming to be both.
+  for (const field of ["alignments", "gapAlignments"] as const) {
+    const before: Record<string, readonly any[]> = {};
+    const after: Record<string, readonly any[]> = {};
+    const elementIds: string[] = [];
+    let added = 0;
+    let removed = 0;
+
+    for (const entry of entries) {
+      if (entry.type !== "update") {
+        continue;
+      }
+      const changed = getChangedKeys(entry);
+      if (!changed.has(field)) {
+        continue;
+      }
+      // the *other* link field is not residue this op has to explain —
+      // its own pass handles it
+      changed.delete("alignments");
+      changed.delete("gapAlignments");
+      const hasGeometryResidue = GEOMETRY_KEYS.some((key) => changed.has(key));
+      for (const key of GEOMETRY_KEYS) {
+        changed.delete(key);
+      }
+      if (changed.size > 0) {
+        // links changed alongside something other than geometry — leave
+        // the entry whole for per-entry classification.
+        continue;
+      }
+
+      const b = (entry.before[field] as readonly any[] | undefined) ?? [];
+      const a = (entry.after[field] as readonly any[] | undefined) ?? [];
+      before[entry.elementId] = b;
+      after[entry.elementId] = a;
+      elementIds.push(entry.elementId);
+      if (a.length > b.length) {
+        added += 1;
+      } else if (a.length < b.length) {
+        removed += 1;
+      }
+      if (!hasGeometryResidue) {
+        consumed.add(entry);
+      }
     }
-    const changed = getChangedKeys(entry);
-    if (!changed.has("alignments")) {
-      continue;
-    }
-    changed.delete("alignments");
-    const hasGeometryResidue = GEOMETRY_KEYS.some((key) => changed.has(key));
-    for (const key of GEOMETRY_KEYS) {
-      changed.delete(key);
-    }
-    if (changed.size > 0) {
-      // alignments changed alongside something other than geometry —
-      // leave the entry whole for per-entry classification.
+
+    if (elementIds.length === 0) {
       continue;
     }
 
-    const b =
-      (entry.before.alignments as readonly ElementAlignment[] | undefined) ?? [];
-    const a =
-      (entry.after.alignments as readonly ElementAlignment[] | undefined) ?? [];
-    before[entry.elementId] = b;
-    after[entry.elementId] = a;
-    elementIds.push(entry.elementId);
-    if (a.length > b.length) {
-      added += 1;
-    } else if (a.length < b.length) {
-      removed += 1;
-    }
-    if (!hasGeometryResidue) {
-      consumed.add(entry);
-    }
+    alignmentOps.push({
+      kind: "alignment",
+      action: removed > added ? "unlock" : "lock",
+      elementIds,
+      ...(field === "gapAlignments"
+        ? {
+            field,
+            before: before as Record<string, readonly ElementGapAlignment[]>,
+            after: after as Record<string, readonly ElementGapAlignment[]>,
+          }
+        : {
+            field,
+            before: before as Record<string, readonly ElementAlignment[]>,
+            after: after as Record<string, readonly ElementAlignment[]>,
+          }),
+    });
   }
 
-  if (elementIds.length === 0) {
-    return { alignmentOps: [], consumed };
-  }
-
-  return {
-    alignmentOps: [
-      {
-        kind: "alignment",
-        action: removed > added ? "unlock" : "lock",
-        elementIds,
-        before,
-        after,
-      },
-    ],
-    consumed,
-  };
+  return { alignmentOps, consumed };
 };
 
 // ------------------- Alignment consequence detector ------------------
@@ -825,6 +868,7 @@ const findConsequentAlignmentChanges = (
     // this the driver would be rejected as "not purely geometric" and
     // its partners would surface as their own moves.
     changed.delete("alignments");
+    changed.delete("gapAlignments");
     if (changed.size > 0) {
       // Not a purely geometric change — not an alignment participant.
       continue;

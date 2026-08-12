@@ -460,7 +460,7 @@ const getWrittenProperties = (
     case "alignment":
       return op.elementIds.map((id) => ({
         elementId: id,
-        property: "alignments",
+        property: op.field,
       }));
     case "alignment-anchor":
       return [{ elementId: op.elementId, property: "alignmentLocked" }];

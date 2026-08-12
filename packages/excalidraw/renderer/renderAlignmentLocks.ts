@@ -4,6 +4,7 @@ import {
   getAlignmentGuides,
   getAlignmentMovers,
   getElementBounds,
+  getGapAlignmentGuides,
   isAlignable,
   isAlignmentAnchor,
 } from "@excalidraw/element";
@@ -11,14 +12,16 @@ import {
 import {
   INACTIVE_ICON_OPACITY,
   INDICATOR_CROSS_SIZE,
+  drawAlignmentPadlock,
+  drawEqualsBadge,
   drawIndicatorCross,
-  drawPadlock,
   getIndicatorColor,
+  getNarrowIndicatorLineDash,
   getWideIndicatorLineDash,
 } from "./helpers";
 
 import type { Bounds } from "@excalidraw/common";
-import type { AlignmentGuide } from "@excalidraw/element";
+import type { AlignmentGuide, GapAlignmentGuide } from "@excalidraw/element";
 import type {
   NonDeletedExcalidrawElement,
   NonDeletedSceneElementsMap,
@@ -256,7 +259,124 @@ export const renderAlignmentLocks = (
 
   if (!dragging) {
     for (const { guide, icon } of lines) {
-      drawPadlock(context, icon[0], icon[1], zoom, color, guide.hard);
+      drawAlignmentPadlock(context, icon[0], icon[1], zoom, color, guide.hard);
+    }
+  }
+
+  context.restore();
+};
+
+/**
+ * Equal-gap guides for the current selection: two measured spans plus an
+ * equals badge on each.
+ *
+ * Two badges for one constraint, not one: what's being asserted is an
+ * equality *between* the two gaps, so marking both is what the
+ * constraint actually says — and it's why the badge is an equals sign
+ * rather than the edge guides' padlock. It also sidesteps a placement
+ * problem: the natural single point would be the middle element's
+ * centre, which is already occupied by the anchor anvil.
+ *
+ * Shared with the pointer handler, like {@link getAlignmentGuideLines},
+ * so a click hit-tests exactly what is drawn.
+ */
+export type GapAlignmentGuideLine = {
+  guide: GapAlignmentGuide;
+  /** one entry per gap, in `guide.gaps` order */
+  spans: {
+    from: [number, number];
+    to: [number, number];
+    /** padlock centre, scene coords */
+    icon: [number, number];
+  }[];
+};
+
+export const getGapAlignmentGuideLines = (
+  selectedElements: readonly NonDeletedExcalidrawElement[],
+  elementsMap: NonDeletedSceneElementsMap,
+): GapAlignmentGuideLine[] =>
+  getGapAlignmentGuides(selectedElements, elementsMap).map((guide) => ({
+    guide,
+    spans: guide.gaps.map((gap) => {
+      // both gaps sit on the one line `guide.across` gives us — see the
+      // note there on why it isn't computed per gap
+      const at = (along: number): [number, number] =>
+        guide.axis === "x" ? [along, guide.across] : [guide.across, along];
+      return {
+        from: at(gap.from),
+        to: at(gap.to),
+        icon: at((gap.from + gap.to) / 2),
+      };
+    }),
+  }));
+
+/** Half-length of the tick capping each end of a gap span, in screen px.
+ * Matches the `FULL` end-cap of upstream's gap snap line so a hard gap
+ * reads as the same measurement, just kept. */
+const GAP_CAP_SIZE = 8;
+
+export const renderGapAlignmentLocks = (
+  context: CanvasRenderingContext2D,
+  appState: InteractiveCanvasAppState,
+  elementsMap: NonDeletedSceneElementsMap,
+  selectedElements: readonly NonDeletedExcalidrawElement[],
+) => {
+  // Same at-rest rule as the edge guides: during a drag the transient
+  // snap lines take over and the padlocks aren't clickable anyway.
+  const dragging = appState.selectedElementsAreBeingDragged;
+  const lines = getGapAlignmentGuideLines(selectedElements, elementsMap).filter(
+    (line) => !dragging || line.guide.hard,
+  );
+  if (lines.length === 0) {
+    return;
+  }
+
+  const zoom = appState.zoom.value;
+  const color = getIndicatorColor(appState.theme, appState.zenModeEnabled);
+  const cap = GAP_CAP_SIZE / zoom;
+
+  context.save();
+  context.translate(appState.scrollX, appState.scrollY);
+  context.strokeStyle = color;
+  context.lineWidth = 1 / zoom;
+
+  const stroke = (from: [number, number], to: [number, number]) => {
+    context.beginPath();
+    context.moveTo(from[0], from[1]);
+    context.lineTo(to[0], to[1]);
+    context.stroke();
+  };
+
+  for (const { guide, spans } of lines) {
+    for (const { from, to } of spans) {
+      // end caps, always solid — they're the measurement's endpoints and
+      // would disappear into a dash pattern
+      context.setLineDash([]);
+      if (guide.axis === "x") {
+        stroke([from[0], from[1] - cap], [from[0], from[1] + cap]);
+        stroke([to[0], to[1] - cap], [to[0], to[1] + cap]);
+      } else {
+        stroke([from[0] - cap, from[1]], [from[0] + cap, from[1]]);
+        stroke([to[0] - cap, to[1]], [to[0] + cap, to[1]]);
+      }
+
+      // The span itself: solid when hard, dashed when soft — the same
+      // vocabulary the edge guides use. The *narrow* dash, though, not
+      // the wide one those use: upstream's transient gap line is narrow
+      // (`drawGapLine` in renderSnaps.ts), and a soft gap guide is
+      // offering exactly the relationship that line just showed, so the
+      // two have to look the same.
+      context.setLineDash(guide.hard ? [] : getNarrowIndicatorLineDash(zoom));
+      stroke(from, to);
+    }
+  }
+
+  if (!dragging) {
+    context.setLineDash([]);
+    for (const { guide, spans } of lines) {
+      for (const { icon } of spans) {
+        drawEqualsBadge(context, icon[0], icon[1], zoom, color, guide.hard);
+      }
     }
   }
 
