@@ -18,7 +18,10 @@
  * to land those first.
  */
 
-import type { ElementAlignment } from "@excalidraw/element/types";
+import type {
+  ElementAlignment,
+  ElementGapAlignment,
+} from "@excalidraw/element/types";
 
 import type { LogOperation, Remap } from "./types";
 
@@ -119,12 +122,25 @@ export const applyRemapsToOp = (
       // the remaining links are still valid. Only if nothing survives
       // is the op skipped outright.
       const touches = (id: string) => remaps.has(id);
+      // A link's referents: the partner of an edge link, or all three
+      // members of an equal-gap triple.
+      const linkReferents = (
+        link: ElementAlignment | ElementGapAlignment,
+      ): readonly string[] =>
+        "elementId" in link ? [link.elementId] : link.ids;
+
       const isTouched =
         op.elementIds.some(touches) ||
         [op.before, op.after].some((map) =>
-          Object.entries(map).some(
+          Object.entries(
+            map as Record<
+              string,
+              readonly (ElementAlignment | ElementGapAlignment)[]
+            >,
+          ).some(
             ([ownerId, links]) =>
-              touches(ownerId) || links.some((l) => touches(l.elementId)),
+              touches(ownerId) ||
+              links.some((l) => linkReferents(l).some(touches)),
           ),
         );
       if (!isTouched) {
@@ -140,30 +156,46 @@ export const applyRemapsToOp = (
         return remap.to;
       };
 
-      const remapLinks = (
-        map: Record<string, readonly ElementAlignment[]>,
-      ): Record<string, readonly ElementAlignment[]> => {
-        const next: Record<string, readonly ElementAlignment[]> = {};
+      const remapOwners = <T>(
+        map: Record<string, readonly T[]>,
+        remapLink: (link: T) => T | null,
+      ): Record<string, readonly T[]> => {
+        const next: Record<string, readonly T[]> = {};
         for (const [ownerId, links] of Object.entries(map)) {
           const nextOwner = resolve(ownerId);
           if (nextOwner == null) {
             continue;
           }
-          const nextLinks: ElementAlignment[] = [];
+          const nextLinks: T[] = [];
           for (const link of links) {
-            const partner = resolve(link.elementId);
-            if (partner == null) {
-              continue;
+            const remapped = remapLink(link);
+            if (remapped != null) {
+              nextLinks.push(remapped);
             }
-            nextLinks.push(
-              partner === link.elementId
-                ? link
-                : { ...link, elementId: partner },
-            );
           }
           next[nextOwner] = nextLinks;
         }
         return next;
+      };
+
+      const remapEdgeLink = (link: ElementAlignment): ElementAlignment | null => {
+        const partner = resolve(link.elementId);
+        return partner == null
+          ? null
+          : partner === link.elementId
+          ? link
+          : { ...link, elementId: partner };
+      };
+
+      // A triple missing a member says nothing, so a skipped referent
+      // drops the whole link rather than shrinking it.
+      const remapGapLink = (
+        link: ElementGapAlignment,
+      ): ElementGapAlignment | null => {
+        const ids = link.ids.map((id: string) => resolve(id));
+        return ids.some((id) => id == null)
+          ? null
+          : { ...link, ids: ids as unknown as ElementGapAlignment["ids"] };
       };
 
       const elementIds = op.elementIds
@@ -176,12 +208,20 @@ export const applyRemapsToOp = (
 
       return {
         status: "ok",
-        op: {
-          ...op,
-          elementIds,
-          before: remapLinks(op.before),
-          after: remapLinks(op.after),
-        },
+        op:
+          op.field === "gapAlignments"
+            ? {
+                ...op,
+                elementIds,
+                before: remapOwners(op.before, remapGapLink),
+                after: remapOwners(op.after, remapGapLink),
+              }
+            : {
+                ...op,
+                elementIds,
+                before: remapOwners(op.before, remapEdgeLink),
+                after: remapOwners(op.after, remapEdgeLink),
+              },
       };
     }
   }

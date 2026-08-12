@@ -232,3 +232,54 @@ ignored (`version`, `versionNonce`, `index`, and `boundElements`).
 `boundElements` is ignored because upstream Excalidraw emits it
 unreliably on unbind; the arrow's own `startBinding` / `endBinding` are
 treated as authoritative for binding state instead.
+
+## Hard alignment
+
+### Snapping (soft alignment)
+Upstream Excalidraw's transient guides: while you drag, edges and gaps
+that line up are highlighted and the drag is nudged onto them. Nothing
+is stored — release the pointer and the relationship is forgotten.
+
+### Hard alignment
+A soft alignment the user has chosen to *keep*, persisted as element
+data. Same geometry as snapping, opposite lifetime. Two kinds:
+
+### Edge alignment
+The binary kind: two elements share a coordinate on one axis
+(`A.edge === B.edge`). Stored as `ExcalidrawElement.alignments`, one
+`ElementAlignment` per shared coordinate, written symmetrically on both
+partners. A pair can be aligned at several *places* on one axis (two
+same-width elements share left, centre and right), so link identity is
+`(partner, axis, selfEdge, otherEdge)` — never `(partner, axis)`.
+
+### Gap alignment (equal spacing)
+The ternary kind: three elements ordered along an axis whose two gaps
+are equal, `gap(a,b) === gap(b,c)`. Stored as
+`ExcalidrawElement.gapAlignments`, one `ElementGapAlignment` per triple,
+the identical record written on all three members. Equivalent to "the
+middle element is centred in the span between its neighbours", which is
+the form the propagators solve.
+
+### Component
+The set of elements that move together on one axis, found by walking
+alignment links transitively from the dragged elements. Both kinds of
+link join the walk: a rigid translation preserves edge alignments and
+equal gaps alike, so a drag never needs to solve anything.
+
+### Driver / partner
+In a resize, the element the user is resizing is the driver; anything
+translated to preserve an alignment with it is a partner. Partners are
+**translated, never resized** — the rule that makes over-constrained
+configurations possible, and why they're refused rather than fudged.
+
+### Anchor
+An element alignment must never move (`alignmentLocked`, the anvil
+badge; upstream's `locked` implies it too — test with
+`isAlignmentAnchor`). Since a component moves rigidly, an anchor freezes
+its whole component on the shared axis.
+
+### Over-constrained
+A configuration where no translation of the partners satisfies every
+alignment at once — e.g. a pair locked at both their left and right
+edges pins that dimension. Detected structurally and refused (the size
+change is clamped) rather than silently dropping one alignment.

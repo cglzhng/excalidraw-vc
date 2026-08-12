@@ -33,23 +33,80 @@ export const INDICATOR_BADGE_RADIUS = 9;
 export const INACTIVE_ICON_OPACITY = 0.45;
 
 /**
- * A padlock badge on a white disc: closed when the thing it marks is
- * committed, open (and faded) when it isn't.
+ * The badge disc every indicator icon sits on, with the rim path left
+ * current so the caller can stroke it.
  *
- * Shared by everything that means "this relationship is pinned" — the
- * alignment guides' soft/hard toggle and the bound endpoints of a
- * selected arrow. Anchors use an anvil instead, deliberately: a padlock
- * is about a *relationship between two things*, an anvil about one
- * element's own weight.
+ * `filled` paints the disc in the badge's own colour instead of white,
+ * for badges whose active state is worth reading at a glance; the glyph
+ * then has to invert to white to stay legible, which is what
+ * {@link badgeGlyphColor} is for. `backingOpacity` is the disc's own
+ * alpha, independent of any fade the glyph gets: at 1 the badge reads as
+ * a *control* sitting on the canvas, lower is enough to lift it off busy
+ * artwork without looking pressable, and 0 omits the disc entirely.
+ */
+const fillBadgeDisc = (
+  context: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  color: string,
+  filled: boolean,
+  backingOpacity: number,
+) => {
+  context.beginPath();
+  context.arc(cx, cy, r, 0, Math.PI * 2);
+  if (backingOpacity > 0) {
+    context.globalAlpha = backingOpacity;
+    context.fillStyle = filled ? color : "#ffffff";
+    context.fill();
+  }
+};
+
+/** White on a filled disc, the badge's own colour otherwise — including
+ * when there is no disc at all to invert against. */
+const badgeGlyphColor = (color: string, filled: boolean): string =>
+  filled ? "#ffffff" : color;
+
+/** The padlock silhouette itself, in the current stroke / fill colour.
+ * `locked` closes the shackle; open lifts and tilts it to one side. */
+const strokePadlockGlyph = (
+  context: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  locked: boolean,
+) => {
+  const bodyW = r * 0.9;
+  const bodyH = r * 0.75;
+  const bodyTop = cy - bodyH * 0.15;
+  const shackleR = bodyW * 0.42;
+  const shackleCx = cx + (locked ? 0 : shackleR * 0.6);
+  const shackleCy = bodyTop - (locked ? 0 : r * 0.12);
+
+  context.beginPath();
+  context.arc(shackleCx, shackleCy, shackleR, Math.PI, locked ? 0 : -0.15);
+  context.stroke();
+
+  context.beginPath();
+  context.rect(cx - bodyW / 2, bodyTop, bodyW, bodyH);
+  context.fill();
+};
+
+/**
+ * The padlock badge marking an arrow's bound endpoint: always on a white
+ * disc, never filled.
  *
- * `radius` (screen px, defaulting to {@link INDICATOR_BADGE_RADIUS}) lets a
- * caller match a badge it is drawn on top of; everything else scales off it.
+ * A binding is not an alignment, and this is not the alignment guides'
+ * toggle — it reports a fact about the arrow rather than offering a
+ * choice, and it appears on the arrow's point handles, where a solid
+ * disc would swamp the handle it is sitting on. `drawAlignmentPadlock`
+ * is the one that fills, and the two are kept apart deliberately so
+ * tuning one can't quietly restyle the other.
  *
- * `backingOpacity` is the white disc behind the icon. At 1 it keeps the
- * icon legible over any artwork and reads as a *control* — a chip sitting
- * on the canvas. Drop it for a purely informational mark: enough to lift
- * the lock off a busy background, too faint to look pressable. 0 omits
- * the fill entirely.
+ * `radius` (screen px, defaulting to {@link INDICATOR_BADGE_RADIUS}) lets
+ * a caller match a badge it is drawn on top of; everything else scales
+ * off it. `backingOpacity` fades the disc for the passive form, shown
+ * when the *bound shape* is selected rather than the arrow.
  */
 export const drawPadlock = (
   context: CanvasRenderingContext2D,
@@ -62,41 +119,104 @@ export const drawPadlock = (
   backingOpacity: number = 1,
 ) => {
   const r = radius / zoom;
-  const bodyW = r * 0.9;
-  const bodyH = r * 0.75;
-  const bodyTop = cy - bodyH * 0.15;
-  const shackleR = bodyW * 0.42;
-  // open padlock lifts and tilts the shackle to one side
-  const shackleCx = cx + (locked ? 0 : shackleR * 0.6);
-  const shackleCy = bodyTop - (locked ? 0 : r * 0.12);
 
   context.save();
   context.lineWidth = Math.max(1 / zoom, r * 0.14);
 
-  // badge background so whatever is underneath doesn't show through — its
-  // own opacity, independent of the fade the padlock itself gets below
-  context.beginPath();
-  context.arc(cx, cy, r, 0, Math.PI * 2);
-  if (backingOpacity > 0) {
-    context.globalAlpha = backingOpacity;
-    context.fillStyle = "#ffffff";
-    context.fill();
-  }
+  fillBadgeDisc(context, cx, cy, r, color, false, backingOpacity);
 
   context.globalAlpha = locked ? 1 : INACTIVE_ICON_OPACITY;
   context.strokeStyle = color;
   context.stroke();
 
-  // shackle (arc)
-  context.beginPath();
-  context.arc(shackleCx, shackleCy, shackleR, Math.PI, locked ? 0 : -0.15);
+  context.fillStyle = color;
+  strokePadlockGlyph(context, cx, cy, r, locked);
+  context.restore();
+};
+
+/**
+ * The padlock badge on an edge-alignment guide — the soft/hard toggle,
+ * so unlike {@link drawPadlock} it fills when active: these are controls
+ * with two states, and a solid chip says "on" without being examined.
+ *
+ * The other two marks in this vocabulary are deliberately different
+ * shapes because they say different things: an anvil
+ * ({@link renderAlignmentLocks}) is about one element's own weight, and
+ * {@link drawEqualsBadge} is about two gaps being the same size.
+ */
+export const drawAlignmentPadlock = (
+  context: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  zoom: number,
+  color: string,
+  locked: boolean,
+) => {
+  const r = INDICATOR_BADGE_RADIUS / zoom;
+  const glyph = badgeGlyphColor(color, locked);
+
+  context.save();
+  context.lineWidth = Math.max(1 / zoom, r * 0.14);
+
+  fillBadgeDisc(context, cx, cy, r, color, locked, 1);
+
+  context.globalAlpha = locked ? 1 : INACTIVE_ICON_OPACITY;
+  context.strokeStyle = color;
   context.stroke();
 
-  // body
-  context.beginPath();
-  context.rect(cx - bodyW / 2, bodyTop, bodyW, bodyH);
-  context.fillStyle = color;
-  context.fill();
+  context.strokeStyle = glyph;
+  context.fillStyle = glyph;
+  strokePadlockGlyph(context, cx, cy, r, locked);
+  context.restore();
+};
+
+/**
+ * An equals badge on a white disc — the equal-gap counterpart of
+ * {@link drawAlignmentPadlock}, and its sibling in every other respect
+ * (same disc, same fill when active, same fade when not).
+ *
+ * A different icon because it makes a different claim. A padlock says
+ * "this pair is pinned together"; the two badges of a gap guide sit in
+ * two different gaps and say "these two are the same size". Drawing both
+ * as padlocks left the user with four identical chips around a selection
+ * meaning two unrelated things — and the equals sign happens to be
+ * exactly the assertion, which is the best case an icon can hope for.
+ *
+ * State is carried by the filled disc and by opacity, not by a shape
+ * change (the padlock's open/closed shackle): at badge size there is no
+ * room for a legible "broken equals", and the guide's own solid/dashed
+ * line is already saying the same thing next to it.
+ */
+export const drawEqualsBadge = (
+  context: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  zoom: number,
+  color: string,
+  locked: boolean,
+) => {
+  const r = INDICATOR_BADGE_RADIUS / zoom;
+  const halfBar = r * 0.44;
+  const barGap = r * 0.26;
+
+  context.save();
+  context.lineWidth = Math.max(1 / zoom, r * 0.14);
+
+  fillBadgeDisc(context, cx, cy, r, color, locked, 1);
+
+  context.globalAlpha = locked ? 1 : INACTIVE_ICON_OPACITY;
+  context.strokeStyle = color;
+  context.stroke();
+
+  context.strokeStyle = badgeGlyphColor(color, locked);
+  context.lineWidth = Math.max(1 / zoom, r * 0.2);
+  context.lineCap = "round";
+  for (const dy of [-barGap, barGap]) {
+    context.beginPath();
+    context.moveTo(cx - halfBar, cy + dy);
+    context.lineTo(cx + halfBar, cy + dy);
+    context.stroke();
+  }
   context.restore();
 };
 

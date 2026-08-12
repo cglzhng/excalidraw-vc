@@ -641,6 +641,45 @@ export const getBindingStrategyForDraggingBindingElementEndpoints = (
   );
 };
 
+/**
+ * How close, in screen px, a point has to be to an edge midpoint to
+ * count as being at it. A port-sized target: big enough to hit without
+ * care, small enough that the rest of the edge stays unbindable.
+ */
+const BINDING_MIDPOINT_TOLERANCE = 12;
+
+/**
+ * Whether `point` is at one of the four midpoints of an element's edges
+ * — the only positions on the outline an arrow may attach to.
+ *
+ * Tested in the element's own unrotated frame, so a rotated shape keeps
+ * its ports on its own edges rather than on its bounding box.
+ */
+const isAtEdgeMidpoint = (
+  point: GlobalPoint,
+  element: ExcalidrawBindableElement,
+  elementsMap: ElementsMap,
+  zoom: AppState["zoom"],
+): boolean => {
+  const local = pointRotateRads(
+    point,
+    elementCenterPoint(element, elementsMap),
+    -element.angle as Radians,
+  );
+  const tolerance = BINDING_MIDPOINT_TOLERANCE / zoom.value;
+  const midX = element.x + element.width / 2;
+  const midY = element.y + element.height / 2;
+
+  return (
+    [
+      pointFrom<GlobalPoint>(midX, element.y),
+      pointFrom<GlobalPoint>(element.x + element.width, midY),
+      pointFrom<GlobalPoint>(midX, element.y + element.height),
+      pointFrom<GlobalPoint>(element.x, midY),
+    ].find((midpoint) => pointDistance(local, midpoint) <= tolerance) != null
+  );
+};
+
 const getBindingStrategyForDraggingBindingElementEndpoints_simple = (
   arrow: NonDeleted<ExcalidrawArrowElement>,
   draggingPoints: PointsPositionUpdates,
@@ -721,23 +760,61 @@ const getBindingStrategyForDraggingBindingElementEndpoints_simple = (
     localPoint,
     elementsMap,
   );
-  const hit = getHoveredElementForBinding(
+  const bindingPoint =
     opts?.angleLocked || appState.gridModeEnabled
       ? pointFrom<GlobalPoint>(scenePointerX, scenePointerY)
-      : globalPoint,
+      : globalPoint;
+  const candidate = getHoveredElementForBinding(
+    bindingPoint,
     elements,
     elementsMap,
     maxBindingDistance_simple(appState.zoom),
   );
   const pointInElement =
-    hit &&
+    candidate &&
     (opts?.angleLocked
       ? isPointInElement(
           pointFrom<GlobalPoint>(scenePointerX, scenePointerY),
-          hit,
+          candidate,
           elementsMap,
         )
-      : isPointInElement(globalPoint, hit, elementsMap));
+      : isPointInElement(globalPoint, candidate, elementsMap));
+
+  // VERSION-LOG: an arrow attaches inside a shape or at one of its four
+  // edge midpoints — nowhere else.
+  //
+  // The rejected case is the `orbit` branch below, reached when the
+  // endpoint is outside the shape but within binding range. Its focus
+  // point sits off the outline, and `updateBoundPoint` resolves the
+  // visible attachment to the outline crossing nearest the arrow's
+  // *other* end — so parking the endpoint against the far side of a
+  // shape attaches it to the near side instead, jumping to the opposite
+  // edge from the one that was aimed at. It also gives no stable anchor:
+  // a fraction of a pixel slides the attachment along the outline.
+  //
+  // Refusing to bind is the whole fix. Nothing is repositioned, so there
+  // is nothing to jump: the endpoint stays exactly where it was put and
+  // is simply unbound, which the user can see and correct by moving it
+  // inside. The midpoints stay because they are the one part of the
+  // perimeter anyone aims at deliberately.
+  //
+  // The exception holds exactly when the ports are on screen. These are
+  // the same three conditions `renderBindingHighlightForBindableElement`
+  // draws them under, and they have to stay in step: a port that binds
+  // without being drawn is one the user can neither see nor predict,
+  // which is the whole complaint this restriction answers. Whenever none
+  // are drawn, the interior is the only place an arrow attaches.
+  const midpointsAvailable =
+    appState.isMidpointSnappingEnabled &&
+    !appState.gridModeEnabled &&
+    !opts?.angleLocked;
+  const hit =
+    candidate &&
+    (pointInElement ||
+      (midpointsAvailable &&
+        isAtEdgeMidpoint(bindingPoint, candidate, elementsMap, appState.zoom)))
+      ? candidate
+      : null;
   const otherBindableElement = otherBinding
     ? (elementsMap.get(
         otherBinding.elementId,

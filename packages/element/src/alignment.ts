@@ -455,6 +455,18 @@ export const isAlignmentAnchor = (
 /**
  * Transitive set of elements reachable from `seeds` by following
  * alignment links restricted to a single `axis`. Includes the seeds.
+ *
+ * Hard *gap* alignments join the walk here as well, and the whole triple
+ * enters the component from any one member. That's not an approximation:
+ * a rigid translation preserves both gaps of a triple exactly, whatever
+ * the spacing, so "everything moves together" is the complete answer for
+ * a drag — no solving required, and it holds for any number of chained
+ * triples. (Resize is the case that genuinely needs geometry, and it
+ * does not come through here; see `resizeAlignedElements`.)
+ *
+ * It also means one definition of "component" serves both kinds of
+ * alignment, so anchors, the drag propagator and snapping's stale-point
+ * masking all pick up gaps for free.
  */
 const collectAlignedComponent = (
   seeds: Set<string>,
@@ -463,17 +475,26 @@ const collectAlignedComponent = (
 ): Set<string> => {
   const visited = new Set<string>(seeds);
   const queue = [...seeds];
+  const enter = (id: string) => {
+    if (!visited.has(id)) {
+      visited.add(id);
+      queue.push(id);
+    }
+  };
   while (queue.length > 0) {
     const id = queue.pop()!;
     const el = elementsMap.get(id);
-    const links = el?.alignments;
-    if (!links) {
+    if (!el) {
       continue;
     }
-    for (const link of links) {
-      if (link.axis === axis && !visited.has(link.elementId)) {
-        visited.add(link.elementId);
-        queue.push(link.elementId);
+    for (const link of el.alignments ?? []) {
+      if (link.axis === axis) {
+        enter(link.elementId);
+      }
+    }
+    for (const link of el.gapAlignments ?? []) {
+      if (link.axis === axis) {
+        link.ids.forEach(enter);
       }
     }
   }
@@ -663,7 +684,7 @@ export const dragAlignedElements = (
  * `barriers` (the resized elements themselves) are never entered — they
  * moved under the pointer, not by a uniform translation.
  */
-const floodAxis = (
+export const floodAlignmentAxis = (
   deltaById: Map<string, number>,
   axis: Axis,
   barriers: Set<string>,
@@ -693,8 +714,15 @@ const floodAxis = (
 };
 
 /**
- * After the selected elements have been resized, drag their hard-aligned
- * partners so the shared edge stays aligned.
+ * The per-axis translation each element needs after a resize so that
+ * every hard *edge* alignment survives it.
+ *
+ * Split out from the application step so an equal-gap correction pass
+ * can extend the same maps before anything is written to the scene (see
+ * `propagateAlignmentsAfterResize` in `gapAlignment.ts`). Working in
+ * deltas off the resize-start snapshot — rather than nudging live
+ * positions — is also what keeps repeated pointermove events from
+ * accumulating drift.
  *
  * Unlike a drag, a resize moves each edge by a different amount, so a
  * direct partner is translated by the change in the *specific* shared
@@ -710,13 +738,11 @@ const floodAxis = (
  * are barriers — they moved under the pointer and are never dragged by
  * this pass.
  */
-export const resizeAlignedElements = (
+export const buildResizeAlignmentDeltas = (
   originalElements: PointerDownState["originalElements"],
   resizedIds: Set<string>,
-  scene: Scene,
-) => {
-  const elementsMap = scene.getNonDeletedElementsMap();
-
+  elementsMap: ElementsMap,
+): { dxById: Map<string, number>; dyById: Map<string, number> } => {
   // Per-axis translation, seeded from the resized elements' direct
   // partners then flooded outward.
   const dxById = new Map<string, number>();
@@ -757,9 +783,23 @@ export const resizeAlignedElements = (
     }
   }
 
-  floodAxis(dxById, "x", resizedIds, elementsMap);
-  floodAxis(dyById, "y", resizedIds, elementsMap);
+  floodAlignmentAxis(dxById, "x", resizedIds, elementsMap);
+  floodAlignmentAxis(dyById, "y", resizedIds, elementsMap);
 
+  return { dxById, dyById };
+};
+
+/**
+ * Write the accumulated per-axis translations to the scene, each element
+ * placed relative to its resize-start position.
+ */
+export const applyAlignmentDeltas = (
+  originalElements: PointerDownState["originalElements"],
+  dxById: ReadonlyMap<string, number>,
+  dyById: ReadonlyMap<string, number>,
+  scene: Scene,
+) => {
+  const elementsMap = scene.getNonDeletedElementsMap();
   const movedIds = new Set<string>([...dxById.keys(), ...dyById.keys()]);
   for (const id of movedIds) {
     const partner = elementsMap.get(id);

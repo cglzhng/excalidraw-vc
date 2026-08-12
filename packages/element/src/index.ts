@@ -77,6 +77,7 @@ export * from "./embeddable";
 export * from "./flowchart";
 export * from "./arrows/focus";
 export * from "./fractionalIndex";
+export * from "./gapAlignment";
 export * from "./frame";
 export * from "./groups";
 export * from "./heading";

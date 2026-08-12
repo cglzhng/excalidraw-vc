@@ -21,10 +21,8 @@ import type { PointerDownState } from "@excalidraw/excalidraw/types";
 
 import type { Mutable } from "@excalidraw/common/utility-types";
 
-import {
-  getAlignmentResizeLockedAxes,
-  resizeAlignedElements,
-} from "./alignment";
+import { getAlignmentResizeLockedAxes } from "./alignment";
+import { propagateAlignmentsAfterResize } from "./gapAlignment";
 import {
   getArrowLocalFixedPoints,
   unbindBindingElement,
@@ -192,8 +190,13 @@ export const transformElements = (
         );
 
         // Hard alignment: drag partners aligned to this element so the
-        // shared edge follows the resize.
-        resizeAlignedElements(originalElements, new Set([elementId]), scene);
+        // shared edge follows the resize, and restore any equal gaps the
+        // new size broke.
+        propagateAlignmentsAfterResize(
+          originalElements,
+          new Set([elementId]),
+          scene,
+        );
       }
     }
     if (isTextElement(element)) {
@@ -260,8 +263,9 @@ export const transformElements = (
       );
 
       // Hard alignment: drag partners aligned to any resized element so
-      // their shared edges follow the resize.
-      resizeAlignedElements(originalElements, resizedIds, scene);
+      // their shared edges follow the resize, and restore any equal gaps
+      // the new sizes broke.
+      propagateAlignmentsAfterResize(originalElements, resizedIds, scene);
 
       return true;
     }

@@ -119,7 +119,10 @@ import {
   getElementAbsoluteCoords,
   lockAlignmentPair,
   unlockAlignmentPair,
+  lockGapAlignment,
+  unlockGapAlignment,
   type AlignmentGuide,
+  type GapAlignmentGuide,
   bindOrUnbindBindingElements,
   fixBindingsAfterDeletion,
   getHoveredElementForBinding,
@@ -460,6 +463,7 @@ import { isPointHittingLink } from "./hyperlink/helpers";
 import { CursorHint, CursorHints } from "./CursorHint";
 import {
   getAlignmentGuideLines,
+  getGapAlignmentGuideLines,
   getElementLockToggle,
 } from "../renderer/renderAlignmentLocks";
 import { INDICATOR_BADGE_RADIUS } from "../renderer/helpers";
@@ -727,6 +731,7 @@ class App extends React.Component<AppProps, AppState> {
     | {
         target:
           | { kind: "guide"; guide: AlignmentGuide }
+          | { kind: "gap"; guide: GapAlignmentGuide }
           | { kind: "anchor"; elementId: string };
         center: [number, number];
         /** scene-space slop, since the two badges are different sizes */
@@ -8246,7 +8251,8 @@ class App extends React.Component<AppProps, AppState> {
       // `renderAlignmentLocks`), so don't offer the cursor mid-drag.
       const overGuideIcon =
         !this.state.selectedElementsAreBeingDragged &&
-        !!this.getAlignmentGuideIconAt(scenePointer);
+        (!!this.getAlignmentGuideIconAt(scenePointer) ||
+          !!this.getGapAlignmentIconAt(scenePointer));
 
       if (hoveredAnchorId || overGuideIcon) {
         this.cursor.set(CURSOR_TYPE.POINTER);
@@ -8808,6 +8814,11 @@ class App extends React.Component<AppProps, AppState> {
     // the press let the tiniest cursor jitter start a drag before the
     // click registered. Drag the element by grabbing off the badge.
     if (this.handleAlignmentIconOnPointerDown(pointerDownState.origin)) {
+      return;
+    }
+
+    // Same for an equal-gap padlock.
+    if (this.handleGapAlignmentIconOnPointerDown(pointerDownState.origin)) {
       return;
     }
 
@@ -9565,6 +9576,81 @@ class App extends React.Component<AppProps, AppState> {
   }
 
   /**
+   * The equal-gap padlock under `scenePointer`, if any. A guide carries
+   * two padlocks (one per gap) and either one toggles the whole triple,
+   * so both are tested and the nearest wins.
+   */
+  private getGapAlignmentIconAt(scenePointer: { x: number; y: number }) {
+    const selected = this.scene.getSelectedElements(this.state);
+    if (selected.length === 0) {
+      return null;
+    }
+    const lines = getGapAlignmentGuideLines(
+      selected,
+      this.scene.getNonDeletedElementsMap(),
+    );
+    const hitRadius = this.alignmentIconHitRadius;
+
+    let closest: {
+      guide: GapAlignmentGuide;
+      center: [number, number];
+      hitRadius: number;
+      dist: number;
+    } | null = null;
+    for (const line of lines) {
+      for (const span of line.spans) {
+        const dist = Math.hypot(
+          scenePointer.x - span.icon[0],
+          scenePointer.y - span.icon[1],
+        );
+        if (dist <= hitRadius && (!closest || dist < closest.dist)) {
+          closest = { guide: line.guide, center: span.icon, hitRadius, dist };
+        }
+      }
+    }
+    return closest;
+  }
+
+  /** Mirrors {@link handleAlignmentIconOnPointerDown} for equal-gap
+   * padlocks. */
+  private handleGapAlignmentIconOnPointerDown(scenePointer: {
+    x: number;
+    y: number;
+  }): boolean {
+    const hit = this.getGapAlignmentIconAt(scenePointer);
+    if (!hit) {
+      return false;
+    }
+    this.pendingAlignmentIconPress = {
+      target: { kind: "gap", guide: hit.guide },
+      center: hit.center,
+      hitRadius: hit.hitRadius,
+    };
+    return true;
+  }
+
+  /**
+   * Promote a soft equal-gap triple to a hard one, or demote it back.
+   * The link is written to all three members at once, so this is one
+   * undo step / version-log moment — as `toggleAlignmentGuide` is.
+   */
+  private toggleGapAlignmentGuide(guide: GapAlignmentGuide) {
+    const elementsMap = this.scene.getNonDeletedElementsMap();
+    const updated = guide.hard
+      ? unlockGapAlignment(guide, elementsMap)
+      : lockGapAlignment(guide, elementsMap);
+    if (updated.size === 0) {
+      return;
+    }
+    this.updateScene({
+      elements: this.scene
+        .getElementsIncludingDeleted()
+        .map((el) => updated.get(el.id) ?? el),
+      captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+    });
+  }
+
+  /**
    * The selected element's anchor toggle, if `scenePointer` is over it —
    * the one hit-test shared by the hover affordance and the press, so the
    * cursor can never promise a click the pointer-down won't take.
@@ -9631,6 +9717,8 @@ class App extends React.Component<AppProps, AppState> {
     }
     if (press.target.kind === "guide") {
       this.toggleAlignmentGuide(press.target.guide);
+    } else if (press.target.kind === "gap") {
+      this.toggleGapAlignmentGuide(press.target.guide);
     } else {
       this.toggleElementAlignmentLock(press.target.elementId);
     }

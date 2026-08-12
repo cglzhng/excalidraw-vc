@@ -373,7 +373,8 @@ export const renderOpContent = (op: LogOperation): React.ReactNode => {
       return (
         <>
           <strong>
-            {op.action === "lock" ? "Locked" : "Unlocked"} alignment
+            {op.action === "lock" ? "Locked" : "Unlocked"}{" "}
+            {op.field === "gapAlignments" ? "equal spacing" : "alignment"}
           </strong>{" "}
           of {op.elementIds.length} elements
         </>

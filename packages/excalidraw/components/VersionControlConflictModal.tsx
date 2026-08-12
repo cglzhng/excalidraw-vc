@@ -221,9 +221,9 @@ const describeOp = (op: LogOperation): string => {
     case "raw":
       return `Update ${ids} (raw)`;
     case "alignment":
-      return `${op.action === "lock" ? "Lock" : "Unlock"} alignment (${
-        op.elementIds.length
-      })`;
+      return `${op.action === "lock" ? "Lock" : "Unlock"} ${
+        op.field === "gapAlignments" ? "equal spacing" : "alignment"
+      } (${op.elementIds.length})`;
     case "alignment-anchor":
       return `${op.anchored ? "Anchor" : "Un-Anchor"} ${ids}`;
     case "create":
