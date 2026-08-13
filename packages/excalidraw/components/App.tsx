@@ -119,6 +119,7 @@ import {
   getElementAbsoluteCoords,
   lockAlignmentPair,
   unlockAlignmentPair,
+  getAlignmentAnchoredResizeBlockers,
   lockGapAlignment,
   unlockGapAlignment,
   type AlignmentGuide,
@@ -294,6 +295,8 @@ import type {
   NonDeletedSceneElementsMap,
   ExcalidrawBindableElement,
 } from "@excalidraw/element/types";
+
+import type { MaybeTransformHandleType } from "@excalidraw/element/transformHandles";
 
 import type { ArrowEndpoint } from "@excalidraw/element";
 
@@ -11975,6 +11978,10 @@ class App extends React.Component<AppProps, AppState> {
         isRotating: false,
         isCropping: false,
         resizingElement: null,
+        alignmentResizeAnchorIds: updateStable(
+          prevState.alignmentResizeAnchorIds,
+          [],
+        ),
         selectionElement: null,
         frameToHighlight: null,
         elementsToHighlight: null,
@@ -13967,6 +13974,42 @@ class App extends React.Component<AppProps, AppState> {
     return false;
   };
 
+  /**
+   * Publish the anchors blocking the in-progress resize, so the anvil
+   * overlay can point at them the way it already does for a drag.
+   * Rewritten only when the set changes — this runs on every pointermove,
+   * and a fresh array each time would churn every consumer for nothing.
+   */
+  private updateAlignmentResizeAnchors = (
+    selectedElements: readonly NonDeletedExcalidrawElement[],
+    transformHandleType: MaybeTransformHandleType,
+    resizeFromCenter: boolean,
+  ) => {
+    const blockers =
+      transformHandleType && transformHandleType !== "rotation"
+        ? getAlignmentAnchoredResizeBlockers(
+            new Set(selectedElements.map((element) => element.id)),
+            this.scene.getNonDeletedElementsMap(),
+            {
+              handle: transformHandleType,
+              shouldResizeFromCenter: resizeFromCenter,
+              allEdgesMove:
+                selectedElements.length > 1 ||
+                selectedElements.some((element) => element.angle !== 0),
+            },
+          )
+        : { x: new Set<string>(), y: new Set<string>() };
+
+    const next = [...new Set([...blockers.x, ...blockers.y])];
+    const current = this.state.alignmentResizeAnchorIds;
+    if (
+      next.length !== current.length ||
+      next.some((id, index) => id !== current[index])
+    ) {
+      this.setState({ alignmentResizeAnchorIds: next });
+    }
+  };
+
   private maybeHandleResize = (
     pointerDownState: PointerDownState,
     event: MouseEvent | KeyboardEvent,
@@ -14058,6 +14101,16 @@ class App extends React.Component<AppProps, AppState> {
         snapLines,
       });
     }
+
+    // Hard alignment: which anchors, if any, are refusing this resize.
+    // Only computable here — the renderer that draws the anvil overlay
+    // never sees the transform handle, and which handle is held is
+    // exactly what decides whether an anchored partner is in the way.
+    this.updateAlignmentResizeAnchors(
+      selectedElements,
+      transformHandleType,
+      shouldResizeFromCenter(event),
+    );
 
     if (
       transformElements(

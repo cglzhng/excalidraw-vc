@@ -251,6 +251,7 @@ export type InteractiveCanvasAppState = Readonly<
     searchMatches: AppState["searchMatches"];
     activeLockedId: AppState["activeLockedId"];
     hoveredAlignmentAnchorId: AppState["hoveredAlignmentAnchorId"];
+    alignmentResizeAnchorIds: AppState["alignmentResizeAnchorIds"];
     // Non-used but needed in binding highlight arrow overdraw
     hoveredElementIds: AppState["hoveredElementIds"];
     frameRendering: AppState["frameRendering"];
@@ -578,6 +579,12 @@ export interface AppState {
    * purely a hover affordance, so it is deliberately not observed by the
    * store (it would otherwise emit a version-log moment per mouse move) */
   hoveredAlignmentAnchorId: string | null;
+  /** anchors currently refusing the in-progress resize, so the anvil
+   * overlay can name them. Computed where the transform handle is known
+   * (`maybeHandleResize`) rather than in the renderer, which never sees
+   * it. Transient feedback, so — like the hover above — not observed by
+   * the store. */
+  alignmentResizeAnchorIds: readonly string[];
   // when locking multiple units of elements together, we assign a temporary
   // groupId to them so we can unlock them together;
   // as elements are unlocked, we remove the groupId from the elements

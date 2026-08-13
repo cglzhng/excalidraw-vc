@@ -21,7 +21,10 @@ import type { PointerDownState } from "@excalidraw/excalidraw/types";
 
 import type { Mutable } from "@excalidraw/common/utility-types";
 
-import { getAlignmentResizeLockedAxes } from "./alignment";
+import {
+  getAlignmentAnchoredResizeBlockers,
+  getAlignmentResizeLockedAxes,
+} from "./alignment";
 import {
   clampSizeToGapAlignments,
   propagateAlignmentsAfterResize,
@@ -91,11 +94,18 @@ import type { ElementUpdate } from "./mutateElement";
 
 // Returns true when transform (resizing/rotation) happened
 /**
- * Hold a proposed size at its original value on any dimension whose
- * alignment constraints are over-determined (see
- * `getAlignmentResizeLockedAxes`) — locking a pair at two places on one
- * axis pins that dimension, so the resize is refused there rather than
- * silently breaking one of the alignments.
+ * Hold a proposed size at its original value on any dimension the
+ * alignments forbid changing. Two things freeze one:
+ *
+ * - the constraints there are over-determined (see
+ *   `getAlignmentResizeLockedAxes`) — locking a pair at two places on one
+ *   axis pins that dimension;
+ * - preserving an alignment would mean pushing an anchored element (see
+ *   `getAlignmentAnchoredResizeAxes`), which is what anchoring forbids.
+ *
+ * Either way the resize is refused on that dimension rather than
+ * silently breaking an alignment — the same move anchors already make for
+ * drags.
  *
  * A width maps to the x axis and a height to y only while the element is
  * unrotated: once rotated, either dimension moves both bounds, so a
@@ -108,9 +118,26 @@ const clampSizeToFrozenAlignmentAxes = (
   original: { width: number; height: number },
   resizedIds: Set<string>,
   elementsMap: ElementsMap,
-  opts: { rotated: boolean; shouldMaintainAspectRatio: boolean },
+  opts: {
+    rotated: boolean;
+    shouldMaintainAspectRatio: boolean;
+    handle: string | false;
+    shouldResizeFromCenter: boolean;
+    /** members scale as one box, so the handle doesn't say which of an
+     * individual member's edges hold still */
+    boxScaled: boolean;
+  },
 ): { nextWidth: number; nextHeight: number } => {
-  const frozen = getAlignmentResizeLockedAxes(resizedIds, elementsMap);
+  const overConstrained = getAlignmentResizeLockedAxes(resizedIds, elementsMap);
+  const anchored = getAlignmentAnchoredResizeBlockers(resizedIds, elementsMap, {
+    handle: opts.handle,
+    shouldResizeFromCenter: opts.shouldResizeFromCenter,
+    allEdgesMove: opts.rotated || opts.boxScaled,
+  });
+  const frozen = {
+    x: overConstrained.x || anchored.x.size > 0,
+    y: overConstrained.y || anchored.y.size > 0,
+  };
   if (!frozen.x && !frozen.y) {
     return size;
   }
@@ -176,6 +203,9 @@ export const transformElements = (
             {
               rotated: latestElement.angle !== 0,
               shouldMaintainAspectRatio,
+              handle: transformHandleType,
+              shouldResizeFromCenter,
+              boxScaled: false,
             },
           ),
           origElement,
@@ -251,6 +281,9 @@ export const transformElements = (
         {
           rotated: selectedElements.some((el) => el.angle !== 0),
           shouldMaintainAspectRatio,
+          handle: transformHandleType,
+          shouldResizeFromCenter,
+          boxScaled: true,
         },
       );
 

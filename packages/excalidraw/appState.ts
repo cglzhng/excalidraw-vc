@@ -132,6 +132,7 @@ export const getDefaultAppState = (): Omit<
     lockedMultiSelections: {},
     activeLockedId: null,
     hoveredAlignmentAnchorId: null,
+    alignmentResizeAnchorIds: [],
     bindMode: "orbit",
     boxSelectionMode: "contain",
   };
@@ -276,6 +277,7 @@ const APP_STATE_STORAGE_CONF = (<
   lockedMultiSelections: { browser: true, export: true, server: true },
   activeLockedId: { browser: false, export: false, server: false },
   hoveredAlignmentAnchorId: { browser: false, export: false, server: false },
+  alignmentResizeAnchorIds: { browser: false, export: false, server: false },
   bindMode: { browser: true, export: false, server: false },
 });
 

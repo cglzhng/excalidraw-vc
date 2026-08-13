@@ -719,6 +719,111 @@ export const getAlignmentResizeLockedAxes = (
 };
 
 /**
+ * The anchors that block a resize of `resizedIds`, per axis: elements
+ * that preserving an alignment there would require moving, and that
+ * anchoring forbids moving. A non-empty set means that axis is frozen —
+ * and *which* anchors are in it is what the drag-style anvil overlay
+ * needs in order to point at the reason.
+ *
+ * The drag counterpart is `getAlignmentLockedAxes`; the difference is
+ * that a resize doesn't move the whole element, only some of its edges,
+ * so this is a question about *edges* rather than the axis as a whole. If
+ * A's left edge is locked to an anchored B, dragging A's right handle is
+ * fine — A's left edge never moves — while dragging its left handle would
+ * ask B to follow, which anchoring forbids. So the axis is frozen only
+ * when the resize actually moves an edge that carries a demand onto an
+ * anchor.
+ *
+ * As with drags, a demand doesn't stop at the direct partner: it floods
+ * through same-axis links, so an anchor anywhere in the partner's rigid
+ * component freezes the resize just the same.
+ */
+export const getAlignmentAnchoredResizeBlockers = (
+  resizedIds: Set<string>,
+  elementsMap: ElementsMap,
+  opts: {
+    handle: string | false;
+    shouldResizeFromCenter: boolean;
+    /**
+     * Treat every edge as moving. True when the geometry doesn't let us
+     * say which edges the handle holds still — a rotated element, whose
+     * bounds both move with either dimension, or a multi-element resize,
+     * where members move by a box scale rather than by the handle.
+     */
+    allEdgesMove: boolean;
+  },
+): { x: Set<string>; y: Set<string> } => {
+  /** Whether this resize moves `edge` of a resized element. */
+  const movesEdge = (axis: Axis, edge: Edge): boolean => {
+    if (opts.allEdgesMove) {
+      return true;
+    }
+    if (!opts.handle) {
+      return false;
+    }
+    if (opts.shouldResizeFromCenter) {
+      // both bounds grow outward, the centre stays put
+      return edge !== "center";
+    }
+    // "nw" / "w" hold the right edge and move the left, and so on
+    const movesMin = opts.handle.includes(axis === "x" ? "w" : "n");
+    const movesMax = opts.handle.includes(axis === "x" ? "e" : "s");
+    if (!movesMin && !movesMax) {
+      // a pure "n" / "s" handle doesn't touch x at all
+      return false;
+    }
+    // whichever side moves, the centre moves with it (by half)
+    return edge === "center" || (edge === "min" ? movesMin : movesMax);
+  };
+
+  const blockersOn = (axis: Axis): Set<string> => {
+    const blockers = new Set<string>();
+
+    /** Every anchor the demand on `startId` reaches. Propagation doesn't
+     * stop at the first one: each is equally a reason the resize is
+     * refused, and the overlay marks them all. */
+    const collectAnchors = (startId: string) => {
+      // resized elements are barriers: they move under the pointer, and
+      // an anchored one being resized is a direct action, not a push
+      const seen = new Set<string>(resizedIds);
+      const queue = [startId];
+      while (queue.length > 0) {
+        const id = queue.pop()!;
+        if (seen.has(id)) {
+          continue;
+        }
+        seen.add(id);
+        if (isAlignmentAnchor(elementsMap.get(id))) {
+          blockers.add(id);
+          // an anchor doesn't move, so nothing past it is demanded
+          continue;
+        }
+        for (const link of elementsMap.get(id)?.alignments ?? []) {
+          if (link.axis === axis) {
+            queue.push(link.elementId);
+          }
+        }
+      }
+    };
+
+    for (const driverId of resizedIds) {
+      for (const link of elementsMap.get(driverId)?.alignments ?? []) {
+        if (
+          link.axis === axis &&
+          !resizedIds.has(link.elementId) &&
+          movesEdge(axis, link.selfEdge)
+        ) {
+          collectAnchors(link.elementId);
+        }
+      }
+    }
+    return blockers;
+  };
+
+  return { x: blockersOn("x"), y: blockersOn("y") };
+};
+
+/**
  * After the directly-dragged elements have been moved by `offset`, drag
  * their hard-aligned partners to preserve the alignment.
  *
@@ -862,8 +967,9 @@ export const buildResizeAlignmentDeltas = (
     for (const link of driver.alignments) {
       if (
         resizedIds.has(link.elementId) ||
-        // an anchored partner is never pushed (resize just falls out of
-        // alignment with it)
+        // an anchored partner is never pushed — the size change that
+        // would have moved it was already refused by
+        // `getAlignmentAnchoredResizeAxes`, so this is a backstop
         isAlignmentAnchor(elementsMap.get(link.elementId))
       ) {
         continue;
