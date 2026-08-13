@@ -260,11 +260,16 @@ the identical record written on all three members. Equivalent to "the
 middle element is centred in the span between its neighbours", which is
 the form the propagators solve.
 
-### Component
-The set of elements that move together on one axis, found by walking
-alignment links transitively from the dragged elements. Both kinds of
-link join the walk: a rigid translation preserves edge alignments and
-equal gaps alike, so a drag never needs to solve anything.
+### Drag factor
+What each element's share of a drag is, on one axis, as a multiple of
+the drag offset — the dragged elements are 1, anything absent doesn't
+move. Edge alignments always pass 1 along, so everything they reach
+moves rigidly. Gap alignments solve `2·db = da + dc` instead:
+dragging an outer member of a triple holds the middle still and mirrors
+the move onto the far outer, so both gaps close while the element being
+measured against stays put. Computed by `getAlignmentDragFactors`, and
+the same map answers "which elements move at all" for anchors and for
+snapping.
 
 ### Driver / partner
 In a resize, the element the user is resizing is the driver; anything

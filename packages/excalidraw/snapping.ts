@@ -7,8 +7,9 @@ import {
   type GlobalPoint,
 } from "@excalidraw/math";
 
-import { TOOL_TYPE, KEYS } from "@excalidraw/common";
+import { TOOL_TYPE, KEYS, arrayToMap } from "@excalidraw/common";
 import {
+  clampDragToGapAlignments,
   getAlignmentLockedAxes,
   getAlignmentMovers,
   getCommonBounds,
@@ -777,6 +778,22 @@ export const snapDraggedElements = (
   );
   dragOffset.x = lockedAxes.x ? 0 : round(dragOffset.x);
   dragOffset.y = lockedAxes.y ? 0 : round(dragOffset.y);
+
+  // A hard gap alignment caps the offset once its gaps have closed, for
+  // the same reason: past the cap the pointer keeps going and the
+  // elements do not, so snaps computed from the raw offset would draw
+  // guides to positions nothing ever reaches.
+  const gapClamped = clampDragToGapAlignments(
+    new Set(selectedElements.map((element) => element.id)),
+    dragOffset,
+    arrayToMap(elements),
+    elementsMap,
+  );
+  const cappedX = gapClamped.x !== dragOffset.x;
+  const cappedY = gapClamped.y !== dragOffset.y;
+  dragOffset.x = gapClamped.x;
+  dragOffset.y = gapClamped.y;
+
   const nearestSnapsX: Snaps = [];
   const nearestSnapsY: Snaps = [];
   const snapDistance = getSnapDistance(appState.zoom.value);
@@ -784,9 +801,11 @@ export const snapDraggedElements = (
     // A frozen axis can't be nudged onto a reference, so a near-miss
     // must not register: only an exact coincidence (offset 0) counts,
     // which still draws the guide when the alignment genuinely holds
-    // and contributes a no-op snap offset.
-    x: lockedAxes.x ? 0 : snapDistance,
-    y: lockedAxes.y ? 0 : snapDistance,
+    // and contributes a no-op snap offset. An axis sitting against its
+    // gap cap is in the same position — it has no room left to be
+    // nudged with.
+    x: lockedAxes.x || cappedX ? 0 : snapDistance,
+    y: lockedAxes.y || cappedY ? 0 : snapDistance,
   };
 
   const selectionPoints = getElementsCorners(selectedElements, elementsMap, {
