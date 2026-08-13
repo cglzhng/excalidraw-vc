@@ -421,6 +421,14 @@ export class VersionLog {
       scene.getSelectedElementIds(),
     );
 
+    // The classifier can empty an increment out: an increment whose only
+    // content is a rebuilt-but-identical `alignments` / `gapAlignments`
+    // array describes no change a user made, so it gets no Moment rather
+    // than an empty card.
+    if (operations.length === 0) {
+      return;
+    }
+
     const logMoment: LogMoment = {
       id: increment.delta.id,
       timestamp: Date.now(),

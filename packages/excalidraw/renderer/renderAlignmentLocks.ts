@@ -552,12 +552,17 @@ const drawAnchorOverlay = (
  * component together, and covers upstream-locked elements too (they
  * anchor without carrying the badge).
  *
+ * A resize is reported the same way, but the set isn't computed here:
+ * whether an anchor is in the way depends on which transform handle is
+ * held, which only `App.maybeHandleResize` knows, so it publishes the
+ * answer as `alignmentResizeAnchorIds`.
+ *
  * Drawn in the alignment red rather than the selection colour the toggle
  * uses. The two anvils say different things: on a selected element it is a
- * control offering a choice, here it is the explanation for a drag that
- * just refused to move. Red is already this fork's alignment vocabulary
- * (the guides and their padlocks), so the overlay reads as part of the
- * constraint it is reporting — and never as something to click.
+ * control offering a choice, here it is the explanation for a transform
+ * that just refused to happen. Red is already this fork's alignment
+ * vocabulary (the guides and their padlocks), so the overlay reads as part
+ * of the constraint it is reporting — and never as something to click.
  */
 export const renderAnchorLockOverlays = (
   context: CanvasRenderingContext2D,
@@ -565,17 +570,19 @@ export const renderAnchorLockOverlays = (
   elementsMap: NonDeletedSceneElementsMap,
   selectedElements: readonly NonDeletedExcalidrawElement[],
 ) => {
-  if (!appState.selectedElementsAreBeingDragged || selectedElements.length === 0) {
+  if (selectedElements.length === 0) {
     return;
   }
-  const directlyMoved = new Set(selectedElements.map((el) => el.id));
-  const movers = getAlignmentMovers(directlyMoved, elementsMap);
+  const anchors = new Set<string>(appState.alignmentResizeAnchorIds);
 
-  const anchors = new Set<string>();
-  for (const component of [movers.x, movers.y]) {
-    for (const id of component) {
-      if (!directlyMoved.has(id) && isAlignmentAnchor(elementsMap.get(id))) {
-        anchors.add(id);
+  if (appState.selectedElementsAreBeingDragged) {
+    const directlyMoved = new Set(selectedElements.map((el) => el.id));
+    const movers = getAlignmentMovers(directlyMoved, elementsMap);
+    for (const component of [movers.x, movers.y]) {
+      for (const id of component) {
+        if (!directlyMoved.has(id) && isAlignmentAnchor(elementsMap.get(id))) {
+          anchors.add(id);
+        }
       }
     }
   }

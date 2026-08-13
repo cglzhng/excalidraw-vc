@@ -14,6 +14,7 @@ import {
   addElementsToFrame,
   cropElement,
   dragSelectedElements,
+  getAlignmentAnchoredResizeBlockers,
   getCommonBounds,
   getCommonFrameId,
   getElementAbsoluteCoords,
@@ -59,7 +60,10 @@ import {
   vectorSubtract,
 } from "@excalidraw/math";
 
-import type { TransformHandleType } from "@excalidraw/element";
+import type {
+  MaybeTransformHandleType,
+  TransformHandleType,
+} from "@excalidraw/element";
 import type {
   ExcalidrawElement,
   ExcalidrawImageElement,
@@ -573,6 +577,42 @@ export class AppSelectionTool {
     return true;
   };
 
+  /**
+   * Publish the anchors blocking the in-progress resize, so the anvil
+   * overlay can point at them the way it already does for a drag.
+   * Rewritten only when the set changes — this runs on every pointermove,
+   * and a fresh array each time would churn every consumer for nothing.
+   */
+  private updateAlignmentResizeAnchors = (
+    selectedElements: readonly NonDeletedExcalidrawElement[],
+    transformHandleType: MaybeTransformHandleType,
+    resizeFromCenter: boolean,
+  ) => {
+    const blockers =
+      transformHandleType && transformHandleType !== "rotation"
+        ? getAlignmentAnchoredResizeBlockers(
+            new Set(selectedElements.map((element) => element.id)),
+            this.app.scene.getNonDeletedElementsMap(),
+            {
+              handle: transformHandleType,
+              shouldResizeFromCenter: resizeFromCenter,
+              allEdgesMove:
+                selectedElements.length > 1 ||
+                selectedElements.some((element) => element.angle !== 0),
+            },
+          )
+        : { x: new Set<string>(), y: new Set<string>() };
+
+    const next = [...new Set([...blockers.x, ...blockers.y])];
+    const current = this.app.state.alignmentResizeAnchorIds;
+    if (
+      next.length !== current.length ||
+      next.some((id, index) => id !== current[index])
+    ) {
+      this.app.setState({ alignmentResizeAnchorIds: next });
+    }
+  };
+
   maybeHandleResize = (
     pointerDownState: PointerDownState,
     event: MouseEvent | KeyboardEvent,
@@ -688,6 +728,16 @@ export class AppSelectionTool {
         snapLines,
       });
     }
+
+    // Hard alignment: which anchors, if any, are refusing this resize.
+    // Only computable here — the renderer that draws the anvil overlay
+    // never sees the transform handle, and which handle is held is
+    // exactly what decides whether an anchored partner is in the way.
+    this.updateAlignmentResizeAnchors(
+      selectedElements,
+      transformHandleType,
+      shouldResizeFromCenter(event),
+    );
 
     // images are proportional by default, and so is a sticky note's corner
     // (its label's font ceiling scales with it); Shift frees them. A note's

@@ -10064,6 +10064,10 @@ class App extends React.Component<AppProps, AppState> {
         isRotating: false,
         isCropping: false,
         resizingElement: null,
+        alignmentResizeAnchorIds: updateStable(
+          prevState.alignmentResizeAnchorIds,
+          [],
+        ),
         selectionElement: null,
         frameToHighlight: null,
         elementsToHighlight: null,

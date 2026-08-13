@@ -73,6 +73,12 @@ export const classifyEntries = (
   groupSizeCache: Map<string, number>,
   selectedElementIds: ReadonlySet<string> = new Set(),
 ): LogOperation[] => {
+  // Pre-pass 0: drop link changes that aren't changes (see
+  // `stripPhantomLinkChanges`). Done on the entries themselves rather
+  // than per-classifier, so nothing downstream — including the `raw`
+  // op's property list in the panel — ever sees a phantom.
+  entries = stripPhantomLinkChanges(entries);
+
   // Pre-pass A: identify entries whose geometric change is purely a
   // consequence of something else being transformed in the same moment
   // — a bound arrow following its bindable (arrow consequences), or a
@@ -509,6 +515,76 @@ const gapAlignmentsEqual = (
 ): boolean =>
   linkArraysEqual(a, b, (l) => `${l.axis}:${l.ids.join("|")}`);
 
+/** The link fields the store diffs by reference. */
+const LINK_FIELDS = ["alignments", "gapAlignments"] as const;
+
+const linkFieldEqual = (
+  field: (typeof LINK_FIELDS)[number],
+  entry: LogEntry,
+): boolean =>
+  field === "alignments"
+    ? alignmentsEqual(
+        entry.before.alignments as readonly ElementAlignment[] | undefined,
+        entry.after.alignments as readonly ElementAlignment[] | undefined,
+      )
+    : gapAlignmentsEqual(
+        entry.before.gapAlignments as
+          | readonly ElementGapAlignment[]
+          | undefined,
+        entry.after.gapAlignments as readonly ElementGapAlignment[] | undefined,
+      );
+
+/** Whether a property map holds anything beyond store bookkeeping. */
+const hasRealProperties = (map: LogPropertyMap): boolean =>
+  Object.keys(map).some((k) => !TRACKING_PROPS.has(k));
+
+/**
+ * Remove `alignments` / `gapAlignments` from update entries where the
+ * links are structurally identical, and drop entries left with nothing
+ * else — the phantom *was* the whole entry.
+ *
+ * The store diffs these fields by array/element reference, so any code
+ * that rebuilds an equal array (a propagator writing an element through
+ * `newElementWith`, a restore pass) reports them as changed. Left in,
+ * such an entry classifies as `raw` — the panel's noisiest row — and
+ * lists two large objects that are identical on both sides. Worse, a
+ * phantom key also breaks the clean-residue checks that recognise moves
+ * and resizes, so real gestures get demoted to `raw` alongside it.
+ *
+ * `create` and `delete` entries are left alone: there the field is the
+ * element's actual initial or final state, not a diff.
+ */
+const stripPhantomLinkChanges = (
+  entries: readonly LogEntry[],
+): readonly LogEntry[] => {
+  const out: LogEntry[] = [];
+  for (const entry of entries) {
+    const phantom =
+      entry.type === "update"
+        ? LINK_FIELDS.filter(
+            (field) =>
+              (field in entry.before || field in entry.after) &&
+              linkFieldEqual(field, entry),
+          )
+        : [];
+    if (phantom.length === 0) {
+      out.push(entry);
+      continue;
+    }
+
+    const before = { ...entry.before };
+    const after = { ...entry.after };
+    for (const field of phantom) {
+      delete before[field];
+      delete after[field];
+    }
+    if (hasRealProperties(before) || hasRealProperties(after)) {
+      out.push({ ...entry, before, after });
+    }
+  }
+  return out;
+};
+
 const linkArraysEqual = <T>(
   a: readonly T[] | undefined,
   b: readonly T[] | undefined,
@@ -538,29 +614,13 @@ const getChangedKeys = (entry: LogEntry): Set<string> => {
       keys.add(k);
     }
   }
-  // The store diffs `alignments` by array/element reference, so it can
-  // report the field as changed when the links are structurally
-  // identical (a rebuilt-but-equal array). A phantom `alignments` key
-  // would both emit spurious lock/unlock ops and break the clean-residue
-  // checks that classify moves/resizes — so drop it when deep-equal.
-  if (
-    keys.has("alignments") &&
-    alignmentsEqual(
-      entry.before.alignments as readonly ElementAlignment[] | undefined,
-      entry.after.alignments as readonly ElementAlignment[] | undefined,
-    )
-  ) {
-    keys.delete("alignments");
-  }
-  // same for equal-gap triples, for the same reason
-  if (
-    keys.has("gapAlignments") &&
-    gapAlignmentsEqual(
-      entry.before.gapAlignments as readonly ElementGapAlignment[] | undefined,
-      entry.after.gapAlignments as readonly ElementGapAlignment[] | undefined,
-    )
-  ) {
-    keys.delete("gapAlignments");
+  // Deep-equal-but-rebuilt link arrays are already gone: entries are put
+  // through `stripPhantomLinkChanges` on the way in. Repeating the check
+  // here is kept as a backstop for any caller that hasn't.
+  for (const field of LINK_FIELDS) {
+    if (keys.has(field) && linkFieldEqual(field, entry)) {
+      keys.delete(field);
+    }
   }
   return keys;
 };
@@ -899,14 +959,25 @@ const findConsequentAlignmentChanges = (
     set.add(b);
   };
   for (const id of inPlay) {
-    const links = changedElements[id]?.alignments;
-    if (!links) {
-      continue;
-    }
-    for (const link of links) {
+    for (const link of changedElements[id]?.alignments ?? []) {
       if (inPlay.has(link.elementId)) {
         addEdge(id, link.elementId);
         addEdge(link.elementId, id);
+      }
+    }
+    // A gap triple couples all three of its members, so every pair of
+    // them is an edge — not just the neighbouring ones. The far pair
+    // matters most: dragging an outer element holds the middle still and
+    // mirrors the move onto the *other outer*, so the two elements that
+    // actually moved are the ones with no shared gap between them. Wire
+    // only the neighbours and they land in separate components and
+    // surface as two unrelated moves.
+    for (const link of changedElements[id]?.gapAlignments ?? []) {
+      for (const memberId of link.ids) {
+        if (memberId !== id && inPlay.has(memberId)) {
+          addEdge(id, memberId);
+          addEdge(memberId, id);
+        }
       }
     }
   }
