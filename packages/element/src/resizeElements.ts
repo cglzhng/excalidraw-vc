@@ -22,7 +22,10 @@ import type { PointerDownState } from "@excalidraw/excalidraw/types";
 import type { Mutable } from "@excalidraw/common/utility-types";
 
 import { getAlignmentResizeLockedAxes } from "./alignment";
-import { propagateAlignmentsAfterResize } from "./gapAlignment";
+import {
+  clampSizeToGapAlignments,
+  propagateAlignmentsAfterResize,
+} from "./gapAlignment";
 import {
   getArrowLocalFixedPoints,
   unbindBindingElement,
@@ -154,25 +157,31 @@ export const transformElements = (
       const origElement = originalElements.get(elementId);
 
       if (latestElement && origElement) {
-        const { nextWidth, nextHeight } = clampSizeToFrozenAlignmentAxes(
-          getNextSingleWidthAndHeightFromPointer(
-            latestElement,
+        const { nextWidth, nextHeight } = clampSizeToGapAlignments(
+          clampSizeToFrozenAlignmentAxes(
+            getNextSingleWidthAndHeightFromPointer(
+              latestElement,
+              origElement,
+              transformHandleType,
+              pointerX,
+              pointerY,
+              {
+                shouldMaintainAspectRatio,
+                shouldResizeFromCenter,
+              },
+            ),
             origElement,
-            transformHandleType,
-            pointerX,
-            pointerY,
+            new Set([elementId]),
+            elementsMap,
             {
+              rotated: latestElement.angle !== 0,
               shouldMaintainAspectRatio,
-              shouldResizeFromCenter,
             },
           ),
           origElement,
-          new Set([elementId]),
+          originalElements,
           elementsMap,
-          {
-            rotated: latestElement.angle !== 0,
-            shouldMaintainAspectRatio,
-          },
+          { handle: transformHandleType, shouldResizeFromCenter },
         );
 
         resizeSingleElement(

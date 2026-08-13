@@ -5,6 +5,7 @@ import {
   applyAlignmentDeltas,
   buildResizeAlignmentDeltas,
   floodAlignmentAxis,
+  getAlignmentDragFactors,
   isAlignable,
   isAlignmentAnchor,
 } from "./alignment";
@@ -157,9 +158,18 @@ const enumerateGaps = (
   return { gapsFrom, gapsTo };
 };
 
-/** Where one gap of a guide sits along the guide's axis. The
+/**
+ * Where one gap of a guide sits along the guide's axis. The
  * perpendicular coordinate is `GapAlignmentGuide.across`, shared by both
- * gaps of a triple. */
+ * gaps of a triple.
+ *
+ * `to` may be *less* than `from`: a hard triple whose members have been
+ * pushed past each other has negative gaps, which is a perfectly valid
+ * state of the constraint (both gaps are still equal) and one the
+ * propagators will reach the moment an outer element is dragged far
+ * enough. Consumers should treat the pair as an interval, not a
+ * direction.
+ */
 export type GapSpan = {
   from: number;
   to: number;
@@ -196,10 +206,15 @@ const guideKey = (axis: Axis, ids: readonly string[]): string =>
 
 /**
  * The two gaps of a triple, measured from the elements' current bounds.
- * Returns null when the triple can't be measured — a member has been
- * deleted, or the three have since been reordered along the axis so that
- * the stored order no longer describes two gaps. A hard link in that
- * state is simply not drawn; the propagators are what stop it arising.
+ * Returns null only when a member has been deleted.
+ *
+ * The measurement is signed and unconditional: whatever the three
+ * elements are currently doing, the stored order still names two spans,
+ * and equal negative spans satisfy the constraint exactly as equal
+ * positive ones do. Requiring positive gaps here would blank the guide
+ * the moment a triple was squeezed shut — precisely when the user most
+ * needs to see that the relationship is still there — even though the
+ * propagators are still holding it.
  */
 const measureTriple = (
   ids: readonly [string, string, string],
@@ -220,28 +235,24 @@ const measureTriple = (
   }
   const [a, b, c] = boxes as NonNullable<(typeof boxes)[number]>[];
 
-  const span = (start: typeof a, end: typeof a): GapSpan | null =>
-    start.along[1] < end.along[0] && rangeIntersection(start.across, end.across)
-      ? { from: start.along[1], to: end.along[0] }
-      : null;
+  const span = (start: typeof a, end: typeof a): GapSpan => ({
+    from: start.along[1],
+    to: end.along[0],
+  });
 
-  const first = span(a, b);
-  const second = span(b, c);
-  if (!first || !second) {
-    return null;
-  }
+  const gaps = [span(a, b), span(b, c)] as const;
 
-  // What all three share on the perpendicular axis. Detection only
-  // requires each *pair* to overlap, so the three-way intersection can
-  // be empty (a staircase); the middle element's own centre is the
-  // fallback, since it is the one member both gaps touch.
+  // What all three share on the perpendicular axis. Only each *pair* is
+  // required to overlap, and once a triple has been squeezed shut not
+  // even that holds; the middle element's own centre is the fallback,
+  // since it is the one member both gaps touch.
   const pairOverlap = rangeIntersection(a.across, b.across);
   const shared = pairOverlap && rangeIntersection(pairOverlap, c.across);
   const across = shared
     ? (shared[0] + shared[1]) / 2
     : (b.across[0] + b.across[1]) / 2;
 
-  return { gaps: [first, second], across };
+  return { gaps, across };
 };
 
 /**
@@ -400,6 +411,191 @@ export const unlockGapAlignment = (
     }
   }
   return updated;
+};
+
+/**
+ * Limit a drag offset so no hard gap alignment is pushed through zero.
+ *
+ * Past zero the triple's members swap places, and the constraint stops
+ * describing anything the user can see: the equation is still satisfied
+ * — measured in the stored order the gaps are equal and negative — but
+ * the *visible* spacing in the new order is
+ * `−gap − w(outer) − w(middle)` on each side, which is only equal again
+ * when the two outer elements happen to be the same width. So for most
+ * triples, crossing silently turns "equally spaced" into a relationship
+ * that no longer looks like one, and cannot be restored by dragging back
+ * without a jump.
+ *
+ * Stopping at contact avoids the whole problem, and gives the drag an
+ * honest feel: the arrangement closes up, then holds.
+ *
+ * Each gap is affine in the drag offset `t`, since every element moves
+ * by its own multiple of it (`getAlignmentDragFactors`):
+ *
+ *     gap(t) = gap(0) + (f_far − f_near)·t
+ *
+ * so each gap contributes one bound on `t`, and the answer is the
+ * tightest interval around 0. A gap that is *already* negative — from a
+ * scene built before this rule, say — contributes nothing, so an
+ * existing crossing is left alone rather than trapping the drag.
+ */
+export const clampDragToGapAlignments = (
+  directlyMovedIds: Set<string>,
+  offset: { x: number; y: number },
+  originalElements: ReadonlyMap<string, ExcalidrawElement>,
+  elementsMap: ElementsMap,
+): { x: number; y: number } => {
+  const clampAxis = (axis: Axis, t: number): number => {
+    if (t === 0) {
+      return t;
+    }
+    const factors = getAlignmentDragFactors(directlyMovedIds, axis, elementsMap);
+    let lo = -Infinity;
+    let hi = Infinity;
+
+    const rangeOf = (id: string): InclusiveRange | null => {
+      const element = originalElements.get(id) ?? elementsMap.get(id);
+      return element
+        ? axisRange(getElementBounds(element, elementsMap), axis)
+        : null;
+    };
+
+    for (const link of collectHardTriples(elementsMap)) {
+      if (link.axis !== axis) {
+        continue;
+      }
+      const ranges = link.ids.map(rangeOf);
+      if (ranges.some((range) => range == null)) {
+        continue;
+      }
+      const [a, b, c] = ranges as InclusiveRange[];
+      const [fa, fb, fc] = link.ids.map((id) => factors.get(id) ?? 0);
+
+      for (const [gap, slope] of [
+        [b[0] - a[1], fb - fa],
+        [c[0] - b[1], fc - fb],
+      ]) {
+        if (slope === 0 || gap < 0) {
+          continue;
+        }
+        const bound = -gap / slope;
+        if (slope < 0) {
+          hi = Math.min(hi, bound);
+        } else {
+          lo = Math.max(lo, bound);
+        }
+      }
+    }
+
+    return Math.min(Math.max(t, lo), hi);
+  };
+
+  return { x: clampAxis("x", offset.x), y: clampAxis("y", offset.y) };
+};
+
+/**
+ * Cap a proposed size so no hard gap alignment closes past zero — the
+ * resize counterpart of {@link clampDragToGapAlignments}, and refused
+ * for the same reason: past contact the triple reorders and "equally
+ * spaced" stops meaning what it looks like.
+ *
+ * After the correction pass has equalised them, both gaps of a triple
+ * end up at the *mean* of what the resize left them at, because the
+ * middle element absorbs the difference and moving it trades one gap
+ * against the other one-for-one. So the whole condition is
+ * `g1 + g2 >= 0`, measured with the driver at its proposed size and
+ * everything else where the resize started.
+ *
+ * That sum is affine in the size, so it is sampled at the proposed size
+ * and at the original one and solved directly — no search, and exact
+ * for the linear system it describes.
+ *
+ * Scope, deliberately: the single-element resize path, on an unrotated
+ * driver, where the middle is free to absorb. A rotated element's bounds
+ * don't move with its size in a way this prediction models, and if the
+ * middle is pinned the correction lands elsewhere; both fall through
+ * uncapped rather than being capped wrongly.
+ */
+export const clampSizeToGapAlignments = (
+  size: { nextWidth: number; nextHeight: number },
+  driver: ExcalidrawElement,
+  originalElements: ReadonlyMap<string, ExcalidrawElement>,
+  elementsMap: ElementsMap,
+  opts: { handle: string | false; shouldResizeFromCenter: boolean },
+): { nextWidth: number; nextHeight: number } => {
+  const handle = opts.handle;
+  if (driver.angle !== 0 || !handle) {
+    return size;
+  }
+
+  const triples = collectHardTriples(elementsMap).filter((link) =>
+    link.ids.includes(driver.id),
+  );
+  if (triples.length === 0) {
+    return size;
+  }
+
+  /** The driver's extent on `axis` if it were `length` long: the handle
+   * says which side is held, and resizing from centre holds neither. */
+  const projected = (axis: Axis, length: number): InclusiveRange => {
+    const bounds = getElementBounds(driver, elementsMap);
+    const [min, max] = axisRange(bounds, axis);
+    // "nw" / "w" hold the right edge and move the left, and so on
+    const movesMin = handle.includes(axis === "x" ? "w" : "n");
+    if (opts.shouldResizeFromCenter) {
+      const centre = (min + max) / 2;
+      return rangeInclusive(centre - length / 2, centre + length / 2);
+    }
+    return movesMin
+      ? rangeInclusive(max - length, max)
+      : rangeInclusive(min, min + length);
+  };
+
+  const clampAxis = (axis: Axis, length: number, current: number): number => {
+    const rangeOf = (id: string, driverLength: number): InclusiveRange | null => {
+      if (id === driver.id) {
+        return projected(axis, driverLength);
+      }
+      const element = originalElements.get(id) ?? elementsMap.get(id);
+      return element
+        ? axisRange(getElementBounds(element, elementsMap), axis)
+        : null;
+    };
+
+    let limit = length;
+    for (const link of triples) {
+      if (link.axis !== axis) {
+        continue;
+      }
+      const sumAt = (driverLength: number): number | null => {
+        const ranges = link.ids.map((id) => rangeOf(id, driverLength));
+        if (ranges.some((range) => range == null)) {
+          return null;
+        }
+        const [a, b, c] = ranges as InclusiveRange[];
+        return b[0] - a[1] + (c[0] - b[1]);
+      };
+
+      const sum = sumAt(length);
+      const sum0 = sumAt(current);
+      if (sum == null || sum0 == null || sum >= 0 || sum0 < 0) {
+        // already fine, or already crossed before this resize began
+        continue;
+      }
+      const slope = (sum - sum0) / (length - current);
+      if (slope >= 0) {
+        continue;
+      }
+      limit = Math.min(limit, current - sum0 / slope);
+    }
+    return limit;
+  };
+
+  const bounds = getElementBounds(driver, elementsMap);
+  return {
+    nextWidth: clampAxis("x", size.nextWidth, bounds[2] - bounds[0]),
+    nextHeight: clampAxis("y", size.nextHeight, bounds[3] - bounds[1]),
+  };
 };
 
 /**

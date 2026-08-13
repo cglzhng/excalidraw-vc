@@ -452,53 +452,127 @@ export const isAlignmentAnchor = (
   element: ExcalidrawElement | undefined,
 ): boolean => !!element && (!!element.alignmentLocked || element.locked);
 
+/** Bound on the propagation passes below. A chain settles in a pass or
+ * two; the cap is only there so a cyclic link graph can't spin. */
+const MAX_DRAG_FACTOR_PASSES = 8;
+
 /**
- * Transitive set of elements reachable from `seeds` by following
- * alignment links restricted to a single `axis`. Includes the seeds.
+ * How far each element travels on one axis when `seeds` are dragged, as
+ * a multiple of the drag offset. The seeds themselves are 1; an element
+ * absent from the map doesn't move. Includes the seeds.
  *
- * Hard *gap* alignments join the walk here as well, and the whole triple
- * enters the component from any one member. That's not an approximation:
- * a rigid translation preserves both gaps of a triple exactly, whatever
- * the spacing, so "everything moves together" is the complete answer for
- * a drag — no solving required, and it holds for any number of chained
- * triples. (Resize is the case that genuinely needs geometry, and it
- * does not come through here; see `resizeAlignedElements`.)
+ * A multiple rather than a set, because gap alignment doesn't move
+ * everything by the same amount. Its constraint is
  *
- * It also means one definition of "component" serves both kinds of
- * alignment, so anchors, the drag propagator and snapping's stale-point
- * masking all pick up gaps for free.
+ *     2·b.center = a.max + c.min
+ *
+ * so under translations `2·db = da + dc` — one equation per triple,
+ * which the passes below solve for whichever member is still unknown.
+ * Two members unknown leaves it under-determined, and the choice made
+ * there is what gives gap dragging its feel:
+ *
+ *   - the **middle** is known and both outers aren't: the triple travels
+ *     rigidly, `da = dc = db`. This is the case when the user drags the
+ *     middle element, and translating all three preserves both gaps
+ *     whatever their size.
+ *   - an **outer** is known and the rest aren't: the middle holds still
+ *     (`db = 0`) and the far outer mirrors the move (`dc = -da`).
+ *     Dragging `a` toward the gap by `d` pulls `c` toward it by `d` too,
+ *     closing both gaps by `d` while `b` stays exactly where it was.
+ *
+ * Holding the middle is what makes the gesture legible: the element
+ * between the two gaps is the one you are measuring against, so moving
+ * it would change the thing being kept equal. Squeezing from the outside
+ * leaves it as the fixed centre of the arrangement.
+ *
+ * Edge alignments are the simple case throughout: a partner inherits its
+ * neighbour's factor exactly, which is the rigid coupling they've always
+ * had.
  */
-const collectAlignedComponent = (
+export const getAlignmentDragFactors = (
   seeds: Set<string>,
-  axis: "x" | "y",
+  axis: Axis,
   elementsMap: ElementsMap,
-): Set<string> => {
-  const visited = new Set<string>(seeds);
-  const queue = [...seeds];
-  const enter = (id: string) => {
-    if (!visited.has(id)) {
-      visited.add(id);
-      queue.push(id);
+): Map<string, number> => {
+  const factors = new Map<string, number>();
+  for (const id of seeds) {
+    factors.set(id, 1);
+  }
+
+  /** Edge links: a partner moves exactly as its neighbour does. */
+  const spreadEdgeLinks = (): boolean => {
+    let changed = false;
+    const queue = [...factors.keys()];
+    while (queue.length > 0) {
+      const id = queue.pop()!;
+      const factor = factors.get(id)!;
+      for (const link of elementsMap.get(id)?.alignments ?? []) {
+        if (link.axis === axis && !factors.has(link.elementId)) {
+          factors.set(link.elementId, factor);
+          queue.push(link.elementId);
+          changed = true;
+        }
+      }
     }
+    return changed;
   };
-  while (queue.length > 0) {
-    const id = queue.pop()!;
-    const el = elementsMap.get(id);
-    if (!el) {
-      continue;
-    }
-    for (const link of el.alignments ?? []) {
-      if (link.axis === axis) {
-        enter(link.elementId);
+
+  /** One pass of `2·db = da + dc` over every triple on this axis. */
+  const solveTriples = (): boolean => {
+    let changed = false;
+    for (const el of elementsMap.values()) {
+      for (const link of el.gapAlignments ?? []) {
+        if (link.axis !== axis) {
+          continue;
+        }
+        const [aId, bId, cId] = link.ids;
+        const da = factors.get(aId);
+        const db = factors.get(bId);
+        const dc = factors.get(cId);
+        const unknowns = [da, db, dc].filter(
+          (factor) => factor === undefined,
+        ).length;
+
+        if (unknowns === 0 || unknowns === 3) {
+          // nothing to solve, or nothing to solve it from
+          continue;
+        }
+
+        if (unknowns === 1) {
+          if (db === undefined) {
+            factors.set(bId, (da! + dc!) / 2);
+          } else if (da === undefined) {
+            factors.set(aId, 2 * db - dc!);
+          } else {
+            factors.set(cId, 2 * db - da!);
+          }
+        } else if (db !== undefined) {
+          // only the middle is known: carry the whole triple with it
+          factors.set(aId, db);
+          factors.set(cId, db);
+        } else {
+          // only one outer is known: pin the middle and mirror the move
+          // onto the far outer. `0` is recorded rather than left absent
+          // so a triple further along a chain can solve against it.
+          const known = da ?? dc!;
+          factors.set(bId, 0);
+          factors.set(da === undefined ? aId : cId, -known);
+        }
+        changed = true;
       }
     }
-    for (const link of el.gapAlignments ?? []) {
-      if (link.axis === axis) {
-        link.ids.forEach(enter);
-      }
+    return changed;
+  };
+
+  for (let pass = 0; pass < MAX_DRAG_FACTOR_PASSES; pass++) {
+    const spread = spreadEdgeLinks();
+    const solved = solveTriples();
+    if (!spread && !solved) {
+      break;
     }
   }
-  return visited;
+
+  return factors;
 };
 
 /**
@@ -508,31 +582,57 @@ const collectAlignedComponent = (
  * two axes are independent, so an element may comove on one, both, or
  * neither. Includes the seeds themselves. Used by the snapping system to
  * drop a comoving partner's stale snap points on the axis it tracks.
+ *
+ * Membership, not distance: an element that follows at half the offset
+ * has just as stale a snap point as one that follows at the full offset.
  */
 export const getAlignmentMovers = (
   seeds: Set<string>,
   elementsMap: ElementsMap,
-): { x: Set<string>; y: Set<string> } => ({
-  x: collectAlignedComponent(seeds, "x", elementsMap),
-  y: collectAlignedComponent(seeds, "y", elementsMap),
-});
+): { x: Set<string>; y: Set<string> } => {
+  const moversOn = (axis: Axis) => {
+    const moving = new Set<string>();
+    for (const [id, factor] of getAlignmentDragFactors(
+      seeds,
+      axis,
+      elementsMap,
+    )) {
+      if (factor !== 0) {
+        moving.add(id);
+      }
+    }
+    return moving;
+  };
+  return { x: moversOn("x"), y: moversOn("y") };
+};
 
 /**
  * Which axes a drag of `directlyMovedIds` is frozen on by an alignment
- * anchor. If the aligned component on an axis contains an anchored
- * element that isn't itself being dragged, that element can't be pushed;
- * since the component moves rigidly, nothing in it — including the
- * dragged elements — can move on that axis, so the offset is zeroed
- * there. An anchor that *is* being dragged is the direct target and
- * doesn't freeze itself.
+ * anchor. If preserving the alignments on an axis would require moving
+ * an anchored element that isn't itself being dragged, that element
+ * can't be pushed — and since the rest is rigidly tied to it, nothing on
+ * that axis can move, so the offset is zeroed there. An anchor that *is*
+ * being dragged is the direct target and doesn't freeze itself.
+ *
+ * Only elements that would actually have to move count. An anchor on the
+ * far side of a gap triple keeps its factor of 0 when an outer is
+ * dragged, so it no longer freezes a drag it was never in the way of.
  */
 export const getAlignmentLockedAxes = (
   directlyMovedIds: Set<string>,
   elementsMap: ElementsMap,
 ): { x: boolean; y: boolean } => {
   const frozenOn = (axis: Axis): boolean => {
-    for (const id of collectAlignedComponent(directlyMovedIds, axis, elementsMap)) {
-      if (!directlyMovedIds.has(id) && isAlignmentAnchor(elementsMap.get(id))) {
+    for (const [id, factor] of getAlignmentDragFactors(
+      directlyMovedIds,
+      axis,
+      elementsMap,
+    )) {
+      if (
+        factor !== 0 &&
+        !directlyMovedIds.has(id) &&
+        isAlignmentAnchor(elementsMap.get(id))
+      ) {
         return true;
       }
     }
@@ -622,15 +722,16 @@ export const getAlignmentResizeLockedAxes = (
  * After the directly-dragged elements have been moved by `offset`, drag
  * their hard-aligned partners to preserve the alignment.
  *
- * Handled per-axis: everything x-linked (transitively) to a dragged
- * element shifts by `offset.x`, everything y-linked shifts by
- * `offset.y`. An element may be pulled on one axis, both, or neither.
+ * Handled per-axis and per-element: `getAlignmentDragFactors` says what
+ * multiple of `offset` each partner takes on each axis, which is 1 for
+ * everything an edge alignment reaches and may be a fraction across a
+ * gap triple. An element may be pulled on one axis, both, or neither.
  * Partner positions are computed from their drag-start snapshot
  * (`originalElements`, which holds every element), so repeated
  * pointermove events don't accumulate drift.
  *
  * `directlyMovedIds` are skipped — they were already moved by the caller
- * (with snapping / grid applied); partners simply inherit that final
+ * (with snapping / grid applied); partners inherit from that final
  * offset.
  */
 export const dragAlignedElements = (
@@ -641,17 +742,17 @@ export const dragAlignedElements = (
 ) => {
   const elementsMap = scene.getNonDeletedElementsMap();
 
-  const xComponent = collectAlignedComponent(directlyMovedIds, "x", elementsMap);
-  const yComponent = collectAlignedComponent(directlyMovedIds, "y", elementsMap);
+  const xFactors = getAlignmentDragFactors(directlyMovedIds, "x", elementsMap);
+  const yFactors = getAlignmentDragFactors(directlyMovedIds, "y", elementsMap);
 
   const partners = new Set<string>();
-  for (const id of xComponent) {
-    if (!directlyMovedIds.has(id)) {
-      partners.add(id);
-    }
-  }
-  for (const id of yComponent) {
-    if (!directlyMovedIds.has(id)) {
+  for (const id of [...xFactors.keys(), ...yFactors.keys()]) {
+    // a factor of 0 is a real answer — "this one holds still" — so it is
+    // in the map but has nothing to write
+    if (
+      !directlyMovedIds.has(id) &&
+      ((xFactors.get(id) ?? 0) !== 0 || (yFactors.get(id) ?? 0) !== 0)
+    ) {
       partners.add(id);
     }
   }
@@ -662,8 +763,8 @@ export const dragAlignedElements = (
       continue;
     }
     const original = originalElements.get(id) ?? element;
-    const dx = xComponent.has(id) ? offset.x : 0;
-    const dy = yComponent.has(id) ? offset.y : 0;
+    const dx = offset.x * (xFactors.get(id) ?? 0);
+    const dy = offset.y * (yFactors.get(id) ?? 0);
 
     scene.mutateElement(element, {
       x: original.x + dx,

@@ -20,6 +20,7 @@ import type { LocalPoint, Radians } from "@excalidraw/math";
 import type { NonDeletedExcalidrawElement } from "@excalidraw/element/types";
 
 import { dragAlignedElements, getAlignmentLockedAxes } from "./alignment";
+import { clampDragToGapAlignments } from "./gapAlignment";
 import { updateBoundElements } from "./binding";
 import { getCommonBounds } from "./bounds";
 import { LinearElementEditor } from "./linearElementEditor";
@@ -129,10 +130,19 @@ export const dragSelectedElements = (
     elementsToUpdateIds,
     scene.getNonDeletedElementsMap(),
   );
-  const adjustedOffset = {
-    x: lockedAxes.x ? 0 : rawOffset.x,
-    y: lockedAxes.y ? 0 : rawOffset.y,
-  };
+  // Then hard gap alignments cap how far the offset can go before a gap
+  // would close past zero and its triple change order. Both adjustments
+  // happen here, before the offset reaches either the dragged elements
+  // or their partners, so everything moves by one agreed amount.
+  const adjustedOffset = clampDragToGapAlignments(
+    elementsToUpdateIds,
+    {
+      x: lockedAxes.x ? 0 : rawOffset.x,
+      y: lockedAxes.y ? 0 : rawOffset.y,
+    },
+    pointerDownState.originalElements,
+    scene.getNonDeletedElementsMap(),
+  );
 
   elementsToUpdate.forEach((element) => {
     const isArrow = !isArrowElement(element);
