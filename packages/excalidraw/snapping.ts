@@ -10,6 +10,7 @@ import {
 import { TOOL_TYPE, KEYS, arrayToMap } from "@excalidraw/common";
 import {
   clampDragToGapAlignments,
+  hasHardGapAlignmentAmong,
   getAlignmentLockedAxes,
   getAlignmentMovers,
   getCommonBounds,
@@ -77,6 +78,11 @@ export type Gap = {
   //                               ↑ end side
   startBounds: Bounds;
   endBounds: Bounds;
+  /** ids behind each side's bounds — a maximum group, so possibly
+   * several. Carried so a gap can be tested against the hard equal-gap
+   * links, which are stated in element ids. */
+  startIds: readonly string[];
+  endIds: readonly string[];
   startSide: [GlobalPoint, GlobalPoint];
   endSide: [GlobalPoint, GlobalPoint];
   overlap: InclusiveRange;
@@ -369,28 +375,30 @@ export const getVisibleGaps = (
       (elementsGroup) =>
         !(elementsGroup.length === 1 && isBoundToContainer(elementsGroup[0])),
     )
-    .map(
-      (group) =>
-        getCommonBounds(group).map((bound) =>
-          round(bound),
-        ) as unknown as Bounds,
-    );
+    .map((group) => ({
+      bounds: getCommonBounds(group).map((bound) =>
+        round(bound),
+      ) as unknown as Bounds,
+      ids: group.map((element) => element.id),
+    }));
 
-  const horizontallySorted = referenceBounds.sort((a, b) => a[0] - b[0]);
+  const horizontallySorted = referenceBounds.sort(
+    (a, b) => a.bounds[0] - b.bounds[0],
+  );
 
   const horizontalGaps: Gap[] = [];
 
   let c = 0;
 
   horizontal: for (let i = 0; i < horizontallySorted.length; i++) {
-    const startBounds = horizontallySorted[i];
+    const { bounds: startBounds, ids: startIds } = horizontallySorted[i];
 
     for (let j = i + 1; j < horizontallySorted.length; j++) {
       if (++c > VISIBLE_GAPS_LIMIT_PER_AXIS) {
         break horizontal;
       }
 
-      const endBounds = horizontallySorted[j];
+      const { bounds: endBounds, ids: endIds } = horizontallySorted[j];
 
       const [, startMinY, startMaxX, startMaxY] = startBounds;
       const [endMinX, endMinY, , endMaxY] = endBounds;
@@ -405,6 +413,8 @@ export const getVisibleGaps = (
         horizontalGaps.push({
           startBounds,
           endBounds,
+          startIds,
+          endIds,
           startSide: [
             pointFrom(startMaxX, startMinY),
             pointFrom(startMaxX, startMaxY),
@@ -420,20 +430,22 @@ export const getVisibleGaps = (
     }
   }
 
-  const verticallySorted = referenceBounds.sort((a, b) => a[1] - b[1]);
+  const verticallySorted = referenceBounds.sort(
+    (a, b) => a.bounds[1] - b.bounds[1],
+  );
 
   const verticalGaps: Gap[] = [];
 
   c = 0;
 
   vertical: for (let i = 0; i < verticallySorted.length; i++) {
-    const startBounds = verticallySorted[i];
+    const { bounds: startBounds, ids: startIds } = verticallySorted[i];
 
     for (let j = i + 1; j < verticallySorted.length; j++) {
       if (++c > VISIBLE_GAPS_LIMIT_PER_AXIS) {
         break vertical;
       }
-      const endBounds = verticallySorted[j];
+      const { bounds: endBounds, ids: endIds } = verticallySorted[j];
 
       const [startMinX, , startMaxX, startMaxY] = startBounds;
       const [endMinX, endMinY, endMaxX] = endBounds;
@@ -448,6 +460,8 @@ export const getVisibleGaps = (
         verticalGaps.push({
           startBounds,
           endBounds,
+          startIds,
+          endIds,
           startSide: [
             pointFrom(startMinX, startMaxY),
             pointFrom(startMaxX, startMaxY),
@@ -491,6 +505,24 @@ const getGapSnaps = (
   if (visibleGaps) {
     const { horizontalGaps, verticalGaps } = visibleGaps;
 
+    // A gap the selection is already hard-linked to is not on offer: the
+    // spacing is kept by the constraint, so a transient guide proposing
+    // it would only restate what the scene enforces — and its line would
+    // be drawn from the cache's pre-drag bounds of partners that are
+    // comoving. The hard guide (drawn solid, with its equals badges) is
+    // what reports the relationship during the drag instead. Same reason
+    // `getReferenceSnapPoints` masks hard-aligned partners.
+    const elementsMap = app.scene.getNonDeletedElementsMap();
+    const selectedIds = selectedElements.map((element) => element.id);
+    const alreadyHard = (axis: "x" | "y", gap: Gap) =>
+      hasHardGapAlignmentAmong(
+        axis,
+        selectedIds,
+        gap.startIds,
+        gap.endIds,
+        elementsMap,
+      );
+
     const [minX, minY, maxX, maxY] = getDraggedElementsBounds(
       selectedElements,
       dragOffset,
@@ -499,7 +531,10 @@ const getGapSnaps = (
     const centerY = (minY + maxY) / 2;
 
     for (const gap of horizontalGaps) {
-      if (!rangesOverlap(rangeInclusive(minY, maxY), gap.overlap)) {
+      if (
+        !rangesOverlap(rangeInclusive(minY, maxY), gap.overlap) ||
+        alreadyHard("x", gap)
+      ) {
         continue;
       }
 
@@ -568,7 +603,10 @@ const getGapSnaps = (
       }
     }
     for (const gap of verticalGaps) {
-      if (!rangesOverlap(rangeInclusive(minX, maxX), gap.overlap)) {
+      if (
+        !rangesOverlap(rangeInclusive(minX, maxX), gap.overlap) ||
+        alreadyHard("y", gap)
+      ) {
         continue;
       }
 

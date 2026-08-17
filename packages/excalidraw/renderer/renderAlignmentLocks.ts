@@ -212,6 +212,27 @@ const drawAnvil = (
   context.restore();
 };
 
+/**
+ * Whether this badge is the one the pointer is over. Matched by position
+ * because that is what `App`'s hit-test reports and what the badge is
+ * drawn at — both come from the same guide geometry in the same frame,
+ * so they agree exactly; the epsilon is only there to keep a float
+ * round-trip from silently dropping the highlight.
+ */
+const HOVER_MATCH_EPSILON = 0.01;
+
+const isHoveredIcon = (
+  appState: InteractiveCanvasAppState,
+  icon: readonly [number, number],
+): boolean => {
+  const hovered = appState.hoveredAlignmentIcon;
+  return (
+    !!hovered &&
+    Math.abs(hovered[0] - icon[0]) < HOVER_MATCH_EPSILON &&
+    Math.abs(hovered[1] - icon[1]) < HOVER_MATCH_EPSILON
+  );
+};
+
 export const renderAlignmentLocks = (
   context: CanvasRenderingContext2D,
   appState: InteractiveCanvasAppState,
@@ -221,7 +242,9 @@ export const renderAlignmentLocks = (
   // While dragging, keep the persisted hard lines visible (partners are
   // following), but drop the soft coincidences — those are an at-rest
   // affordance and the transient snap guides already cover the live
-  // case. Padlocks are at-rest only (not clickable mid-drag).
+  // case. Whatever line is drawn keeps its padlock: the badge is what
+  // says the line is a kept alignment rather than a passing snap, so a
+  // hard line without one reads as the wrong thing.
   const dragging = appState.selectedElementsAreBeingDragged;
   const lines = getAlignmentGuideLines(selectedElements, elementsMap).filter(
     (line) => !dragging || line.guide.hard,
@@ -257,10 +280,16 @@ export const renderAlignmentLocks = (
     }
   }
 
-  if (!dragging) {
-    for (const { guide, icon } of lines) {
-      drawAlignmentPadlock(context, icon[0], icon[1], zoom, color, guide.hard);
-    }
+  for (const { guide, icon } of lines) {
+    drawAlignmentPadlock(
+      context,
+      icon[0],
+      icon[1],
+      zoom,
+      color,
+      guide.hard,
+      isHoveredIcon(appState, icon),
+    );
   }
 
   context.restore();
@@ -321,8 +350,8 @@ export const renderGapAlignmentLocks = (
   elementsMap: NonDeletedSceneElementsMap,
   selectedElements: readonly NonDeletedExcalidrawElement[],
 ) => {
-  // Same at-rest rule as the edge guides: during a drag the transient
-  // snap lines take over and the padlocks aren't clickable anyway.
+  // Same rule as the edge guides: during a drag the soft guides give way
+  // to the transient snap lines, and every drawn span keeps its badge.
   const dragging = appState.selectedElementsAreBeingDragged;
   const lines = getGapAlignmentGuideLines(selectedElements, elementsMap).filter(
     (line) => !dragging || line.guide.hard,
@@ -371,12 +400,18 @@ export const renderGapAlignmentLocks = (
     }
   }
 
-  if (!dragging) {
-    context.setLineDash([]);
-    for (const { guide, spans } of lines) {
-      for (const { icon } of spans) {
-        drawEqualsBadge(context, icon[0], icon[1], zoom, color, guide.hard);
-      }
+  context.setLineDash([]);
+  for (const { guide, spans } of lines) {
+    for (const { icon } of spans) {
+      drawEqualsBadge(
+        context,
+        icon[0],
+        icon[1],
+        zoom,
+        color,
+        guide.hard,
+        isHoveredIcon(appState, icon),
+      );
     }
   }
 

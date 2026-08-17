@@ -1,4 +1,9 @@
-import { rangeInclusive, rangeIntersection, rangesOverlap } from "@excalidraw/math";
+import {
+  clamp,
+  rangeInclusive,
+  rangeIntersection,
+  rangesOverlap,
+} from "@excalidraw/math";
 
 import { getElementBounds } from "./bounds";
 import {
@@ -242,15 +247,26 @@ const measureTriple = (
 
   const gaps = [span(a, b), span(b, c)] as const;
 
-  // What all three share on the perpendicular axis. Only each *pair* is
-  // required to overlap, and once a triple has been squeezed shut not
-  // even that holds; the middle element's own centre is the fallback,
-  // since it is the one member both gaps touch.
-  const pairOverlap = rangeIntersection(a.across, b.across);
-  const shared = pairOverlap && rangeIntersection(pairOverlap, c.across);
-  const across = shared
-    ? (shared[0] + shared[1]) / 2
-    : (b.across[0] + b.across[1]) / 2;
+  // The centre of what all three share on the perpendicular axis,
+  // written as bounds rather than as a set so it survives the band
+  // closing. Only each *pair* is required to overlap, so the three-way
+  // band can be empty — and for a hard triple, dragged far enough, the
+  // pairs can separate too.
+  //
+  // `lo` and `hi` are each a max/min of continuous functions of
+  // position, so their midpoint is continuous whether or not lo <= hi:
+  // at the instant the band closes lo === hi, and the midpoint is
+  // exactly that last shared point. Testing for emptiness and falling
+  // back elsewhere is what would make the guide jump mid-drag, so we
+  // don't test — past closure the midpoint just keeps drifting between
+  // the members.
+  const lo = Math.max(a.across[0], b.across[0], c.across[0]);
+  const hi = Math.min(a.across[1], b.across[1], c.across[1]);
+  // Held inside the middle element, the one member both gaps touch, so
+  // a wide separation can't leave the guide floating in empty space.
+  // A no-op while the band exists (it is a subrange of b), so this costs
+  // nothing in the ordinary case and only bounds the drift after.
+  const across = clamp((lo + hi) / 2, b.across[0], b.across[1]);
 
   return { gaps, across };
 };
@@ -630,6 +646,42 @@ const collectHardTriples = (
     }
   }
   return [...byKey.values()];
+};
+
+/**
+ * Whether one hard equal-gap triple on `axis` already contains all three
+ * participants — a dragged selection and the two elements bounding a
+ * candidate gap.
+ *
+ * Each participant arrives as a list of ids because snapping works in
+ * maximum groups, whose bounds are the union of several elements; any
+ * member matching is enough. Roles aren't checked: if the same three
+ * elements are already pinned to equal spacing, none of the arrangements
+ * the snapper might offer between them is news.
+ *
+ * Used by `snapping.ts` to drop transient gap guides that only restate a
+ * constraint the scene already holds — the equal-gap counterpart of
+ * masking a hard-aligned partner out of the reference snap points.
+ */
+export const hasHardGapAlignmentAmong = (
+  axis: Axis,
+  a: readonly string[],
+  b: readonly string[],
+  c: readonly string[],
+  elementsMap: ElementsMap,
+): boolean => {
+  for (const id of a) {
+    for (const link of elementsMap.get(id)?.gapAlignments ?? []) {
+      if (
+        link.axis === axis &&
+        b.some((other) => link.ids.includes(other)) &&
+        c.some((other) => link.ids.includes(other))
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
 };
 
 /**

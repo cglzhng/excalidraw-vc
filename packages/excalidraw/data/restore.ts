@@ -596,6 +596,7 @@ export const restoreElement = (
         restoreLineHeight({ ...element, fontSize, fontFamily, text });
       element = restoreElementWithProperties(element, {
         fontSize,
+        authoredFontSize: element.authoredFontSize,
         fontFamily,
         text,
         textAlign: element.textAlign || DEFAULT_TEXT_ALIGN,

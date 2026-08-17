@@ -311,10 +311,21 @@ const changeFontSize = (
         newFontSizes.add(newFontSize);
         const container = app.scene.getContainerElement(oldElement);
 
-        let newElement: ExcalidrawTextElement = newElementWith(
+        const fontSizeUpdate = getBaseFontSizeUpdate(
           oldElement,
-          getBaseFontSizeUpdate(oldElement, newFontSize, elementsMap),
+          newFontSize,
+          elementsMap,
         );
+        let newElement: ExcalidrawTextElement = newElementWith(oldElement, {
+          ...fontSizeUpdate,
+          // picking a size *is* authoring one; auto-fitting may shrink
+          // the rendered `fontSize` again right after, but this is the
+          // size the text belongs at. A sticky note's label records it
+          // as `baseFontSize` instead.
+          ...("fontSize" in fontSizeUpdate
+            ? { authoredFontSize: newFontSize }
+            : {}),
+        });
         redrawTextBoundingBox(
           newElement,
           container,
