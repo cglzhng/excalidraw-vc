@@ -73,11 +73,12 @@ export const classifyEntries = (
   groupSizeCache: Map<string, number>,
   selectedElementIds: ReadonlySet<string> = new Set(),
 ): LogOperation[] => {
-  // Pre-pass 0: drop link changes that aren't changes (see
+  // Pre-pass 0: drop link changes that aren't changes, and collapse a
+  // bound text's derived font size onto its authored one (see
   // `stripPhantomLinkChanges`). Done on the entries themselves rather
   // than per-classifier, so nothing downstream — including the `raw`
-  // op's property list in the panel — ever sees a phantom.
-  entries = stripPhantomLinkChanges(entries);
+  // op's property list in the panel — ever sees them.
+  entries = stripPhantomLinkChanges(entries, changedElements);
 
   // Pre-pass A: identify entries whose geometric change is purely a
   // consequence of something else being transformed in the same moment
@@ -539,6 +540,37 @@ const hasRealProperties = (map: LogPropertyMap): boolean =>
   Object.keys(map).some((k) => !TRACKING_PROPS.has(k));
 
 /**
+ * Collapse a bound text's two font sizes into the one the user chose.
+ *
+ * `fontSize` on a bound text is derived: auto-fitting rewrites it
+ * whenever the container is resized or the text is typed into, so on its
+ * own it reports a size nobody picked. `authoredFontSize` is the size
+ * that was picked. Reporting the authored value *under the name*
+ * `fontSize` keeps one font-size row in the panel, reading in the units
+ * the user thinks in, and leaves the derived value out entirely.
+ *
+ * A change to `fontSize` alone is pure auto-fit and disappears.
+ */
+const foldAuthoredFontSize = (
+  before: LogPropertyMap,
+  after: LogPropertyMap,
+) => {
+  const authoredBefore = before.authoredFontSize;
+  const authoredAfter = after.authoredFontSize;
+  delete before.authoredFontSize;
+  delete after.authoredFontSize;
+
+  if (authoredBefore === authoredAfter) {
+    // the authored size held; whatever `fontSize` did was auto-fit
+    delete before.fontSize;
+    delete after.fontSize;
+    return;
+  }
+  before.fontSize = authoredBefore ?? before.fontSize;
+  after.fontSize = authoredAfter ?? after.fontSize;
+};
+
+/**
  * Remove `alignments` / `gapAlignments` from update entries where the
  * links are structurally identical, and drop entries left with nothing
  * else — the phantom *was* the whole entry.
@@ -556,6 +588,7 @@ const hasRealProperties = (map: LogPropertyMap): boolean =>
  */
 const stripPhantomLinkChanges = (
   entries: readonly LogEntry[],
+  changedElements: Record<string, OrderedExcalidrawElement>,
 ): readonly LogEntry[] => {
   const out: LogEntry[] = [];
   for (const entry of entries) {
@@ -567,7 +600,20 @@ const stripPhantomLinkChanges = (
               linkFieldEqual(field, entry),
           )
         : [];
-    if (phantom.length === 0) {
+    // Only bound text has an authored size to fold to; a plain text's
+    // `fontSize` is the authored one and passes through untouched.
+    const element = changedElements[entry.elementId] as
+      | { authoredFontSize?: number }
+      | undefined;
+    const fontSizeFolded =
+      entry.type === "update" &&
+      element?.authoredFontSize !== undefined &&
+      ("fontSize" in entry.before ||
+        "fontSize" in entry.after ||
+        "authoredFontSize" in entry.before ||
+        "authoredFontSize" in entry.after);
+
+    if (phantom.length === 0 && !fontSizeFolded) {
       out.push(entry);
       continue;
     }
@@ -577,6 +623,9 @@ const stripPhantomLinkChanges = (
     for (const field of phantom) {
       delete before[field];
       delete after[field];
+    }
+    if (fontSizeFolded) {
+      foldAuthoredFontSize(before, after);
     }
     if (hasRealProperties(before) || hasRealProperties(after)) {
       out.push({ ...entry, before, after });

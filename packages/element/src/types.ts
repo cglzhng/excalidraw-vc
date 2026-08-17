@@ -302,6 +302,15 @@ export type ExcalidrawTextElement = _ExcalidrawElementBase &
   Readonly<{
     type: "text";
     fontSize: number;
+    /**
+     * The font size the author chose, as distinct from `fontSize`, which
+     * auto-fitting derives from it and the container's size (see
+     * `fitBoundTextToContainer`). Recorded on bound text from the first
+     * fit onward and never cleared — it's what the text returns to when
+     * there's room, and the only one of the two the user meant. Setting
+     * the font size by hand replaces it.
+     */
+    authoredFontSize?: number;
     fontFamily: FontFamilyValues;
     text: string;
     textAlign: TextAlign;

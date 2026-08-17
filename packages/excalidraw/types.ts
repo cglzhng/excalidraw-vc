@@ -251,6 +251,7 @@ export type InteractiveCanvasAppState = Readonly<
     searchMatches: AppState["searchMatches"];
     activeLockedId: AppState["activeLockedId"];
     hoveredAlignmentAnchorId: AppState["hoveredAlignmentAnchorId"];
+    hoveredAlignmentIcon: AppState["hoveredAlignmentIcon"];
     alignmentResizeAnchorIds: AppState["alignmentResizeAnchorIds"];
     // Non-used but needed in binding highlight arrow overdraw
     hoveredElementIds: AppState["hoveredElementIds"];
@@ -579,6 +580,12 @@ export interface AppState {
    * purely a hover affordance, so it is deliberately not observed by the
    * store (it would otherwise emit a version-log moment per mouse move) */
   hoveredAlignmentAnchorId: string | null;
+  /** scene position of the alignment guide badge the pointer is over, if
+   * any. Identified by position rather than by guide because that is
+   * what both the hit-test and the renderer compute, and a guide has no
+   * id of its own. Transient hover affordance, so — like the anchor
+   * above — deliberately not observed by the store. */
+  hoveredAlignmentIcon: [number, number] | null;
   /** anchors currently refusing the in-progress resize, so the anvil
    * overlay can name them. Computed where the transform handle is known
    * (`maybeHandleResize`) rather than in the renderer, which never sees

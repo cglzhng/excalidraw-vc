@@ -8250,14 +8250,22 @@ class App extends React.Component<AppProps, AppState> {
         this.setState({ hoveredAlignmentAnchorId: hoveredAnchorId });
       }
 
-      // Same for a guide padlock. They're only drawn at rest (see
-      // `renderAlignmentLocks`), so don't offer the cursor mid-drag.
-      const overGuideIcon =
-        !this.state.selectedElementsAreBeingDragged &&
-        (!!this.getAlignmentGuideIconAt(scenePointer) ||
-          !!this.getGapAlignmentIconAt(scenePointer));
+      // Same for a guide badge. They stay clickable only at rest, so
+      // don't offer the cursor — or the hover halo — mid-drag.
+      const hoveredIcon = this.state.selectedElementsAreBeingDragged
+        ? null
+        : (
+            this.getAlignmentGuideIconAt(scenePointer) ??
+            this.getGapAlignmentIconAt(scenePointer)
+          )?.center ?? null;
+      if (
+        this.state.hoveredAlignmentIcon?.[0] !== hoveredIcon?.[0] ||
+        this.state.hoveredAlignmentIcon?.[1] !== hoveredIcon?.[1]
+      ) {
+        this.setState({ hoveredAlignmentIcon: hoveredIcon });
+      }
 
-      if (hoveredAnchorId || overGuideIcon) {
+      if (hoveredAnchorId || hoveredIcon) {
         this.cursor.set(CURSOR_TYPE.POINTER);
       } else if (
         hitElement &&

@@ -294,6 +294,10 @@ const changeFontSize = (
 
         let newElement: ExcalidrawTextElement = newElementWith(oldElement, {
           fontSize: newFontSize,
+          // picking a size *is* authoring one; auto-fitting may shrink
+          // the rendered `fontSize` again right after, but this is the
+          // size the text belongs at
+          authoredFontSize: newFontSize,
         });
         redrawTextBoundingBox(
           newElement,

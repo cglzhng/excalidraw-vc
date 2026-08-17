@@ -22,11 +22,11 @@ import {
   getResizedElementAbsoluteCoords,
 } from "./bounds";
 import { newElementWith } from "./mutateElement";
-import { getBoundTextMaxWidth } from "./textElement";
+import { fitBoundTextToContainer, getBoundTextMaxWidth } from "./textElement";
 import { normalizeText, measureText } from "./textMeasurements";
 import { wrapText } from "./textWrapping";
 
-import { isLineElement } from "./typeChecks";
+import { isArrowElement, isLineElement } from "./typeChecks";
 
 import type {
   ExcalidrawElement,
@@ -455,17 +455,34 @@ export const refreshTextDimensions = (
   if (textElement.isDeleted) {
     return;
   }
+
+  // Typing into a container refits the text to the box rather than
+  // pushing the box out to hold it (see `fitBoundTextToContainer`), so
+  // the font size is settled here — before wrapping, which depends on
+  // it. Arrow labels keep the old behaviour: their box is a fraction of
+  // the arrow, not a size the user set.
+  let { fontSize, authoredFontSize } = textElement;
+  if (container && !isArrowElement(container)) {
+    const fit = fitBoundTextToContainer(container, {
+      ...textElement,
+      originalText: text,
+    });
+    if (fit.kind === "refit") {
+      fontSize = fit.fontSize;
+      authoredFontSize = fit.authoredFontSize;
+    }
+  }
+  const refitted = { ...textElement, fontSize };
+
   if (container || !textElement.autoResize) {
     text = wrapText(
       text,
-      getFontString(textElement),
-      container
-        ? getBoundTextMaxWidth(container, textElement)
-        : textElement.width,
+      getFontString(refitted),
+      container ? getBoundTextMaxWidth(container, refitted) : textElement.width,
     );
   }
-  const dimensions = getAdjustedDimensions(textElement, elementsMap, text);
-  return { text, ...dimensions };
+  const dimensions = getAdjustedDimensions(refitted, elementsMap, text);
+  return { text, fontSize, authoredFontSize, ...dimensions };
 };
 
 export const newFreeDrawElement = (

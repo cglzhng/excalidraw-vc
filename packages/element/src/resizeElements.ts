@@ -49,6 +49,7 @@ import {
   handleBindTextResize,
   getBoundTextMaxWidth,
   computeBoundTextPosition,
+  fitBoundTextToContainer,
 } from "./textElement";
 import {
   getMinTextElementWidth,
@@ -1015,6 +1016,21 @@ export const resizeSingleElement = (
       );
       nextWidth = Math.max(nextWidth, minWidth);
       nextHeight = Math.max(nextHeight, minHeight);
+
+      // Below a certain size no font this text is allowed to use fits,
+      // and `handleBindTextResize` would fall back to growing the box —
+      // the very thing refitting exists to avoid. Refuse the frame
+      // instead, holding the size the element already has: that is the
+      // last one that did fit, since every earlier frame passed here too.
+      const probe = {
+        ...latestElement,
+        width: nextWidth,
+        height: nextHeight,
+      } as ExcalidrawElement;
+      if (fitBoundTextToContainer(probe, boundTextElement).kind === "overflows") {
+        nextWidth = latestElement.width;
+        nextHeight = latestElement.height;
+      }
     }
   }
 

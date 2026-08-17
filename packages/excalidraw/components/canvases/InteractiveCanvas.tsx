@@ -272,6 +272,7 @@ const getRelevantAppStateProps = (
   searchMatches: appState.searchMatches,
   activeLockedId: appState.activeLockedId,
   hoveredAlignmentAnchorId: appState.hoveredAlignmentAnchorId,
+  hoveredAlignmentIcon: appState.hoveredAlignmentIcon,
   alignmentResizeAnchorIds: appState.alignmentResizeAnchorIds,
   hoveredElementIds: appState.hoveredElementIds,
   debugVersionLogHighlightedElementIds:

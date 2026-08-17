@@ -3,6 +3,7 @@ import type { Bounds } from "@excalidraw/common";
 import { updateBoundElements } from "./binding";
 import { getElementBounds } from "./bounds";
 import { newElementWith } from "./mutateElement";
+import { getBoundTextElement } from "./textElement";
 import { isBoundToContainer, isLinearElement } from "./typeChecks";
 
 import type { PointerDownState } from "@excalidraw/excalidraw/types";
@@ -867,14 +868,28 @@ export const dragAlignedElements = (
     if (!element) {
       continue;
     }
-    const original = originalElements.get(id) ?? element;
     const dx = offset.x * (xFactors.get(id) ?? 0);
     const dy = offset.y * (yFactors.get(id) ?? 0);
 
-    scene.mutateElement(element, {
-      x: original.x + dx,
-      y: original.y + dy,
-    });
+    const translate = (target: ExcalidrawElement) => {
+      const original = originalElements.get(target.id) ?? target;
+      scene.mutateElement(target, {
+        x: original.x + dx,
+        y: original.y + dy,
+      });
+    };
+
+    translate(element);
+    // A container's label is positioned absolutely rather than relative
+    // to its container, so it has to be carried by hand — exactly as the
+    // direct drag does in `dragElements.ts`. That code also skips arrow
+    // labels (their position is recomputed at render time); no check is
+    // needed here, since `isAlignable` keeps arrows out of alignment
+    // altogether.
+    const boundText = getBoundTextElement(element, elementsMap);
+    if (boundText) {
+      translate(boundText);
+    }
     updateBoundElements(element, scene);
   }
 };
@@ -1013,11 +1028,20 @@ export const applyAlignmentDeltas = (
     if (!partner) {
       continue;
     }
-    const original = originalElements.get(id) ?? partner;
-    scene.mutateElement(partner, {
-      x: original.x + (dxById.get(id) ?? 0),
-      y: original.y + (dyById.get(id) ?? 0),
-    });
+    const dx = dxById.get(id) ?? 0;
+    const dy = dyById.get(id) ?? 0;
+
+    const translate = (target: ExcalidrawElement) => {
+      const original = originalElements.get(target.id) ?? target;
+      scene.mutateElement(target, { x: original.x + dx, y: original.y + dy });
+    };
+
+    translate(partner);
+    // the container's label rides along — see `dragAlignedElements`
+    const boundText = getBoundTextElement(partner, elementsMap);
+    if (boundText) {
+      translate(boundText);
+    }
     updateBoundElements(partner, scene);
   }
 };

@@ -3,6 +3,7 @@ import {
   ARROW_LABEL_WIDTH_FRACTION,
   BOUND_TEXT_PADDING,
   DEFAULT_FONT_SIZE,
+  MIN_FONT_SIZE,
   TEXT_ALIGN,
   VERTICAL_ALIGN,
   getFontString,
@@ -65,6 +66,8 @@ export const redrawTextBoundingBox = (
     text: textElement.text,
     width: textElement.width,
     height: textElement.height,
+    fontSize: textElement.fontSize,
+    authoredFontSize: textElement.authoredFontSize,
     angle: (container
       ? isArrowElement(container)
         ? 0
@@ -104,6 +107,25 @@ export const redrawTextBoundingBox = (
     );
     const maxContainerWidth = getBoundTextMaxWidth(container, textElement);
 
+    // Typing refits the text rather than growing the box — the same rule
+    // a resize follows. Deleting text back out grows it again, up to the
+    // author's size. Only the overflow branches below are bypassed; if
+    // the text can't be made to fit at all, they still run.
+    if (!isArrowElement(container)) {
+      const fit = fitBoundTextToContainer(container, textElement);
+      if (fit.kind === "refit") {
+        boundTextUpdates.fontSize = fit.fontSize;
+        boundTextUpdates.authoredFontSize = fit.authoredFontSize;
+        boundTextUpdates.text = fit.text;
+        boundTextUpdates.height = fit.height;
+        if (textElement.autoResize) {
+          boundTextUpdates.width = fit.width;
+        }
+        metrics.width = fit.width;
+        metrics.height = fit.height;
+      }
+    }
+
     if (!isArrowElement(container) && metrics.height > maxContainerHeight) {
       const nextHeight = computeContainerDimensionForBoundText(
         metrics.height,
@@ -139,6 +161,99 @@ export const redrawTextBoundingBox = (
   scene.mutateElement(textElement, boundTextUpdates);
 };
 
+/** Bisection steps spent locating the largest font size that fits.
+ * Eight brings the bracket down to a fraction of a point, and the search
+ * only runs when the text has actually overflowed. */
+const FONT_FIT_PASSES = 8;
+
+export type BoundTextFit =
+  /** already laid out at the author's size, nothing to write */
+  | { kind: "fits" }
+  /** the font size (and hence the layout) has to change */
+  | {
+      kind: "refit";
+      fontSize: number;
+      /** the author's size, kept whether or not it's in force */
+      authoredFontSize: number;
+      text: string;
+      width: number;
+      height: number;
+    }
+  /** no allowed font size fits — the container is simply too small */
+  | { kind: "overflows" };
+
+/**
+ * Fit a bound text to its container by font size: shrink it when the box
+ * is too small for it, and grow it back — up to the size its author
+ * chose, held in `authoredFontSize` — when there's room again.
+ *
+ * Excalidraw's default is the opposite: a bound text that outgrows its
+ * container makes the *container* bigger, whether the text grew because
+ * it was typed into or because the container was narrowed. That turns a
+ * one-axis resize into a two-axis one, and it makes a container's size
+ * something its label can overrule. Refitting the text instead keeps the
+ * box the size the user gave it.
+ */
+export const fitBoundTextToContainer = (
+  container: ExcalidrawElement,
+  textElement: ExcalidrawTextElement,
+): BoundTextFit => {
+  const maxWidth = getBoundTextMaxWidth(container, textElement);
+  const maxHeight = getBoundTextMaxHeight(
+    container,
+    textElement as ExcalidrawTextElementWithContainer,
+  );
+
+  /** The text laid out at `fontSize`, wrapped to the container's width. */
+  const layoutAt = (fontSize: number) => {
+    const font = getFontString({ ...textElement, fontSize });
+    const text = wrapText(textElement.originalText, font, maxWidth);
+    const metrics = measureText(text, font, textElement.lineHeight);
+    return { fontSize, text, width: metrics.width, height: metrics.height };
+  };
+  const fits = (layout: { width: number; height: number }) =>
+    layout.height <= maxHeight && layout.width <= maxWidth;
+
+  // Everything is measured against the author's size, not the current
+  // one — that's what lets a text that was shrunk earlier come back.
+  // It is recorded permanently, not just while a shrink is in force: it
+  // is the size the user actually chose, and `fontSize` is a derived
+  // value that any container edit may overwrite.
+  const authored = textElement.authoredFontSize ?? textElement.fontSize;
+  const atAuthored = layoutAt(authored);
+  if (fits(atAuthored)) {
+    return textElement.fontSize === authored &&
+      textElement.authoredFontSize === authored
+      ? { kind: "fits" }
+      : { kind: "refit", authoredFontSize: authored, ...atAuthored };
+  }
+
+  // Even the smallest font we allow can overflow — a container narrower
+  // than one unbreakable word, say. There is no fit to report.
+  const smallest = layoutAt(MIN_FONT_SIZE);
+  if (!fits(smallest)) {
+    return { kind: "overflows" };
+  }
+
+  // Both dimensions shrink monotonically with the font size (a smaller
+  // font is narrower, wraps to no more lines, and has a shorter line
+  // box), so the largest fitting size can be bisected for.
+  let low = MIN_FONT_SIZE;
+  let high = authored;
+  let best = smallest;
+  for (let i = 0; i < FONT_FIT_PASSES; i++) {
+    const mid = (low + high) / 2;
+    const layout = layoutAt(mid);
+    if (fits(layout)) {
+      best = layout;
+      low = mid;
+    } else {
+      high = mid;
+    }
+  }
+  return { kind: "refit", authoredFontSize: authored, ...best };
+};
+
 export const handleBindTextResize = (
   container: ExcalidrawElement,
   scene: Scene,
@@ -161,6 +276,8 @@ export const handleBindTextResize = (
     let text = textElement.text;
     let nextHeight = textElement.height;
     let nextWidth = textElement.width;
+    let nextFontSize = textElement.fontSize;
+    let nextAuthoredFontSize = textElement.authoredFontSize;
     const maxWidth = getBoundTextMaxWidth(container, textElement);
     const maxHeight = getBoundTextMaxHeight(container, textElement);
     let containerHeight = container.height;
@@ -183,6 +300,23 @@ export const handleBindTextResize = (
       nextHeight = metrics.height;
       nextWidth = metrics.width;
     }
+
+    // Refit the text to the box rather than letting it push the box back
+    // out. Runs on every resize, not just the overflowing ones, so that
+    // a text shrunk earlier grows again as the container is enlarged.
+    // Skipped when the gesture already rescales the font (aspect-ratio
+    // drags) and for arrow labels, whose box isn't a size the user sets.
+    if (!shouldMaintainAspectRatio && !isArrowElement(container)) {
+      const fit = fitBoundTextToContainer(container, textElement);
+      if (fit.kind === "refit") {
+        nextFontSize = fit.fontSize;
+        nextAuthoredFontSize = fit.authoredFontSize;
+        text = fit.text;
+        nextWidth = fit.width;
+        nextHeight = fit.height;
+      }
+    }
+
     // increase height in case text element height exceeds
     if (nextHeight > maxHeight) {
       containerHeight = computeContainerDimensionForBoundText(
@@ -215,6 +349,8 @@ export const handleBindTextResize = (
       text,
       width: nextWidth,
       height: nextHeight,
+      fontSize: nextFontSize,
+      authoredFontSize: nextAuthoredFontSize,
     });
 
     if (!isArrowElement(container)) {

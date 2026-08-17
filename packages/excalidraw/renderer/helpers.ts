@@ -67,6 +67,37 @@ const fillBadgeDisc = (
 const badgeGlyphColor = (color: string, filled: boolean): string =>
   filled ? "#ffffff" : color;
 
+/** How far the hover halo extends past the badge's rim, as a multiple of
+ * the badge radius. Matched to the ring an arrow's point handle gets. */
+const BADGE_HOVER_HALO_SCALE = 1.6;
+const BADGE_HOVER_HALO_OPACITY = 0.35;
+
+/**
+ * The soft ring drawn behind a badge the pointer is over — the same
+ * affordance a linear element's point handle gets on hover
+ * (`renderPointHighlight`), in the badge's own colour rather than the
+ * handle purple.
+ *
+ * Drawn first, so the badge's opaque disc covers the middle and only the
+ * fringe shows. It carries no state of its own: it says "clickable", and
+ * the disc underneath still says locked or not.
+ */
+const drawBadgeHoverHalo = (
+  context: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  color: string,
+) => {
+  context.save();
+  context.globalAlpha = BADGE_HOVER_HALO_OPACITY;
+  context.fillStyle = color;
+  context.beginPath();
+  context.arc(cx, cy, r * BADGE_HOVER_HALO_SCALE, 0, Math.PI * 2);
+  context.fill();
+  context.restore();
+};
+
 /** The padlock silhouette itself, in the current stroke / fill colour.
  * `locked` closes the shackle; open lifts and tilts it to one side. */
 const strokePadlockGlyph = (
@@ -151,9 +182,14 @@ export const drawAlignmentPadlock = (
   zoom: number,
   color: string,
   locked: boolean,
+  hovered = false,
 ) => {
   const r = INDICATOR_BADGE_RADIUS / zoom;
   const glyph = badgeGlyphColor(color, locked);
+
+  if (hovered) {
+    drawBadgeHoverHalo(context, cx, cy, r, color);
+  }
 
   context.save();
   context.lineWidth = Math.max(1 / zoom, r * 0.14);
@@ -194,10 +230,15 @@ export const drawEqualsBadge = (
   zoom: number,
   color: string,
   locked: boolean,
+  hovered = false,
 ) => {
   const r = INDICATOR_BADGE_RADIUS / zoom;
   const halfBar = r * 0.44;
   const barGap = r * 0.26;
+
+  if (hovered) {
+    drawBadgeHoverHalo(context, cx, cy, r, color);
+  }
 
   context.save();
   context.lineWidth = Math.max(1 / zoom, r * 0.14);
