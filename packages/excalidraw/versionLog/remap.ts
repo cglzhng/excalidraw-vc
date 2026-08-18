@@ -122,8 +122,8 @@ export const applyRemapsToOp = (
       // the remaining links are still valid. Only if nothing survives
       // is the op skipped outright.
       const touches = (id: string) => remaps.has(id);
-      // A link's referents: the partner of an edge link, or all three
-      // members of an equal-gap triple.
+      // A link's referents: the partner of an edge link, or every
+      // member of an equal-gap chain.
       const linkReferents = (
         link: ElementAlignment | ElementGapAlignment,
       ): readonly string[] =>
@@ -187,15 +187,16 @@ export const applyRemapsToOp = (
           : { ...link, elementId: partner };
       };
 
-      // A triple missing a member says nothing, so a skipped referent
-      // drops the whole link rather than shrinking it.
+      // A skipped referent drops just that member: a chain of four still
+      // means something with one gone. Below three there are no longer
+      // two gaps to hold equal, so the link goes.
       const remapGapLink = (
         link: ElementGapAlignment,
       ): ElementGapAlignment | null => {
-        const ids = link.ids.map((id: string) => resolve(id));
-        return ids.some((id) => id == null)
-          ? null
-          : { ...link, ids: ids as unknown as ElementGapAlignment["ids"] };
+        const ids = link.ids
+          .map((id: string) => resolve(id))
+          .filter((id): id is string => id != null);
+        return ids.length < 3 ? null : { ...link, ids };
       };
 
       const elementIds = op.elementIds

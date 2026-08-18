@@ -13,8 +13,11 @@ import {
   getAlignmentDragFactors,
   isAlignable,
   isAlignmentAnchor,
+  resizeMovesEdge,
 } from "./alignment";
 import { newElementWith } from "./mutateElement";
+
+import type { ResizeEdgeOpts } from "./alignment";
 
 import type { Bounds } from "@excalidraw/common";
 import type { InclusiveRange } from "@excalidraw/math";
@@ -165,13 +168,13 @@ const enumerateGaps = (
 
 /**
  * Where one gap of a guide sits along the guide's axis. The
- * perpendicular coordinate is `GapAlignmentGuide.across`, shared by both
- * gaps of a triple.
+ * perpendicular coordinate is `GapAlignmentGuide.across`, shared by every
+ * gap of the chain.
  *
- * `to` may be *less* than `from`: a hard triple whose members have been
+ * `to` may be *less* than `from`: a hard chain whose members have been
  * pushed past each other has negative gaps, which is a perfectly valid
- * state of the constraint (both gaps are still equal) and one the
- * propagators will reach the moment an outer element is dragged far
+ * state of the constraint (they are still all equal) and one the
+ * propagators will reach the moment an end element is dragged far
  * enough. Consumers should treat the pair as an interval, not a
  * direction.
  */
@@ -188,15 +191,16 @@ export type GapSpan = {
  */
 export type GapAlignmentGuide = {
   axis: Axis;
-  ids: readonly [string, string, string];
+  /** the chain, ordered along `axis`; at least 3 long */
+  ids: readonly string[];
   hard: boolean;
-  /** the two gaps being held equal, in `ids` order */
-  gaps: readonly [GapSpan, GapSpan];
+  /** the gaps being held equal — one per adjacent pair, in `ids` order */
+  gaps: readonly GapSpan[];
   /**
-   * The perpendicular coordinate both gaps are drawn at: the centre of
-   * what all *three* members share on that axis.
+   * The perpendicular coordinate every gap is drawn at: the centre of
+   * what *all* the members share on that axis.
    *
-   * One coordinate, not one per gap. The two gaps are halves of a single
+   * One coordinate, not one per gap. The gaps are parts of a single
    * measurement and have to sit on a single line to read as one — and
    * this is where upstream puts the transient gap snap line during a
    * drag (`createGapSnapLines` intersects the outer pair's overlap with
@@ -210,48 +214,50 @@ const guideKey = (axis: Axis, ids: readonly string[]): string =>
   `${axis}:${ids.join("|")}`;
 
 /**
- * The two gaps of a triple, measured from the elements' current bounds.
- * Returns null only when a member has been deleted.
+ * The gaps of a chain, measured from the elements' current bounds — one
+ * per adjacent pair. Returns null only when a member has been deleted,
+ * or the chain is too short to have two gaps to hold equal.
  *
- * The measurement is signed and unconditional: whatever the three
- * elements are currently doing, the stored order still names two spans,
- * and equal negative spans satisfy the constraint exactly as equal
- * positive ones do. Requiring positive gaps here would blank the guide
- * the moment a triple was squeezed shut — precisely when the user most
- * needs to see that the relationship is still there — even though the
- * propagators are still holding it.
+ * The measurement is signed and unconditional: whatever the elements are
+ * currently doing, the stored order still names the same spans, and
+ * equal negative spans satisfy the constraint exactly as equal positive
+ * ones do. Requiring positive gaps here would blank the guide the moment
+ * a chain was squeezed shut — precisely when the user most needs to see
+ * that the relationship is still there — even though the propagators are
+ * still holding it.
  */
-const measureTriple = (
-  ids: readonly [string, string, string],
+const measureChain = (
+  ids: readonly string[],
   axis: Axis,
   elementsMap: ElementsMap,
-): { gaps: readonly [GapSpan, GapSpan]; across: number } | null => {
+): { gaps: readonly GapSpan[]; across: number } | null => {
+  if (ids.length < 3) {
+    return null;
+  }
   const perp = perpendicular(axis);
-  const boxes = ids.map((id) => {
+  const boxes: { along: InclusiveRange; across: InclusiveRange }[] = [];
+  for (const id of ids) {
     const element = elementsMap.get(id);
     if (!element || element.isDeleted) {
       return null;
     }
     const bounds = getElementBounds(element, elementsMap);
-    return { along: axisRange(bounds, axis), across: axisRange(bounds, perp) };
-  });
-  if (boxes.some((box) => box == null)) {
-    return null;
+    boxes.push({
+      along: axisRange(bounds, axis),
+      across: axisRange(bounds, perp),
+    });
   }
-  const [a, b, c] = boxes as NonNullable<(typeof boxes)[number]>[];
 
-  const span = (start: typeof a, end: typeof a): GapSpan => ({
-    from: start.along[1],
-    to: end.along[0],
-  });
+  const gaps: GapSpan[] = [];
+  for (let i = 0; i < boxes.length - 1; i++) {
+    gaps.push({ from: boxes[i].along[1], to: boxes[i + 1].along[0] });
+  }
 
-  const gaps = [span(a, b), span(b, c)] as const;
-
-  // The centre of what all three share on the perpendicular axis,
+  // The centre of what every member shares on the perpendicular axis,
   // written as bounds rather than as a set so it survives the band
-  // closing. Only each *pair* is required to overlap, so the three-way
-  // band can be empty — and for a hard triple, dragged far enough, the
-  // pairs can separate too.
+  // closing. Only each *pair* is required to overlap, so the shared band
+  // can be empty — and for a hard chain, dragged far enough, even the
+  // pairs can separate.
   //
   // `lo` and `hi` are each a max/min of continuous functions of
   // position, so their midpoint is continuous whether or not lo <= hi:
@@ -260,26 +266,32 @@ const measureTriple = (
   // back elsewhere is what would make the guide jump mid-drag, so we
   // don't test — past closure the midpoint just keeps drifting between
   // the members.
-  const lo = Math.max(a.across[0], b.across[0], c.across[0]);
-  const hi = Math.min(a.across[1], b.across[1], c.across[1]);
-  // Held inside the middle element, the one member both gaps touch, so
-  // a wide separation can't leave the guide floating in empty space.
-  // A no-op while the band exists (it is a subrange of b), so this costs
-  // nothing in the ordinary case and only bounds the drift after.
-  const across = clamp((lo + hi) / 2, b.across[0], b.across[1]);
+  const lo = Math.max(...boxes.map((box) => box.across[0]));
+  const hi = Math.min(...boxes.map((box) => box.across[1]));
+  // Held inside the median member, so a wide separation can't leave the
+  // guide floating in empty space. A no-op while the band exists (it is
+  // a subrange of every member), so this costs nothing in the ordinary
+  // case and only bounds the drift after.
+  const median = boxes[Math.floor(boxes.length / 2)].across;
+  const across = clamp((lo + hi) / 2, median[0], median[1]);
 
   return { gaps, across };
 };
 
 /**
  * Every equal-gap line to draw for the current selection: the persisted
- * hard triples, plus every *other* live equal-gap triple involving a
+ * hard chains, plus every *other* live equal-gap chain involving a
  * selected element, as a soft convertible guide.
  *
- * Only triples containing a selected element are enumerated — a scene's
+ * Only chains containing a selected element are enumerated — a scene's
  * full set of equal gaps is both enormous and meaningless without a
- * subject. A selected element can occupy any of the three roles, so all
- * three are searched.
+ * subject. A selected element can occupy any position in a chain, so a
+ * triple is sought around it in all three roles and then grown outward.
+ *
+ * Soft chains are reported **maximal**: four evenly spaced elements
+ * surface as one four-member guide rather than as the two overlapping
+ * triples inside it, which is both what the arrangement looks like and
+ * what the user would want a padlock to pin.
  */
 export const getGapAlignmentGuides = (
   selected: readonly NonDeletedExcalidrawElement[],
@@ -288,16 +300,12 @@ export const getGapAlignmentGuides = (
   const guides: GapAlignmentGuide[] = [];
   const seen = new Set<string>();
 
-  const add = (
-    axis: Axis,
-    ids: readonly [string, string, string],
-    hard: boolean,
-  ) => {
+  const add = (axis: Axis, ids: readonly string[], hard: boolean) => {
     const key = guideKey(axis, ids);
     if (seen.has(key)) {
       return;
     }
-    const measured = measureTriple(ids, axis, elementsMap);
+    const measured = measureChain(ids, axis, elementsMap);
     if (!measured) {
       return;
     }
@@ -305,7 +313,7 @@ export const getGapAlignmentGuides = (
     guides.push({ axis, ids, hard, ...measured });
   };
 
-  // Hard links first, so a hard triple is never re-emitted as soft.
+  // Hard links first, so a hard chain is never re-emitted as soft.
   for (const element of selected) {
     for (const link of element.gapAlignments ?? []) {
       add(link.axis, link.ids, true);
@@ -325,10 +333,53 @@ export const getGapAlignmentGuides = (
     return guides;
   }
 
-  const equal = (a: Gap, b: Gap) => Math.abs(a.length - b.length) <= GAP_EPSILON;
+  const equal = (a: number, b: number) => Math.abs(a - b) <= GAP_EPSILON;
 
   for (const axis of ["x", "y"] as const) {
     const { gapsFrom, gapsTo } = enumerateGaps(candidates, elementsMap, axis);
+
+    /**
+     * Grow a seed triple into the longest run of the same gap in both
+     * directions, then emit it.
+     *
+     * Only the maximal run is emitted, so the sub-chains inside it never
+     * reach `add` and can't clutter the canvas with nested guides. Where
+     * several elements could continue the run (two shapes starting at
+     * the same coordinate, overlapping the chain perpendicular), the
+     * first is taken — `enumerateGaps` builds its lists in axis order,
+     * so the choice is at least stable from frame to frame.
+     *
+     * Termination is structural: a gap only ever runs from a lower
+     * coordinate to a higher one, so each step moves strictly along the
+     * axis and can't revisit a member.
+     */
+    const addMaximalChain = (seed: readonly string[], length: number) => {
+      const ids = [...seed];
+      const taken = new Set(ids);
+
+      for (;;) {
+        const next = (gapsFrom.get(ids[ids.length - 1]) ?? []).find(
+          (gap) => equal(gap.length, length) && !taken.has(gap.endId),
+        );
+        if (!next) {
+          break;
+        }
+        ids.push(next.endId);
+        taken.add(next.endId);
+      }
+      for (;;) {
+        const previous = (gapsTo.get(ids[0]) ?? []).find(
+          (gap) => equal(gap.length, length) && !taken.has(gap.startId),
+        );
+        if (!previous) {
+          break;
+        }
+        ids.unshift(previous.startId);
+        taken.add(previous.startId);
+      }
+
+      add(axis, ids, false);
+    };
 
     for (const id of selectedIds) {
       const before = gapsTo.get(id) ?? [];
@@ -337,8 +388,8 @@ export const getGapAlignmentGuides = (
       // selected element is the middle: a — [id] — c
       for (const left of before) {
         for (const right of after) {
-          if (equal(left, right)) {
-            add(axis, [left.startId, id, right.endId], false);
+          if (equal(left.length, right.length)) {
+            addMaximalChain([left.startId, id, right.endId], left.length);
           }
         }
       }
@@ -346,8 +397,8 @@ export const getGapAlignmentGuides = (
       // selected element is first: [id] — b — c
       for (const first of after) {
         for (const second of gapsFrom.get(first.endId) ?? []) {
-          if (equal(first, second)) {
-            add(axis, [id, first.endId, second.endId], false);
+          if (equal(first.length, second.length)) {
+            addMaximalChain([id, first.endId, second.endId], first.length);
           }
         }
       }
@@ -355,60 +406,182 @@ export const getGapAlignmentGuides = (
       // selected element is last: a — b — [id]
       for (const second of before) {
         for (const first of gapsTo.get(second.startId) ?? []) {
-          if (equal(first, second)) {
-            add(axis, [first.startId, second.startId, id], false);
+          if (equal(first.length, second.length)) {
+            addMaximalChain(
+              [first.startId, second.startId, id],
+              second.length,
+            );
           }
         }
       }
     }
   }
 
+  // A soft chain often runs through elements that are already hard-linked
+  // to each other — that is exactly the arrangement where locking it
+  // would extend the existing chain. The hard link has to be surfaced
+  // even though no *selected* element belongs to it, or the run it holds
+  // would be reported as unlocked: the renderer only suppresses a soft
+  // span where it can see a hard guide covering the same gap, and the
+  // padlocked badges the user should see come from that guide.
+  const reached = new Set(guides.flatMap((guide) => guide.ids));
+  for (const link of collectHardChains(elementsMap)) {
+    if (link.ids.some((id) => reached.has(id))) {
+      add(link.axis, link.ids, true);
+    }
+  }
+
   return guides;
 };
 
-const sameTriple = (
+const sameChain = (
   link: ElementGapAlignment,
   axis: Axis,
-  ids: readonly [string, string, string],
+  ids: readonly string[],
 ): boolean =>
   link.axis === axis &&
-  link.ids[0] === ids[0] &&
-  link.ids[1] === ids[1] &&
-  link.ids[2] === ids[2];
+  link.ids.length === ids.length &&
+  link.ids.every((id, index) => id === ids[index]);
+
+/**
+ * Order a set of members along `axis` and check they form one chain —
+ * every consecutive gap equal. Returns the ordered ids, or null if the
+ * members don't describe a single evenly spaced run (which is what
+ * stops two chains of different spacing from being merged just because
+ * they touch).
+ */
+const asOneChain = (
+  ids: readonly string[],
+  axis: Axis,
+  elementsMap: ElementsMap,
+): string[] | null => {
+  const ranges = new Map<string, InclusiveRange>();
+  for (const id of ids) {
+    const element = elementsMap.get(id);
+    if (!element || element.isDeleted) {
+      return null;
+    }
+    ranges.set(id, axisRange(getElementBounds(element, elementsMap), axis));
+  }
+  const ordered = [...ids].sort(
+    (a, b) => ranges.get(a)![0] - ranges.get(b)![0],
+  );
+
+  let first: number | null = null;
+  for (let i = 0; i < ordered.length - 1; i++) {
+    const gap = ranges.get(ordered[i + 1])![0] - ranges.get(ordered[i])![1];
+    if (first === null) {
+      first = gap;
+    } else if (Math.abs(gap - first) > GAP_EPSILON) {
+      return null;
+    }
+  }
+  return ordered;
+};
+
+/** Whether `part` appears as a consecutive slice of `chain` — i.e. the
+ * chain holds every gap the part holds. */
+const isContiguousRun = (
+  chain: readonly string[],
+  part: readonly string[],
+): boolean => {
+  for (let i = 0; i + part.length <= chain.length; i++) {
+    if (part.every((id, offset) => chain[i + offset] === id)) {
+      return true;
+    }
+  }
+  return false;
+};
 
 /**
  * Promote a soft equal-gap guide to a hard one (the padlock). The same
- * record is written to all three members — there is no reciprocal form
- * to derive, unlike an edge link.
+ * record is written to every member — there is no reciprocal form to
+ * derive, unlike an edge link.
+ *
+ * Locking a chain that continues one already locked **merges** them
+ * rather than adding a second link: A—B—C plus C—D—E becomes A—B—C—D—E.
+ * Two links over the same run would otherwise both be enforced, both be
+ * drawn, and have to be unlocked separately, while describing one
+ * arrangement. A candidate is absorbed only if it shares a member and
+ * the union is still a single evenly spaced run, so two groups that
+ * merely touch — or that are spaced differently — stay apart.
+ *
+ * The search repeats to a fixed point because one new chain can bridge
+ * two existing ones that had nothing in common until now.
  */
 export const lockGapAlignment = (
   guide: GapAlignmentGuide,
   elementsMap: ElementsMap,
 ): Map<string, ExcalidrawElement> => {
-  const updated = new Map<string, ExcalidrawElement>();
-  const link: ElementGapAlignment = { axis: guide.axis, ids: guide.ids };
+  const candidates = collectHardChains(elementsMap).filter(
+    (link) => link.axis === guide.axis,
+  );
 
-  for (const id of guide.ids) {
+  let ids: readonly string[] = guide.ids;
+  const tried = new Set<string>();
+  for (;;) {
+    const members = new Set(ids);
+    const candidate = candidates.find(
+      (link) =>
+        !tried.has(guideKey(link.axis, link.ids)) &&
+        link.ids.some((id) => members.has(id)),
+    );
+    if (!candidate) {
+      break;
+    }
+    tried.add(guideKey(candidate.axis, candidate.ids));
+    const merged = asOneChain(
+      [...new Set([...ids, ...candidate.ids])],
+      guide.axis,
+      elementsMap,
+    );
+    if (merged) {
+      ids = merged;
+    }
+  }
+
+  // Which existing links the new one replaces: those whose members are a
+  // *contiguous run* of it, so the new chain holds every gap they held.
+  // Sharing members isn't enough — a chain through every other element
+  // covers different gaps and is a constraint of its own, which locking
+  // this one must not quietly delete. Because a run's members are all in
+  // the new chain, no element is left holding a link to something the
+  // chain no longer mentions.
+  const link: ElementGapAlignment = { axis: guide.axis, ids };
+  const replaced = (l: ElementGapAlignment) =>
+    l.axis === guide.axis && isContiguousRun(ids, l.ids);
+
+  const updated = new Map<string, ExcalidrawElement>();
+  for (const id of ids) {
     const element = elementsMap.get(id);
     if (!element) {
-      // a triple is all-or-nothing: if any member is gone, lock nothing
+      // a chain is all-or-nothing: if any member is gone, lock nothing
       return new Map();
     }
     const existing = element.gapAlignments ?? [];
-    if (existing.some((l) => sameTriple(l, guide.axis, guide.ids))) {
+    if (existing.some((l) => sameChain(l, guide.axis, ids))) {
       continue;
     }
     updated.set(
       id,
-      newElementWith(element, { gapAlignments: [...existing, link] }),
+      newElementWith(element, {
+        gapAlignments: [...existing.filter((l) => !replaced(l)), link],
+      }),
     );
   }
   return updated;
 };
 
-/** Demote one hard equal-gap link back to soft: drop exactly that triple
- * from all three members. The elements stay equally spaced, so
- * `getGapAlignmentGuides` re-surfaces it as a soft guide immediately. */
+/**
+ * Demote a hard equal-gap link back to soft: drop the whole chain from
+ * every member, whichever of its badges was clicked.
+ *
+ * All of it, not just the clicked gap. Splitting reads as a fiddly
+ * partial edit of something the user thinks of as one arrangement, and
+ * an equal-gap chain is one assertion however many gaps it spans. The
+ * elements stay equally spaced, so `getGapAlignmentGuides` re-surfaces
+ * the whole thing as a soft guide immediately.
+ */
 export const unlockGapAlignment = (
   guide: GapAlignmentGuide,
   elementsMap: ElementsMap,
@@ -419,11 +592,11 @@ export const unlockGapAlignment = (
     if (!element?.gapAlignments?.length) {
       continue;
     }
-    const filtered = element.gapAlignments.filter(
-      (l) => !sameTriple(l, guide.axis, guide.ids),
+    const kept = element.gapAlignments.filter(
+      (l) => !sameChain(l, guide.axis, guide.ids),
     );
-    if (filtered.length !== element.gapAlignments.length) {
-      updated.set(id, newElementWith(element, { gapAlignments: filtered }));
+    if (kept.length !== element.gapAlignments.length) {
+      updated.set(id, newElementWith(element, { gapAlignments: kept }));
     }
   }
   return updated;
@@ -476,7 +649,7 @@ export const clampDragToGapAlignments = (
         : null;
     };
 
-    for (const link of collectHardTriples(elementsMap)) {
+    for (const link of collectHardChains(elementsMap)) {
       if (link.axis !== axis) {
         continue;
       }
@@ -484,13 +657,13 @@ export const clampDragToGapAlignments = (
       if (ranges.some((range) => range == null)) {
         continue;
       }
-      const [a, b, c] = ranges as InclusiveRange[];
-      const [fa, fb, fc] = link.ids.map((id) => factors.get(id) ?? 0);
+      const spans = ranges as InclusiveRange[];
+      const factorOf = link.ids.map((id) => factors.get(id) ?? 0);
 
-      for (const [gap, slope] of [
-        [b[0] - a[1], fb - fa],
-        [c[0] - b[1], fc - fb],
-      ]) {
+      // one bound per gap, over every adjacent pair in the chain
+      for (let i = 0; i < spans.length - 1; i++) {
+        const gap = spans[i + 1][0] - spans[i][1];
+        const slope = factorOf[i + 1] - factorOf[i];
         if (slope === 0 || gap < 0) {
           continue;
         }
@@ -544,7 +717,7 @@ export const clampSizeToGapAlignments = (
     return size;
   }
 
-  const triples = collectHardTriples(elementsMap).filter((link) =>
+  const triples = collectHardChains(elementsMap).filter((link) =>
     link.ids.includes(driver.id),
   );
   if (triples.length === 0) {
@@ -588,8 +761,12 @@ export const clampSizeToGapAlignments = (
         if (ranges.some((range) => range == null)) {
           return null;
         }
-        const [a, b, c] = ranges as InclusiveRange[];
-        return b[0] - a[1] + (c[0] - b[1]);
+        const spans = ranges as InclusiveRange[];
+        let total = 0;
+        for (let i = 0; i < spans.length - 1; i++) {
+          total += spans[i + 1][0] - spans[i][1];
+        }
+        return total;
       };
 
       const sum = sumAt(length);
@@ -623,17 +800,18 @@ const GAP_CORRECTION_EPSILON = 0.01;
 
 /**
  * Ceiling on correction passes. One pass settles a single triple
- * exactly; chained triples (four evenly spaced elements are two
- * overlapping triples) need the correction to propagate along the chain,
- * which converges geometrically. This is not a general constraint
- * solver — an adversarial graph of triples can leave a small residual
- * error rather than diverging — and that is a deliberate limit for now.
+ * exactly; a longer chain, or two chains sharing a member, need the
+ * correction to propagate from triple to triple, which converges
+ * geometrically. The cap is generous enough that a chain of a dozen
+ * settles well inside it. This is not a general constraint solver — an
+ * adversarial graph of chains can leave a small residual error rather
+ * than diverging — and that is a deliberate limit for now.
  */
-const MAX_GAP_CORRECTION_PASSES = 8;
+const MAX_GAP_CORRECTION_PASSES = 16;
 
-/** Every distinct hard triple in the scene, deduped across the three
- * copies each one is stored under. */
-const collectHardTriples = (
+/** Every distinct hard chain in the scene, deduped across the copies it
+ * is stored under (one per member). */
+const collectHardChains = (
   elementsMap: ElementsMap,
 ): ElementGapAlignment[] => {
   const byKey = new Map<string, ElementGapAlignment>();
@@ -685,6 +863,60 @@ export const hasHardGapAlignmentAmong = (
 };
 
 /**
+ * The anchors that block a resize because they sit in a hard equal-gap
+ * chain the resize would disturb — the equal-gap counterpart of
+ * `getAlignmentAnchoredResizeBlockers`, and reported the same way so the
+ * clamp and the anvil overlay can treat the two alike.
+ *
+ * A chain holds its gaps equal by translating its members, so changing
+ * any one gap asks every member to shift. An anchor in the chain forbids
+ * that, and unlike the edge case there is no partial answer: the
+ * correction holds one member still, and a second immovable member
+ * leaves it unsatisfiable. So the resize is refused rather than allowed
+ * to break the chain.
+ *
+ * "Would disturb" is per *edge*, which is what leaves the useful gesture
+ * alone: a member's leading edge bounds the gap before it and its
+ * trailing edge the gap after, so an element at either end of a chain can
+ * still be resized outward — that edge bounds no gap.
+ */
+export const getGapAlignmentAnchoredResizeBlockers = (
+  resizedIds: Set<string>,
+  elementsMap: ElementsMap,
+  opts: ResizeEdgeOpts,
+): { x: Set<string>; y: Set<string> } => {
+  const blockersOn = (axis: Axis): Set<string> => {
+    const blockers = new Set<string>();
+    for (const link of collectHardChains(elementsMap)) {
+      if (link.axis !== axis) {
+        continue;
+      }
+      const anchors = link.ids.filter(
+        (id) => !resizedIds.has(id) && isAlignmentAnchor(elementsMap.get(id)),
+      );
+      if (anchors.length === 0) {
+        continue;
+      }
+      const disturbs = link.ids.some(
+        (id, index) =>
+          resizedIds.has(id) &&
+          ((index > 0 && resizeMovesEdge(axis, "min", opts)) ||
+            (index < link.ids.length - 1 &&
+              resizeMovesEdge(axis, "max", opts))),
+      );
+      if (disturbs) {
+        for (const id of anchors) {
+          blockers.add(id);
+        }
+      }
+    }
+    return blockers;
+  };
+
+  return { x: blockersOn("x"), y: blockersOn("y") };
+};
+
+/**
  * Extend a resize's translation maps so every hard equal-gap triple
  * survives it.
  *
@@ -696,15 +928,24 @@ export const hasHardGapAlignmentAmong = (
  * the scene, and everything stays measured from the resize-start
  * snapshot (no drift across pointermove events).
  *
- * Which member gives way, in order:
- *   - the middle element, translated by half the error — it sits between
- *     the two gaps, so moving it by `d` grows one and shrinks the other,
- *     and it is the element the user is least likely to be holding;
- *   - failing that (it's the one being resized, or it's anchored), the
- *     movable outer elements, sharing the correction equally;
- *   - failing that, nothing: the triple is over-constrained and simply
- *     falls out of true, mirroring how an anchored edge partner makes a
- *     resize fall out of alignment.
+ * Each chain is solved outright rather than relaxed triple by triple.
+ * Sweeping the triples looks tempting — every adjacent pair is the
+ * three-element problem — but it doesn't converge: a triple that fully
+ * zeroes its own error undoes the correction its neighbour just made to
+ * the member they share, and a chain whose middle is the resized element
+ * settles into a two-cycle that never touches one side.
+ *
+ * The solution is: send every gap to the mean of the current gaps, which
+ * leaves the chain's overall extent alone (the members redistribute
+ * inside the same span), and hold one member still to fix the position —
+ * the immovable one if there is one, otherwise the average, so nothing
+ * drifts. For three elements this is exactly what the old
+ * middle-takes-half rule produced, whichever member was being resized.
+ *
+ * A *second* immovable member would have to move too, which anchoring
+ * forbids — so that resize is refused before it happens (see
+ * `getGapAlignmentAnchoredResizeBlockers`) and the chain here never has
+ * to satisfy two fixed points at once.
  *
  * Each correction is flooded along *edge* links so a member drags its
  * own aligned partners with it. Elements that already carry a delta from
@@ -719,8 +960,8 @@ const correctGapAlignments = (
   dyById: Map<string, number>,
   elementsMap: ElementsMap,
 ) => {
-  const triples = collectHardTriples(elementsMap);
-  if (triples.length === 0) {
+  const chains = collectHardChains(elementsMap);
+  if (chains.length === 0) {
     return;
   }
 
@@ -749,9 +990,9 @@ const correctGapAlignments = (
   for (let pass = 0; pass < MAX_GAP_CORRECTION_PASSES; pass++) {
     let corrected = false;
 
-    for (const { axis, ids } of triples) {
+    for (const { axis, ids } of chains) {
       const deltaById = axis === "x" ? dxById : dyById;
-      const shifted = ids.map((id) => {
+      const ranges = ids.map((id) => {
         const range = rangeOf(id, axis);
         if (!range) {
           return null;
@@ -759,37 +1000,69 @@ const correctGapAlignments = (
         const delta = deltaById.get(id) ?? 0;
         return [range[0] + delta, range[1] + delta] as const;
       });
-      if (shifted.some((range) => range == null)) {
+      if (ranges.some((range) => range == null)) {
         continue;
       }
-      const [a, b, c] = shifted as (readonly [number, number])[];
+      const spans = ranges as (readonly [number, number])[];
 
-      // positive error means the second gap is the larger one
-      const error = c[0] - b[1] - (b[0] - a[1]);
-      if (Math.abs(error) <= GAP_CORRECTION_EPSILON) {
+      const gaps: number[] = [];
+      for (let i = 0; i < spans.length - 1; i++) {
+        gaps.push(spans[i + 1][0] - spans[i][1]);
+      }
+
+      // Every gap goes to their mean. That is the correction that leaves
+      // the chain's overall extent alone — the members redistribute
+      // inside the same span — and for three elements it is exactly what
+      // the old middle-takes-half rule produced.
+      const target =
+        gaps.reduce((total, gap) => total + gap, 0) / gaps.length;
+      if (
+        gaps.every((gap) => Math.abs(gap - target) <= GAP_CORRECTION_EPSILON)
+      ) {
         continue;
       }
 
-      const shift = (id: string, delta: number) => {
-        deltaById.set(id, (deltaById.get(id) ?? 0) + delta);
-      };
-
-      if (isMovable(ids[1])) {
-        // moving the middle right by d grows gap 1 and shrinks gap 2,
-        // so it closes twice the distance it travels
-        shift(ids[1], error / 2);
-      } else {
-        const outers = [ids[0], ids[2]].filter(isMovable);
-        if (outers.length === 0) {
-          continue;
-        }
-        // moving either outer right by d grows the error by d, so the
-        // shifts have to sum to -error
-        for (const id of outers) {
-          shift(id, -error / outers.length);
-        }
+      // Where each member's leading edge would sit if every gap were
+      // `target`, measured from an origin still to be chosen.
+      const layout = [0];
+      for (let i = 1; i < spans.length; i++) {
+        layout.push(
+          layout[i - 1] + (spans[i - 1][1] - spans[i - 1][0]) + target,
+        );
       }
-      corrected = true;
+      // The origin each member would pick if it were the one to hold
+      // still. An immovable member (the one being resized, or an anchor)
+      // decides it; with none, the average keeps the movement even.
+      const origins = spans.map((span, i) => span[0] - layout[i]);
+      const held = ids.findIndex((id) => !isMovable(id));
+      const origin =
+        held >= 0
+          ? origins[held]
+          : origins.reduce((total, value) => total + value, 0) / origins.length;
+
+      const shifts = spans.map((span, i) => origin + layout[i] - span[0]);
+
+      // A second immovable member that would also have to move makes the
+      // chain unsatisfiable. Leave it out of true rather than dragging
+      // the movable members somewhere that doesn't fix it — and, since
+      // the correction is recomputed every pass, rather than drifting.
+      // The resize that would have caused it is refused up front by
+      // `getGapAlignmentAnchoredResizeBlockers`, so this is a backstop.
+      if (
+        ids.some(
+          (id, i) =>
+            !isMovable(id) && Math.abs(shifts[i]) > GAP_CORRECTION_EPSILON,
+        )
+      ) {
+        continue;
+      }
+
+      ids.forEach((id, i) => {
+        if (isMovable(id) && shifts[i] !== 0) {
+          deltaById.set(id, (deltaById.get(id) ?? 0) + shifts[i]);
+          corrected = true;
+        }
+      });
     }
 
     if (!corrected) {

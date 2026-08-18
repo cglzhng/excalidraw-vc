@@ -120,6 +120,7 @@ import {
   lockAlignmentPair,
   unlockAlignmentPair,
   getAlignmentAnchoredResizeBlockers,
+  getGapAlignmentAnchoredResizeBlockers,
   lockGapAlignment,
   unlockGapAlignment,
   type AlignmentGuide,
@@ -9641,9 +9642,11 @@ class App extends React.Component<AppProps, AppState> {
   }
 
   /**
-   * Promote a soft equal-gap triple to a hard one, or demote it back.
-   * The link is written to all three members at once, so this is one
-   * undo step / version-log moment — as `toggleAlignmentGuide` is.
+   * Promote a soft equal-gap chain to a hard one, or demote it back.
+   * Locking may merge the chain into one it continues; unlocking drops
+   * the whole chain. The links are written to every affected member at
+   * once, so this is one undo step / version-log moment, as
+   * `toggleAlignmentGuide` is.
    */
   private toggleGapAlignmentGuide(guide: GapAlignmentGuide) {
     const elementsMap = this.scene.getNonDeletedElementsMap();
@@ -13993,20 +13996,34 @@ class App extends React.Component<AppProps, AppState> {
     transformHandleType: MaybeTransformHandleType,
     resizeFromCenter: boolean,
   ) => {
-    const blockers =
-      transformHandleType && transformHandleType !== "rotation"
-        ? getAlignmentAnchoredResizeBlockers(
-            new Set(selectedElements.map((element) => element.id)),
-            this.scene.getNonDeletedElementsMap(),
-            {
-              handle: transformHandleType,
-              shouldResizeFromCenter: resizeFromCenter,
-              allEdgesMove:
-                selectedElements.length > 1 ||
-                selectedElements.some((element) => element.angle !== 0),
-            },
-          )
-        : { x: new Set<string>(), y: new Set<string>() };
+    let blockers = { x: new Set<string>(), y: new Set<string>() };
+    if (transformHandleType && transformHandleType !== "rotation") {
+      const resizedIds = new Set(
+        selectedElements.map((element) => element.id),
+      );
+      const elementsMap = this.scene.getNonDeletedElementsMap();
+      const edgeOpts = {
+        handle: transformHandleType,
+        shouldResizeFromCenter: resizeFromCenter,
+        allEdgesMove:
+          selectedElements.length > 1 ||
+          selectedElements.some((element) => element.angle !== 0),
+      };
+      const edge = getAlignmentAnchoredResizeBlockers(
+        resizedIds,
+        elementsMap,
+        edgeOpts,
+      );
+      const gap = getGapAlignmentAnchoredResizeBlockers(
+        resizedIds,
+        elementsMap,
+        edgeOpts,
+      );
+      blockers = {
+        x: new Set([...edge.x, ...gap.x]),
+        y: new Set([...edge.y, ...gap.y]),
+      };
+    }
 
     const next = [...new Set([...blockers.x, ...blockers.y])];
     const current = this.state.alignmentResizeAnchorIds;

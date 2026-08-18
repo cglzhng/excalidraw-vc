@@ -509,7 +509,7 @@ const alignmentsEqual = (
     (l) => `${l.elementId}:${l.axis}:${l.selfEdge}:${l.otherEdge}`,
   );
 
-/** Same, for equal-gap triples: axis plus the ordered member ids. */
+/** Same, for equal-gap chains: axis plus the ordered member ids. */
 const gapAlignmentsEqual = (
   a: readonly ElementGapAlignment[] | undefined,
   b: readonly ElementGapAlignment[] | undefined,
@@ -1014,13 +1014,13 @@ const findConsequentAlignmentChanges = (
         addEdge(link.elementId, id);
       }
     }
-    // A gap triple couples all three of its members, so every pair of
-    // them is an edge — not just the neighbouring ones. The far pair
-    // matters most: dragging an outer element holds the middle still and
-    // mirrors the move onto the *other outer*, so the two elements that
-    // actually moved are the ones with no shared gap between them. Wire
-    // only the neighbours and they land in separate components and
-    // surface as two unrelated moves.
+    // A gap chain couples every one of its members, so every pair of
+    // them is an edge — not just the neighbouring ones. The distant
+    // pairs matter most: dragging an end element holds its neighbour
+    // still and steps the move along the rest of the chain, so the
+    // elements that actually moved can be ones with no shared gap
+    // between them. Wire only the neighbours and they land in separate
+    // components and surface as unrelated moves.
     for (const link of changedElements[id]?.gapAlignments ?? []) {
       for (const memberId of link.ids) {
         if (memberId !== id && inPlay.has(memberId)) {

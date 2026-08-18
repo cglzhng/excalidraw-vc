@@ -253,23 +253,31 @@ same-width elements share left, centre and right), so link identity is
 `(partner, axis, selfEdge, otherEdge)` — never `(partner, axis)`.
 
 ### Gap alignment (equal spacing)
-The ternary kind: three elements ordered along an axis whose two gaps
-are equal, `gap(a,b) === gap(b,c)`. Stored as
-`ExcalidrawElement.gapAlignments`, one `ElementGapAlignment` per triple,
-the identical record written on all three members. Equivalent to "the
-middle element is centred in the span between its neighbours", which is
-the form the propagators solve.
+The n-ary kind: a **chain** of three or more elements ordered along an
+axis whose consecutive gaps are all equal. Stored as
+`ExcalidrawElement.gapAlignments`, one `ElementGapAlignment` per chain,
+the identical record written on every member, so a member's role is just
+its index in `ids`. For three elements it is equivalent to "the middle
+element is centred in the span between its neighbours".
+
+### Chain
+The members of one gap alignment, in axis order. Soft chains are
+reported *maximal* — four evenly spaced elements are one chain, not the
+two triples inside it — and locking a chain that continues an existing
+one merges the two rather than storing both.
 
 ### Drag factor
 What each element's share of a drag is, on one axis, as a multiple of
 the drag offset — the dragged elements are 1, anything absent doesn't
 move. Edge alignments always pass 1 along, so everything they reach
-moves rigidly. Gap alignments solve `2·db = da + dc` instead:
-dragging an outer member of a triple holds the middle still and mirrors
-the move onto the far outer, so both gaps close while the element being
-measured against stays put. Computed by `getAlignmentDragFactors`, and
-the same map answers "which elements move at all" for anchors and for
-snapping.
+moves rigidly. Gap alignments make the factors an **arithmetic
+progression** along the chain instead (holding each gap equal to the next
+forces constant differences): dragging an end member holds its immediate
+neighbour still and steps the move along the rest, so every gap closes
+while the element being measured against stays put; dragging an interior
+member carries the whole chain rigidly. Computed by
+`getAlignmentDragFactors`, and the same map answers "which elements move
+at all" for anchors and for snapping.
 
 ### Driver / partner
 In a resize, the element the user is resizing is the driver; anything

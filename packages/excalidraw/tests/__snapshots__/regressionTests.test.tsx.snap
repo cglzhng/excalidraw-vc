@@ -11,6 +11,7 @@ exports[`given element A and group of elements B and given both are selected whe
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -33,7 +34,8 @@ exports[`given element A and group of elements B and given both are selected whe
   "currentItemStrokeVariability": "constant",
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
-  "cursorButton": "up",
+  "cursorButton": "down",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -56,6 +58,11 @@ exports[`given element A and group of elements B and given both are selected whe
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": [
+    5,
+    50,
+  ],
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -83,11 +90,7 @@ exports[`given element A and group of elements B and given both are selected whe
     "initialized": true,
     "type": "selection",
   },
-  "previousSelectedElementIds": {
-    "id0": true,
-    "id3": true,
-    "id6": true,
-  },
+  "previousSelectedElementIds": {},
   "resizingElement": null,
   "scrollConstraints": null,
   "scrollX": 0,
@@ -96,12 +99,9 @@ exports[`given element A and group of elements B and given both are selected whe
   "searchMatches": null,
   "selectedElementIds": {
     "id0": true,
-    "id6": true,
   },
   "selectedElementsAreBeingDragged": false,
-  "selectedGroupIds": {
-    "id15": true,
-  },
+  "selectedGroupIds": {},
   "selectedLinearElement": null,
   "selectionElement": null,
   "shouldCacheIgnoreZoom": false,
@@ -115,6 +115,8 @@ exports[`given element A and group of elements B and given both are selected whe
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -127,7 +129,7 @@ exports[`given element A and group of elements B and given both are selected whe
 
 exports[`given element A and group of elements B and given both are selected when user clicks on B, on pointer up only elements from B should be selected > [end of test] number of elements 1`] = `0`;
 
-exports[`given element A and group of elements B and given both are selected when user clicks on B, on pointer up only elements from B should be selected > [end of test] number of renders 1`] = `18`;
+exports[`given element A and group of elements B and given both are selected when user clicks on B, on pointer up only elements from B should be selected > [end of test] number of renders 1`] = `15`;
 
 exports[`given element A and group of elements B and given both are selected when user clicks on B, on pointer up only elements from B should be selected > [end of test] redo stack 1`] = `[]`;
 
@@ -318,34 +320,8 @@ exports[`given element A and group of elements B and given both are selected whe
   {
     "appState": AppStateDelta {
       "delta": Delta {
-        "deleted": {
-          "selectedElementIds": {
-            "id6": true,
-          },
-        },
-        "inserted": {
-          "selectedElementIds": {},
-        },
-      },
-    },
-    "elements": {
-      "added": {},
-      "removed": {},
-      "updated": {},
-    },
-    "id": "id14",
-  },
-  {
-    "appState": AppStateDelta {
-      "delta": Delta {
-        "deleted": {
-          "selectedGroupIds": {
-            "id15": true,
-          },
-        },
-        "inserted": {
-          "selectedGroupIds": {},
-        },
+        "deleted": {},
+        "inserted": {},
       },
     },
     "elements": {
@@ -354,75 +330,64 @@ exports[`given element A and group of elements B and given both are selected whe
       "updated": {
         "id0": {
           "deleted": {
-            "groupIds": [
-              "id15",
+            "gapAlignments": [
+              {
+                "axis": "y",
+                "ids": [
+                  "id0",
+                  "id3",
+                  "id6",
+                ],
+              },
             ],
-            "index": "a2",
-            "version": 5,
+            "version": 4,
           },
           "inserted": {
-            "groupIds": [],
-            "index": "a0",
+            "gapAlignments": undefined,
+            "version": 3,
+          },
+        },
+        "id3": {
+          "deleted": {
+            "gapAlignments": [
+              {
+                "axis": "y",
+                "ids": [
+                  "id0",
+                  "id3",
+                  "id6",
+                ],
+              },
+            ],
+            "version": 4,
+          },
+          "inserted": {
+            "gapAlignments": undefined,
             "version": 3,
           },
         },
         "id6": {
           "deleted": {
-            "groupIds": [
-              "id15",
+            "gapAlignments": [
+              {
+                "axis": "y",
+                "ids": [
+                  "id0",
+                  "id3",
+                  "id6",
+                ],
+              },
             ],
-            "index": "a3",
-            "version": 5,
+            "version": 4,
           },
           "inserted": {
-            "groupIds": [],
-            "index": "a2",
+            "gapAlignments": undefined,
             "version": 3,
           },
         },
       },
     },
-    "id": "id17",
-  },
-  {
-    "appState": AppStateDelta {
-      "delta": Delta {
-        "deleted": {
-          "selectedElementIds": {
-            "id3": true,
-          },
-        },
-        "inserted": {
-          "selectedElementIds": {},
-        },
-      },
-    },
-    "elements": {
-      "added": {},
-      "removed": {},
-      "updated": {},
-    },
-    "id": "id20",
-  },
-  {
-    "appState": AppStateDelta {
-      "delta": Delta {
-        "deleted": {
-          "selectedElementIds": {},
-        },
-        "inserted": {
-          "selectedElementIds": {
-            "id3": true,
-          },
-        },
-      },
-    },
-    "elements": {
-      "added": {},
-      "removed": {},
-      "updated": {},
-    },
-    "id": "id23",
+    "id": "id13",
   },
 ]
 `;
@@ -438,6 +403,7 @@ exports[`given element A and group of elements B and given both are selected whe
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -461,6 +427,7 @@ exports[`given element A and group of elements B and given both are selected whe
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -483,6 +450,8 @@ exports[`given element A and group of elements B and given both are selected whe
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -544,6 +513,8 @@ exports[`given element A and group of elements B and given both are selected whe
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -855,6 +826,7 @@ exports[`regression tests > Cmd/Ctrl-click exclusively select element under poin
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -877,10 +849,11 @@ exports[`regression tests > Cmd/Ctrl-click exclusively select element under poin
   "currentItemStrokeVariability": "constant",
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
-  "cursorButton": "up",
+  "cursorButton": "down",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
-  "editingGroupId": "id28",
+  "editingGroupId": null,
   "editingTextElement": null,
   "elementsToHighlight": null,
   "errorMessage": null,
@@ -900,6 +873,11 @@ exports[`regression tests > Cmd/Ctrl-click exclusively select element under poin
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": [
+    20,
+    5,
+  ],
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -927,7 +905,10 @@ exports[`regression tests > Cmd/Ctrl-click exclusively select element under poin
     "initialized": true,
     "type": "selection",
   },
-  "previousSelectedElementIds": {},
+  "previousSelectedElementIds": {
+    "id0": true,
+    "id3": true,
+  },
   "resizingElement": null,
   "scrollConstraints": null,
   "scrollX": 0,
@@ -935,10 +916,14 @@ exports[`regression tests > Cmd/Ctrl-click exclusively select element under poin
   "scrolledOutside": false,
   "searchMatches": null,
   "selectedElementIds": {
+    "id0": true,
     "id19": true,
+    "id3": true,
   },
   "selectedElementsAreBeingDragged": false,
-  "selectedGroupIds": {},
+  "selectedGroupIds": {
+    "id28": true,
+  },
   "selectedLinearElement": null,
   "selectionElement": null,
   "shouldCacheIgnoreZoom": false,
@@ -952,6 +937,8 @@ exports[`regression tests > Cmd/Ctrl-click exclusively select element under poin
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -964,7 +951,7 @@ exports[`regression tests > Cmd/Ctrl-click exclusively select element under poin
 
 exports[`regression tests > Cmd/Ctrl-click exclusively select element under pointer > [end of test] number of elements 1`] = `0`;
 
-exports[`regression tests > Cmd/Ctrl-click exclusively select element under pointer > [end of test] number of renders 1`] = `26`;
+exports[`regression tests > Cmd/Ctrl-click exclusively select element under pointer > [end of test] number of renders 1`] = `25`;
 
 exports[`regression tests > Cmd/Ctrl-click exclusively select element under pointer > [end of test] redo stack 1`] = `[]`;
 
@@ -1360,53 +1347,51 @@ exports[`regression tests > Cmd/Ctrl-click exclusively select element under poin
   {
     "appState": AppStateDelta {
       "delta": Delta {
-        "deleted": {
-          "editingGroupId": "id12",
-          "selectedElementIds": {},
-          "selectedGroupIds": {},
-        },
-        "inserted": {
-          "editingGroupId": null,
-          "selectedElementIds": {
-            "id19": true,
-            "id3": true,
-          },
-          "selectedGroupIds": {
-            "id28": true,
-          },
-        },
+        "deleted": {},
+        "inserted": {},
       },
     },
     "elements": {
       "added": {},
       "removed": {},
-      "updated": {},
-    },
-    "id": "id33",
-  },
-  {
-    "appState": AppStateDelta {
-      "delta": Delta {
-        "deleted": {
-          "editingGroupId": "id28",
-          "selectedElementIds": {
-            "id19": true,
+      "updated": {
+        "id0": {
+          "deleted": {
+            "alignments": [
+              {
+                "axis": "y",
+                "elementId": "id3",
+                "otherEdge": "center",
+                "selfEdge": "center",
+              },
+            ],
+            "version": 6,
+          },
+          "inserted": {
+            "alignments": undefined,
+            "version": 5,
           },
         },
-        "inserted": {
-          "editingGroupId": "id12",
-          "selectedElementIds": {
-            "id0": true,
+        "id3": {
+          "deleted": {
+            "alignments": [
+              {
+                "axis": "y",
+                "elementId": "id0",
+                "otherEdge": "center",
+                "selfEdge": "center",
+              },
+            ],
+            "version": 6,
+          },
+          "inserted": {
+            "alignments": undefined,
+            "version": 5,
           },
         },
       },
     },
-    "elements": {
-      "added": {},
-      "removed": {},
-      "updated": {},
-    },
-    "id": "id36",
+    "id": "id32",
   },
 ]
 `;
@@ -1422,6 +1407,7 @@ exports[`regression tests > Drags selected element when hitting only bounding bo
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -1445,6 +1431,7 @@ exports[`regression tests > Drags selected element when hitting only bounding bo
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -1467,6 +1454,8 @@ exports[`regression tests > Drags selected element when hitting only bounding bo
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -1519,6 +1508,8 @@ exports[`regression tests > Drags selected element when hitting only bounding bo
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -1630,6 +1621,7 @@ exports[`regression tests > adjusts z order when grouping > [end of test] appSta
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -1652,7 +1644,8 @@ exports[`regression tests > adjusts z order when grouping > [end of test] appSta
   "currentItemStrokeVariability": "constant",
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
-  "cursorButton": "up",
+  "cursorButton": "down",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -1675,6 +1668,11 @@ exports[`regression tests > adjusts z order when grouping > [end of test] appSta
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": [
+    25,
+    15,
+  ],
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -1702,9 +1700,7 @@ exports[`regression tests > adjusts z order when grouping > [end of test] appSta
     "initialized": true,
     "type": "selection",
   },
-  "previousSelectedElementIds": {
-    "id0": true,
-  },
+  "previousSelectedElementIds": {},
   "resizingElement": null,
   "scrollConstraints": null,
   "scrollX": 0,
@@ -1712,13 +1708,10 @@ exports[`regression tests > adjusts z order when grouping > [end of test] appSta
   "scrolledOutside": false,
   "searchMatches": null,
   "selectedElementIds": {
-    "id0": true,
     "id6": true,
   },
   "selectedElementsAreBeingDragged": false,
-  "selectedGroupIds": {
-    "id15": true,
-  },
+  "selectedGroupIds": {},
   "selectedLinearElement": null,
   "selectionElement": null,
   "shouldCacheIgnoreZoom": false,
@@ -1732,6 +1725,8 @@ exports[`regression tests > adjusts z order when grouping > [end of test] appSta
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -1744,7 +1739,7 @@ exports[`regression tests > adjusts z order when grouping > [end of test] appSta
 
 exports[`regression tests > adjusts z order when grouping > [end of test] number of elements 1`] = `0`;
 
-exports[`regression tests > adjusts z order when grouping > [end of test] number of renders 1`] = `15`;
+exports[`regression tests > adjusts z order when grouping > [end of test] number of renders 1`] = `14`;
 
 exports[`regression tests > adjusts z order when grouping > [end of test] redo stack 1`] = `[]`;
 
@@ -1913,56 +1908,8 @@ exports[`regression tests > adjusts z order when grouping > [end of test] undo s
   {
     "appState": AppStateDelta {
       "delta": Delta {
-        "deleted": {
-          "selectedElementIds": {
-            "id0": true,
-          },
-        },
-        "inserted": {
-          "selectedElementIds": {
-            "id6": true,
-          },
-        },
-      },
-    },
-    "elements": {
-      "added": {},
-      "removed": {},
-      "updated": {},
-    },
-    "id": "id11",
-  },
-  {
-    "appState": AppStateDelta {
-      "delta": Delta {
-        "deleted": {
-          "selectedElementIds": {
-            "id6": true,
-          },
-        },
-        "inserted": {
-          "selectedElementIds": {},
-        },
-      },
-    },
-    "elements": {
-      "added": {},
-      "removed": {},
-      "updated": {},
-    },
-    "id": "id14",
-  },
-  {
-    "appState": AppStateDelta {
-      "delta": Delta {
-        "deleted": {
-          "selectedGroupIds": {
-            "id15": true,
-          },
-        },
-        "inserted": {
-          "selectedGroupIds": {},
-        },
+        "deleted": {},
+        "inserted": {},
       },
     },
     "elements": {
@@ -1971,35 +1918,109 @@ exports[`regression tests > adjusts z order when grouping > [end of test] undo s
       "updated": {
         "id0": {
           "deleted": {
-            "groupIds": [
-              "id15",
+            "gapAlignments": [
+              {
+                "axis": "x",
+                "ids": [
+                  "id0",
+                  "id3",
+                  "id6",
+                ],
+              },
             ],
-            "index": "a2",
-            "version": 5,
+            "version": 4,
           },
           "inserted": {
-            "groupIds": [],
-            "index": "a0",
+            "gapAlignments": undefined,
+            "version": 3,
+          },
+        },
+        "id3": {
+          "deleted": {
+            "gapAlignments": [
+              {
+                "axis": "x",
+                "ids": [
+                  "id0",
+                  "id3",
+                  "id6",
+                ],
+              },
+            ],
+            "version": 4,
+          },
+          "inserted": {
+            "gapAlignments": undefined,
             "version": 3,
           },
         },
         "id6": {
           "deleted": {
-            "groupIds": [
-              "id15",
+            "gapAlignments": [
+              {
+                "axis": "x",
+                "ids": [
+                  "id0",
+                  "id3",
+                  "id6",
+                ],
+              },
             ],
-            "index": "a3",
-            "version": 5,
+            "version": 4,
           },
           "inserted": {
-            "groupIds": [],
-            "index": "a2",
+            "gapAlignments": undefined,
             "version": 3,
           },
         },
       },
     },
-    "id": "id17",
+    "id": "id10",
+  },
+  {
+    "appState": AppStateDelta {
+      "delta": Delta {
+        "deleted": {},
+        "inserted": {},
+      },
+    },
+    "elements": {
+      "added": {},
+      "removed": {},
+      "updated": {
+        "id6": {
+          "deleted": {
+            "alignmentLocked": true,
+            "gapAlignments": [
+              {
+                "axis": "x",
+                "ids": [
+                  "id0",
+                  "id3",
+                  "id6",
+                ],
+              },
+            ],
+            "version": 5,
+          },
+          "inserted": {
+            "alignmentLocked": undefined,
+            "gapAlignments": [
+              {
+                "axis": "x",
+                "ids": [
+                  "id0",
+                  "id3",
+                  "id6",
+                ],
+              },
+            ],
+            "version": 4,
+          },
+        },
+      },
+    },
+    "id": "id12",
   },
 ]
 `;
@@ -2015,6 +2036,7 @@ exports[`regression tests > alt-drag duplicates an element > [end of test] appSt
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -2037,7 +2059,8 @@ exports[`regression tests > alt-drag duplicates an element > [end of test] appSt
   "currentItemStrokeVariability": "constant",
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
-  "cursorButton": "up",
+  "cursorButton": "down",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -2060,6 +2083,8 @@ exports[`regression tests > alt-drag duplicates an element > [end of test] appSt
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": "id0",
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -2087,9 +2112,7 @@ exports[`regression tests > alt-drag duplicates an element > [end of test] appSt
     "initialized": true,
     "type": "selection",
   },
-  "previousSelectedElementIds": {
-    "id0": true,
-  },
+  "previousSelectedElementIds": {},
   "resizingElement": null,
   "scrollConstraints": null,
   "scrollX": 0,
@@ -2097,7 +2120,7 @@ exports[`regression tests > alt-drag duplicates an element > [end of test] appSt
   "scrolledOutside": false,
   "searchMatches": null,
   "selectedElementIds": {
-    "id4": true,
+    "id0": true,
   },
   "selectedElementsAreBeingDragged": false,
   "selectedGroupIds": {},
@@ -2114,6 +2137,8 @@ exports[`regression tests > alt-drag duplicates an element > [end of test] appSt
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -2126,7 +2151,7 @@ exports[`regression tests > alt-drag duplicates an element > [end of test] appSt
 
 exports[`regression tests > alt-drag duplicates an element > [end of test] number of elements 1`] = `0`;
 
-exports[`regression tests > alt-drag duplicates an element > [end of test] number of renders 1`] = `8`;
+exports[`regression tests > alt-drag duplicates an element > [end of test] number of renders 1`] = `6`;
 
 exports[`regression tests > alt-drag duplicates an element > [end of test] redo stack 1`] = `[]`;
 
@@ -2184,69 +2209,6 @@ exports[`regression tests > alt-drag duplicates an element > [end of test] undo 
     },
     "id": "id2",
   },
-  {
-    "appState": AppStateDelta {
-      "delta": Delta {
-        "deleted": {
-          "selectedElementIds": {
-            "id4": true,
-          },
-        },
-        "inserted": {
-          "selectedElementIds": {
-            "id0": true,
-          },
-        },
-      },
-    },
-    "elements": {
-      "added": {},
-      "removed": {
-        "id4": {
-          "deleted": {
-            "angle": 0,
-            "backgroundColor": "transparent",
-            "boundElements": null,
-            "customData": undefined,
-            "fillStyle": "solid",
-            "frameId": null,
-            "groupIds": [],
-            "height": 10,
-            "index": "a1",
-            "isDeleted": false,
-            "link": null,
-            "locked": false,
-            "opacity": 100,
-            "roughness": 1,
-            "roundness": null,
-            "strokeColor": "#1e1e1e",
-            "strokeStyle": "solid",
-            "strokeWidth": 2,
-            "type": "rectangle",
-            "version": 6,
-            "width": 10,
-            "x": 20,
-            "y": 20,
-          },
-          "inserted": {
-            "isDeleted": true,
-            "version": 5,
-          },
-        },
-      },
-      "updated": {
-        "id0": {
-          "deleted": {
-            "version": 5,
-          },
-          "inserted": {
-            "version": 3,
-          },
-        },
-      },
-    },
-    "id": "id6",
-  },
 ]
 `;
 
@@ -2261,6 +2223,7 @@ exports[`regression tests > arrow keys > [end of test] appState 1`] = `
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -2284,6 +2247,7 @@ exports[`regression tests > arrow keys > [end of test] appState 1`] = `
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -2306,6 +2270,8 @@ exports[`regression tests > arrow keys > [end of test] appState 1`] = `
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -2358,6 +2324,8 @@ exports[`regression tests > arrow keys > [end of test] appState 1`] = `
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -2442,6 +2410,7 @@ exports[`regression tests > can drag element that covers another element, while 
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -2465,6 +2434,7 @@ exports[`regression tests > can drag element that covers another element, while 
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -2487,6 +2457,8 @@ exports[`regression tests > can drag element that covers another element, while 
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -2541,6 +2513,8 @@ exports[`regression tests > can drag element that covers another element, while 
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -2768,6 +2742,7 @@ exports[`regression tests > change the properties of a shape > [end of test] app
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -2791,6 +2766,7 @@ exports[`regression tests > change the properties of a shape > [end of test] app
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -2813,6 +2789,8 @@ exports[`regression tests > change the properties of a shape > [end of test] app
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -2865,6 +2843,8 @@ exports[`regression tests > change the properties of a shape > [end of test] app
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -3013,248 +2993,6 @@ exports[`regression tests > change the properties of a shape > [end of test] und
 ]
 `;
 
-exports[`regression tests > click on an element and drag it > [dragged] appState 1`] = `
-{
-  "activeEmbeddable": null,
-  "activeLockedId": null,
-  "activeTool": {
-    "customType": null,
-    "fromSelection": false,
-    "lastActiveTool": null,
-    "locked": false,
-    "type": "selection",
-  },
-  "bindMode": "orbit",
-  "bindingPreference": "enabled",
-  "boxSelectionMode": "contain",
-  "collaborators": Map {},
-  "contextMenu": null,
-  "croppingElementId": null,
-  "currentHoveredFontFamily": null,
-  "currentItemArrowType": "round",
-  "currentItemBackgroundColor": "transparent",
-  "currentItemEndArrowhead": "arrow",
-  "currentItemFillStyle": "solid",
-  "currentItemFontFamily": 5,
-  "currentItemFontSize": 20,
-  "currentItemOpacity": 100,
-  "currentItemRoughness": 1,
-  "currentItemRoundness": "sharp",
-  "currentItemStartArrowhead": null,
-  "currentItemStrokeColor": "#1e1e1e",
-  "currentItemStrokeStyle": "solid",
-  "currentItemStrokeVariability": "constant",
-  "currentItemStrokeWidthKey": "medium",
-  "currentItemTextAlign": "left",
-  "cursorButton": "up",
-  "defaultSidebarDockedPreference": false,
-  "editingFrame": null,
-  "editingGroupId": null,
-  "editingTextElement": null,
-  "elementsToHighlight": null,
-  "errorMessage": null,
-  "exportBackground": true,
-  "exportEmbedScene": false,
-  "exportScale": 1,
-  "exportWithDarkMode": false,
-  "fileHandle": null,
-  "frameRendering": {
-    "clip": true,
-    "enabled": true,
-    "name": true,
-    "outline": true,
-  },
-  "frameToHighlight": null,
-  "gridModeEnabled": false,
-  "gridSize": 20,
-  "gridStep": 5,
-  "height": 768,
-  "hoveredArrowTextAnchor": null,
-  "hoveredElementIds": {},
-  "isBindingEnabled": true,
-  "isCropping": false,
-  "isLoading": false,
-  "isMidpointSnappingEnabled": true,
-  "isResizing": false,
-  "isRotating": false,
-  "lastPointerDownWith": "mouse",
-  "lockedMultiSelections": {},
-  "multiElement": null,
-  "name": "Untitled-201933152653",
-  "newElement": null,
-  "objectsSnapModeEnabled": false,
-  "offsetLeft": 0,
-  "offsetTop": 0,
-  "openDialog": null,
-  "openMenu": null,
-  "openPopup": null,
-  "openSidebar": null,
-  "originSnapOffset": null,
-  "penDetected": false,
-  "penMode": false,
-  "preferredSelectionTool": {
-    "initialized": true,
-    "type": "selection",
-  },
-  "previousSelectedElementIds": {
-    "id0": true,
-  },
-  "resizingElement": null,
-  "scrollConstraints": null,
-  "scrollX": 0,
-  "scrollY": 0,
-  "scrolledOutside": false,
-  "searchMatches": null,
-  "selectedElementIds": {
-    "id0": true,
-  },
-  "selectedElementsAreBeingDragged": false,
-  "selectedGroupIds": {},
-  "selectedLinearElement": null,
-  "selectionElement": null,
-  "shouldCacheIgnoreZoom": false,
-  "showHyperlinkPopup": false,
-  "showWelcomeScreen": true,
-  "snapLines": [],
-  "stats": {
-    "open": false,
-    "panels": 3,
-  },
-  "suggestedBinding": null,
-  "theme": "light",
-  "toast": null,
-  "viewBackgroundColor": "#ffffff",
-  "viewModeEnabled": false,
-  "width": 1440,
-  "zenModeEnabled": false,
-  "zoom": {
-    "value": 1,
-  },
-}
-`;
-
-exports[`regression tests > click on an element and drag it > [dragged] element 0 1`] = `
-{
-  "angle": 0,
-  "backgroundColor": "transparent",
-  "boundElements": null,
-  "customData": undefined,
-  "fillStyle": "solid",
-  "frameId": null,
-  "groupIds": [],
-  "height": 10,
-  "id": "id0",
-  "index": "a0",
-  "isDeleted": false,
-  "link": null,
-  "locked": false,
-  "opacity": 100,
-  "roughness": 1,
-  "roundness": null,
-  "seed": 1278240551,
-  "strokeColor": "#1e1e1e",
-  "strokeStyle": "solid",
-  "strokeWidth": 2,
-  "type": "rectangle",
-  "updated": 1,
-  "version": 4,
-  "versionNonce": 1014066025,
-  "width": 10,
-  "x": 20,
-  "y": 20,
-}
-`;
-
-exports[`regression tests > click on an element and drag it > [dragged] number of elements 1`] = `1`;
-
-exports[`regression tests > click on an element and drag it > [dragged] number of renders 1`] = `8`;
-
-exports[`regression tests > click on an element and drag it > [dragged] redo stack 1`] = `[]`;
-
-exports[`regression tests > click on an element and drag it > [dragged] undo stack 1`] = `
-[
-  {
-    "appState": AppStateDelta {
-      "delta": Delta {
-        "deleted": {
-          "selectedElementIds": {
-            "id0": true,
-          },
-        },
-        "inserted": {
-          "selectedElementIds": {},
-        },
-      },
-    },
-    "elements": {
-      "added": {},
-      "removed": {
-        "id0": {
-          "deleted": {
-            "angle": 0,
-            "backgroundColor": "transparent",
-            "boundElements": null,
-            "customData": undefined,
-            "fillStyle": "solid",
-            "frameId": null,
-            "groupIds": [],
-            "height": 10,
-            "index": "a0",
-            "isDeleted": false,
-            "link": null,
-            "locked": false,
-            "opacity": 100,
-            "roughness": 1,
-            "roundness": null,
-            "strokeColor": "#1e1e1e",
-            "strokeStyle": "solid",
-            "strokeWidth": 2,
-            "type": "rectangle",
-            "version": 3,
-            "width": 10,
-            "x": 10,
-            "y": 10,
-          },
-          "inserted": {
-            "isDeleted": true,
-            "version": 2,
-          },
-        },
-      },
-      "updated": {},
-    },
-    "id": "id2",
-  },
-  {
-    "appState": AppStateDelta {
-      "delta": Delta {
-        "deleted": {},
-        "inserted": {},
-      },
-    },
-    "elements": {
-      "added": {},
-      "removed": {},
-      "updated": {
-        "id0": {
-          "deleted": {
-            "version": 4,
-            "x": 20,
-            "y": 20,
-          },
-          "inserted": {
-            "version": 3,
-            "x": 10,
-            "y": 10,
-          },
-        },
-      },
-    },
-    "id": "id5",
-  },
-]
-`;
-
 exports[`regression tests > click on an element and drag it > [end of test] appState 1`] = `
 {
   "activeEmbeddable": null,
@@ -3266,6 +3004,7 @@ exports[`regression tests > click on an element and drag it > [end of test] appS
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -3288,7 +3027,8 @@ exports[`regression tests > click on an element and drag it > [end of test] appS
   "currentItemStrokeVariability": "constant",
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
-  "cursorButton": "up",
+  "cursorButton": "down",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -3311,6 +3051,8 @@ exports[`regression tests > click on an element and drag it > [end of test] appS
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": "id0",
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -3338,9 +3080,7 @@ exports[`regression tests > click on an element and drag it > [end of test] appS
     "initialized": true,
     "type": "selection",
   },
-  "previousSelectedElementIds": {
-    "id0": true,
-  },
+  "previousSelectedElementIds": {},
   "resizingElement": null,
   "scrollConstraints": null,
   "scrollX": 0,
@@ -3365,6 +3105,8 @@ exports[`regression tests > click on an element and drag it > [end of test] appS
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -3377,7 +3119,7 @@ exports[`regression tests > click on an element and drag it > [end of test] appS
 
 exports[`regression tests > click on an element and drag it > [end of test] number of elements 1`] = `0`;
 
-exports[`regression tests > click on an element and drag it > [end of test] number of renders 1`] = `10`;
+exports[`regression tests > click on an element and drag it > [end of test] number of renders 1`] = `6`;
 
 exports[`regression tests > click on an element and drag it > [end of test] redo stack 1`] = `[]`;
 
@@ -3435,60 +3177,6 @@ exports[`regression tests > click on an element and drag it > [end of test] undo
     },
     "id": "id2",
   },
-  {
-    "appState": AppStateDelta {
-      "delta": Delta {
-        "deleted": {},
-        "inserted": {},
-      },
-    },
-    "elements": {
-      "added": {},
-      "removed": {},
-      "updated": {
-        "id0": {
-          "deleted": {
-            "version": 4,
-            "x": 20,
-            "y": 20,
-          },
-          "inserted": {
-            "version": 3,
-            "x": 10,
-            "y": 10,
-          },
-        },
-      },
-    },
-    "id": "id5",
-  },
-  {
-    "appState": AppStateDelta {
-      "delta": Delta {
-        "deleted": {},
-        "inserted": {},
-      },
-    },
-    "elements": {
-      "added": {},
-      "removed": {},
-      "updated": {
-        "id0": {
-          "deleted": {
-            "version": 5,
-            "x": 10,
-            "y": 10,
-          },
-          "inserted": {
-            "version": 4,
-            "x": 20,
-            "y": 20,
-          },
-        },
-      },
-    },
-    "id": "id8",
-  },
 ]
 `;
 
@@ -3503,6 +3191,7 @@ exports[`regression tests > click to select a shape > [end of test] appState 1`]
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -3525,7 +3214,8 @@ exports[`regression tests > click to select a shape > [end of test] appState 1`]
   "currentItemStrokeVariability": "constant",
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
-  "cursorButton": "up",
+  "cursorButton": "down",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -3548,6 +3238,11 @@ exports[`regression tests > click to select a shape > [end of test] appState 1`]
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": [
+    25,
+    20,
+  ],
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -3575,9 +3270,7 @@ exports[`regression tests > click to select a shape > [end of test] appState 1`]
     "initialized": true,
     "type": "selection",
   },
-  "previousSelectedElementIds": {
-    "id3": true,
-  },
+  "previousSelectedElementIds": {},
   "resizingElement": null,
   "scrollConstraints": null,
   "scrollX": 0,
@@ -3585,7 +3278,7 @@ exports[`regression tests > click to select a shape > [end of test] appState 1`]
   "scrolledOutside": false,
   "searchMatches": null,
   "selectedElementIds": {
-    "id0": true,
+    "id3": true,
   },
   "selectedElementsAreBeingDragged": false,
   "selectedGroupIds": {},
@@ -3602,6 +3295,8 @@ exports[`regression tests > click to select a shape > [end of test] appState 1`]
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -3729,24 +3424,51 @@ exports[`regression tests > click to select a shape > [end of test] undo stack 1
   {
     "appState": AppStateDelta {
       "delta": Delta {
-        "deleted": {
-          "selectedElementIds": {
-            "id0": true,
-          },
-        },
-        "inserted": {
-          "selectedElementIds": {
-            "id3": true,
-          },
-        },
+        "deleted": {},
+        "inserted": {},
       },
     },
     "elements": {
       "added": {},
       "removed": {},
-      "updated": {},
+      "updated": {
+        "id0": {
+          "deleted": {
+            "alignments": [
+              {
+                "axis": "y",
+                "elementId": "id3",
+                "otherEdge": "max",
+                "selfEdge": "max",
+              },
+            ],
+            "version": 4,
+          },
+          "inserted": {
+            "alignments": undefined,
+            "version": 3,
+          },
+        },
+        "id3": {
+          "deleted": {
+            "alignments": [
+              {
+                "axis": "y",
+                "elementId": "id0",
+                "otherEdge": "max",
+                "selfEdge": "max",
+              },
+            ],
+            "version": 4,
+          },
+          "inserted": {
+            "alignments": undefined,
+            "version": 3,
+          },
+        },
+      },
     },
-    "id": "id8",
+    "id": "id7",
   },
 ]
 `;
@@ -3762,6 +3484,7 @@ exports[`regression tests > click-drag to select a group > [end of test] appStat
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -3785,6 +3508,7 @@ exports[`regression tests > click-drag to select a group > [end of test] appStat
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -3807,6 +3531,8 @@ exports[`regression tests > click-drag to select a group > [end of test] appStat
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -3862,6 +3588,8 @@ exports[`regression tests > click-drag to select a group > [end of test] appStat
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -4077,6 +3805,7 @@ exports[`regression tests > deleting last but one element in editing group shoul
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -4100,6 +3829,7 @@ exports[`regression tests > deleting last but one element in editing group shoul
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -4122,6 +3852,8 @@ exports[`regression tests > deleting last but one element in editing group shoul
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -4176,6 +3908,8 @@ exports[`regression tests > deleting last but one element in editing group shoul
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -4514,6 +4248,7 @@ exports[`regression tests > deselects group of selected elements on pointer down
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -4537,6 +4272,7 @@ exports[`regression tests > deselects group of selected elements on pointer down
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "down",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -4559,6 +4295,8 @@ exports[`regression tests > deselects group of selected elements on pointer down
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -4640,6 +4378,8 @@ exports[`regression tests > deselects group of selected elements on pointer down
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -4798,6 +4538,7 @@ exports[`regression tests > deselects group of selected elements on pointer up w
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -4821,6 +4562,7 @@ exports[`regression tests > deselects group of selected elements on pointer up w
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -4843,6 +4585,8 @@ exports[`regression tests > deselects group of selected elements on pointer up w
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -4896,6 +4640,8 @@ exports[`regression tests > deselects group of selected elements on pointer up w
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -5075,6 +4821,7 @@ exports[`regression tests > deselects selected element on pointer down when poin
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -5098,6 +4845,7 @@ exports[`regression tests > deselects selected element on pointer down when poin
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "down",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -5120,6 +4868,8 @@ exports[`regression tests > deselects selected element on pointer down when poin
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -5200,6 +4950,8 @@ exports[`regression tests > deselects selected element on pointer down when poin
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -5284,6 +5036,7 @@ exports[`regression tests > deselects selected element, on pointer up, when clic
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -5307,6 +5060,7 @@ exports[`regression tests > deselects selected element, on pointer up, when clic
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -5329,6 +5083,8 @@ exports[`regression tests > deselects selected element, on pointer up, when clic
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -5381,6 +5137,8 @@ exports[`regression tests > deselects selected element, on pointer up, when clic
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -5485,6 +5243,7 @@ exports[`regression tests > double click to edit a group > [end of test] appStat
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -5508,6 +5267,7 @@ exports[`regression tests > double click to edit a group > [end of test] appStat
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": "id11",
@@ -5530,6 +5290,8 @@ exports[`regression tests > double click to edit a group > [end of test] appStat
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -5582,6 +5344,8 @@ exports[`regression tests > double click to edit a group > [end of test] appStat
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -5879,6 +5643,7 @@ exports[`regression tests > drags selected elements from point inside common bou
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -5902,6 +5667,7 @@ exports[`regression tests > drags selected elements from point inside common bou
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -5924,6 +5690,8 @@ exports[`regression tests > drags selected elements from point inside common bou
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -5980,6 +5748,8 @@ exports[`regression tests > drags selected elements from point inside common bou
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -6177,6 +5947,7 @@ exports[`regression tests > draw every type of shape > [end of test] appState 1`
     "locked": false,
     "type": "freedraw",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -6200,6 +5971,7 @@ exports[`regression tests > draw every type of shape > [end of test] appState 1`
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -6222,6 +5994,8 @@ exports[`regression tests > draw every type of shape > [end of test] appState 1`
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -6272,6 +6046,8 @@ exports[`regression tests > draw every type of shape > [end of test] appState 1`
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -6970,6 +6746,7 @@ exports[`regression tests > given a group of selected elements with an element t
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -6993,6 +6770,7 @@ exports[`regression tests > given a group of selected elements with an element t
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -7015,6 +6793,8 @@ exports[`regression tests > given a group of selected elements with an element t
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -7070,6 +6850,8 @@ exports[`regression tests > given a group of selected elements with an element t
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -7305,6 +7087,7 @@ exports[`regression tests > given a selected element A and a not selected elemen
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -7328,6 +7111,7 @@ exports[`regression tests > given a selected element A and a not selected elemen
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -7350,6 +7134,8 @@ exports[`regression tests > given a selected element A and a not selected elemen
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -7405,6 +7191,8 @@ exports[`regression tests > given a selected element A and a not selected elemen
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -7585,6 +7373,7 @@ exports[`regression tests > given selected element A with lower z-index than uns
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -7608,6 +7397,7 @@ exports[`regression tests > given selected element A with lower z-index than uns
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -7630,6 +7420,8 @@ exports[`regression tests > given selected element A with lower z-index than uns
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -7684,6 +7476,8 @@ exports[`regression tests > given selected element A with lower z-index than uns
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -7821,6 +7615,7 @@ exports[`regression tests > given selected element A with lower z-index than uns
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -7844,6 +7639,7 @@ exports[`regression tests > given selected element A with lower z-index than uns
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -7866,6 +7662,8 @@ exports[`regression tests > given selected element A with lower z-index than uns
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -7920,6 +7718,8 @@ exports[`regression tests > given selected element A with lower z-index than uns
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -8062,6 +7862,7 @@ exports[`regression tests > key 2 selects rectangle tool > [end of test] appStat
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -8085,6 +7886,7 @@ exports[`regression tests > key 2 selects rectangle tool > [end of test] appStat
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -8107,6 +7909,8 @@ exports[`regression tests > key 2 selects rectangle tool > [end of test] appStat
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -8159,6 +7963,8 @@ exports[`regression tests > key 2 selects rectangle tool > [end of test] appStat
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -8243,6 +8049,7 @@ exports[`regression tests > key 3 selects diamond tool > [end of test] appState 
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -8266,6 +8073,7 @@ exports[`regression tests > key 3 selects diamond tool > [end of test] appState 
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -8288,6 +8096,8 @@ exports[`regression tests > key 3 selects diamond tool > [end of test] appState 
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -8340,6 +8150,8 @@ exports[`regression tests > key 3 selects diamond tool > [end of test] appState 
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -8424,6 +8236,7 @@ exports[`regression tests > key 4 selects ellipse tool > [end of test] appState 
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -8447,6 +8260,7 @@ exports[`regression tests > key 4 selects ellipse tool > [end of test] appState 
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -8469,6 +8283,8 @@ exports[`regression tests > key 4 selects ellipse tool > [end of test] appState 
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -8521,6 +8337,8 @@ exports[`regression tests > key 4 selects ellipse tool > [end of test] appState 
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -8605,6 +8423,7 @@ exports[`regression tests > key 5 selects arrow tool > [end of test] appState 1`
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -8628,6 +8447,7 @@ exports[`regression tests > key 5 selects arrow tool > [end of test] appState 1`
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -8650,6 +8470,8 @@ exports[`regression tests > key 5 selects arrow tool > [end of test] appState 1`
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -8733,6 +8555,8 @@ exports[`regression tests > key 5 selects arrow tool > [end of test] appState 1`
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -8839,6 +8663,7 @@ exports[`regression tests > key 6 selects line tool > [end of test] appState 1`]
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -8862,6 +8687,7 @@ exports[`regression tests > key 6 selects line tool > [end of test] appState 1`]
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -8884,6 +8710,8 @@ exports[`regression tests > key 6 selects line tool > [end of test] appState 1`]
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -8967,6 +8795,8 @@ exports[`regression tests > key 6 selects line tool > [end of test] appState 1`]
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -9071,6 +8901,7 @@ exports[`regression tests > key 7 selects freedraw tool > [end of test] appState
     "locked": false,
     "type": "freedraw",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -9094,6 +8925,7 @@ exports[`regression tests > key 7 selects freedraw tool > [end of test] appState
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -9116,6 +8948,8 @@ exports[`regression tests > key 7 selects freedraw tool > [end of test] appState
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -9166,6 +9000,8 @@ exports[`regression tests > key 7 selects freedraw tool > [end of test] appState
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -9268,6 +9104,7 @@ exports[`regression tests > key a selects arrow tool > [end of test] appState 1`
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -9291,6 +9128,7 @@ exports[`regression tests > key a selects arrow tool > [end of test] appState 1`
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -9313,6 +9151,8 @@ exports[`regression tests > key a selects arrow tool > [end of test] appState 1`
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -9396,6 +9236,8 @@ exports[`regression tests > key a selects arrow tool > [end of test] appState 1`
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -9502,6 +9344,7 @@ exports[`regression tests > key d selects diamond tool > [end of test] appState 
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -9525,6 +9368,7 @@ exports[`regression tests > key d selects diamond tool > [end of test] appState 
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -9547,6 +9391,8 @@ exports[`regression tests > key d selects diamond tool > [end of test] appState 
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -9599,6 +9445,8 @@ exports[`regression tests > key d selects diamond tool > [end of test] appState 
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -9683,6 +9531,7 @@ exports[`regression tests > key l selects line tool > [end of test] appState 1`]
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -9706,6 +9555,7 @@ exports[`regression tests > key l selects line tool > [end of test] appState 1`]
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -9728,6 +9578,8 @@ exports[`regression tests > key l selects line tool > [end of test] appState 1`]
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -9811,6 +9663,8 @@ exports[`regression tests > key l selects line tool > [end of test] appState 1`]
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -9915,6 +9769,7 @@ exports[`regression tests > key o selects ellipse tool > [end of test] appState 
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -9938,6 +9793,7 @@ exports[`regression tests > key o selects ellipse tool > [end of test] appState 
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -9960,6 +9816,8 @@ exports[`regression tests > key o selects ellipse tool > [end of test] appState 
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -10012,6 +9870,8 @@ exports[`regression tests > key o selects ellipse tool > [end of test] appState 
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -10096,6 +9956,7 @@ exports[`regression tests > key p selects freedraw tool > [end of test] appState
     "locked": false,
     "type": "freedraw",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -10119,6 +9980,7 @@ exports[`regression tests > key p selects freedraw tool > [end of test] appState
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -10141,6 +10003,8 @@ exports[`regression tests > key p selects freedraw tool > [end of test] appState
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -10191,6 +10055,8 @@ exports[`regression tests > key p selects freedraw tool > [end of test] appState
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -10293,6 +10159,7 @@ exports[`regression tests > key r selects rectangle tool > [end of test] appStat
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -10316,6 +10183,7 @@ exports[`regression tests > key r selects rectangle tool > [end of test] appStat
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -10338,6 +10206,8 @@ exports[`regression tests > key r selects rectangle tool > [end of test] appStat
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -10390,6 +10260,8 @@ exports[`regression tests > key r selects rectangle tool > [end of test] appStat
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -10474,6 +10346,7 @@ exports[`regression tests > make a group and duplicate it > [end of test] appSta
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -10497,6 +10370,7 @@ exports[`regression tests > make a group and duplicate it > [end of test] appSta
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -10519,6 +10393,8 @@ exports[`regression tests > make a group and duplicate it > [end of test] appSta
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -10579,6 +10455,8 @@ exports[`regression tests > make a group and duplicate it > [end of test] appSta
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -11006,6 +10884,7 @@ exports[`regression tests > noop interaction after undo shouldn't create history
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -11028,7 +10907,8 @@ exports[`regression tests > noop interaction after undo shouldn't create history
   "currentItemStrokeVariability": "constant",
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
-  "cursorButton": "up",
+  "cursorButton": "down",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -11051,6 +10931,8 @@ exports[`regression tests > noop interaction after undo shouldn't create history
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -11078,9 +10960,7 @@ exports[`regression tests > noop interaction after undo shouldn't create history
     "initialized": true,
     "type": "selection",
   },
-  "previousSelectedElementIds": {
-    "id0": true,
-  },
+  "previousSelectedElementIds": {},
   "resizingElement": null,
   "scrollConstraints": null,
   "scrollX": 0,
@@ -11088,7 +10968,7 @@ exports[`regression tests > noop interaction after undo shouldn't create history
   "scrolledOutside": false,
   "searchMatches": null,
   "selectedElementIds": {
-    "id3": true,
+    "id0": true,
   },
   "selectedElementsAreBeingDragged": false,
   "selectedGroupIds": {},
@@ -11105,6 +10985,8 @@ exports[`regression tests > noop interaction after undo shouldn't create history
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -11117,7 +10999,7 @@ exports[`regression tests > noop interaction after undo shouldn't create history
 
 exports[`regression tests > noop interaction after undo shouldn't create history entry > [end of test] number of elements 1`] = `0`;
 
-exports[`regression tests > noop interaction after undo shouldn't create history entry > [end of test] number of renders 1`] = `14`;
+exports[`regression tests > noop interaction after undo shouldn't create history entry > [end of test] number of renders 1`] = `11`;
 
 exports[`regression tests > noop interaction after undo shouldn't create history entry > [end of test] redo stack 1`] = `[]`;
 
@@ -11178,100 +11060,27 @@ exports[`regression tests > noop interaction after undo shouldn't create history
   {
     "appState": AppStateDelta {
       "delta": Delta {
-        "deleted": {
-          "selectedElementIds": {
-            "id3": true,
-          },
-        },
-        "inserted": {
-          "selectedElementIds": {
-            "id0": true,
-          },
-        },
+        "deleted": {},
+        "inserted": {},
       },
     },
     "elements": {
       "added": {},
-      "removed": {
-        "id3": {
+      "removed": {},
+      "updated": {
+        "id0": {
           "deleted": {
-            "angle": 0,
-            "backgroundColor": "transparent",
-            "boundElements": null,
-            "customData": undefined,
-            "fillStyle": "solid",
-            "frameId": null,
-            "groupIds": [],
-            "height": 10,
-            "index": "a1",
-            "isDeleted": false,
-            "link": null,
-            "locked": false,
-            "opacity": 100,
-            "roughness": 1,
-            "roundness": null,
-            "strokeColor": "#1e1e1e",
-            "strokeStyle": "solid",
-            "strokeWidth": 2,
-            "type": "rectangle",
-            "version": 5,
-            "width": 10,
-            "x": 30,
-            "y": 10,
-          },
-          "inserted": {
-            "isDeleted": true,
+            "alignmentLocked": true,
             "version": 4,
           },
+          "inserted": {
+            "alignmentLocked": undefined,
+            "version": 3,
+          },
         },
       },
-      "updated": {},
     },
     "id": "id8",
-  },
-  {
-    "appState": AppStateDelta {
-      "delta": Delta {
-        "deleted": {
-          "selectedElementIds": {
-            "id0": true,
-          },
-        },
-        "inserted": {
-          "selectedElementIds": {
-            "id3": true,
-          },
-        },
-      },
-    },
-    "elements": {
-      "added": {},
-      "removed": {},
-      "updated": {},
-    },
-    "id": "id11",
-  },
-  {
-    "appState": AppStateDelta {
-      "delta": Delta {
-        "deleted": {
-          "selectedElementIds": {
-            "id3": true,
-          },
-        },
-        "inserted": {
-          "selectedElementIds": {
-            "id0": true,
-          },
-        },
-      },
-    },
-    "elements": {
-      "added": {},
-      "removed": {},
-      "updated": {},
-    },
-    "id": "id14",
   },
 ]
 `;
@@ -11287,6 +11096,7 @@ exports[`regression tests > pinch-to-zoom works > [end of test] appState 1`] = `
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -11310,6 +11120,7 @@ exports[`regression tests > pinch-to-zoom works > [end of test] appState 1`] = `
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "down",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -11332,6 +11143,8 @@ exports[`regression tests > pinch-to-zoom works > [end of test] appState 1`] = `
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -11382,6 +11195,8 @@ exports[`regression tests > pinch-to-zoom works > [end of test] appState 1`] = `
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -11411,6 +11226,7 @@ exports[`regression tests > shift click on selected element should deselect it o
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -11433,7 +11249,8 @@ exports[`regression tests > shift click on selected element should deselect it o
   "currentItemStrokeVariability": "constant",
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
-  "cursorButton": "up",
+  "cursorButton": "down",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -11456,6 +11273,8 @@ exports[`regression tests > shift click on selected element should deselect it o
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": "id0",
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -11483,16 +11302,16 @@ exports[`regression tests > shift click on selected element should deselect it o
     "initialized": true,
     "type": "selection",
   },
-  "previousSelectedElementIds": {
-    "id0": true,
-  },
+  "previousSelectedElementIds": {},
   "resizingElement": null,
   "scrollConstraints": null,
   "scrollX": 0,
   "scrollY": 0,
   "scrolledOutside": false,
   "searchMatches": null,
-  "selectedElementIds": {},
+  "selectedElementIds": {
+    "id0": true,
+  },
   "selectedElementsAreBeingDragged": false,
   "selectedGroupIds": {},
   "selectedLinearElement": null,
@@ -11508,6 +11327,8 @@ exports[`regression tests > shift click on selected element should deselect it o
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -11581,22 +11402,27 @@ exports[`regression tests > shift click on selected element should deselect it o
   {
     "appState": AppStateDelta {
       "delta": Delta {
-        "deleted": {
-          "selectedElementIds": {},
-        },
-        "inserted": {
-          "selectedElementIds": {
-            "id0": true,
-          },
-        },
+        "deleted": {},
+        "inserted": {},
       },
     },
     "elements": {
       "added": {},
       "removed": {},
-      "updated": {},
+      "updated": {
+        "id0": {
+          "deleted": {
+            "alignmentLocked": true,
+            "version": 4,
+          },
+          "inserted": {
+            "alignmentLocked": undefined,
+            "version": 3,
+          },
+        },
+      },
     },
-    "id": "id5",
+    "id": "id4",
   },
 ]
 `;
@@ -11612,6 +11438,7 @@ exports[`regression tests > shift-click to multiselect, then drag > [end of test
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -11634,7 +11461,8 @@ exports[`regression tests > shift-click to multiselect, then drag > [end of test
   "currentItemStrokeVariability": "constant",
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
-  "cursorButton": "up",
+  "cursorButton": "down",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -11657,6 +11485,8 @@ exports[`regression tests > shift-click to multiselect, then drag > [end of test
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -11685,7 +11515,6 @@ exports[`regression tests > shift-click to multiselect, then drag > [end of test
     "type": "selection",
   },
   "previousSelectedElementIds": {
-    "id0": true,
     "id3": true,
   },
   "resizingElement": null,
@@ -11696,7 +11525,6 @@ exports[`regression tests > shift-click to multiselect, then drag > [end of test
   "searchMatches": null,
   "selectedElementIds": {
     "id0": true,
-    "id3": true,
   },
   "selectedElementsAreBeingDragged": false,
   "selectedGroupIds": {},
@@ -11713,6 +11541,8 @@ exports[`regression tests > shift-click to multiselect, then drag > [end of test
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -11725,7 +11555,7 @@ exports[`regression tests > shift-click to multiselect, then drag > [end of test
 
 exports[`regression tests > shift-click to multiselect, then drag > [end of test] number of elements 1`] = `0`;
 
-exports[`regression tests > shift-click to multiselect, then drag > [end of test] number of renders 1`] = `13`;
+exports[`regression tests > shift-click to multiselect, then drag > [end of test] number of renders 1`] = `11`;
 
 exports[`regression tests > shift-click to multiselect, then drag > [end of test] redo stack 1`] = `[]`;
 
@@ -11862,26 +11692,6 @@ exports[`regression tests > shift-click to multiselect, then drag > [end of test
   {
     "appState": AppStateDelta {
       "delta": Delta {
-        "deleted": {
-          "selectedElementIds": {
-            "id3": true,
-          },
-        },
-        "inserted": {
-          "selectedElementIds": {},
-        },
-      },
-    },
-    "elements": {
-      "added": {},
-      "removed": {},
-      "updated": {},
-    },
-    "id": "id11",
-  },
-  {
-    "appState": AppStateDelta {
-      "delta": Delta {
         "deleted": {},
         "inserted": {},
       },
@@ -11892,31 +11702,41 @@ exports[`regression tests > shift-click to multiselect, then drag > [end of test
       "updated": {
         "id0": {
           "deleted": {
+            "alignments": [
+              {
+                "axis": "y",
+                "elementId": "id3",
+                "otherEdge": "min",
+                "selfEdge": "min",
+              },
+            ],
             "version": 4,
-            "x": 20,
-            "y": 20,
           },
           "inserted": {
+            "alignments": undefined,
             "version": 3,
-            "x": 10,
-            "y": 10,
           },
         },
         "id3": {
           "deleted": {
+            "alignments": [
+              {
+                "axis": "y",
+                "elementId": "id0",
+                "otherEdge": "min",
+                "selfEdge": "min",
+              },
+            ],
             "version": 4,
-            "x": 40,
-            "y": 20,
           },
           "inserted": {
+            "alignments": undefined,
             "version": 3,
-            "x": 30,
-            "y": 10,
           },
         },
       },
     },
-    "id": "id14",
+    "id": "id10",
   },
 ]
 `;
@@ -11932,6 +11752,7 @@ exports[`regression tests > should group elements and ungroup them > [end of tes
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -11955,6 +11776,7 @@ exports[`regression tests > should group elements and ungroup them > [end of tes
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -11977,6 +11799,8 @@ exports[`regression tests > should group elements and ungroup them > [end of tes
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -12035,6 +11859,8 @@ exports[`regression tests > should group elements and ungroup them > [end of tes
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -12362,6 +12188,7 @@ exports[`regression tests > single-clicking on a subgroup of a selected group sh
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -12385,6 +12212,7 @@ exports[`regression tests > single-clicking on a subgroup of a selected group sh
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -12407,6 +12235,8 @@ exports[`regression tests > single-clicking on a subgroup of a selected group sh
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -12469,6 +12299,8 @@ exports[`regression tests > single-clicking on a subgroup of a selected group sh
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -13003,6 +12835,7 @@ exports[`regression tests > spacebar + drag scrolls the canvas > [end of test] a
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -13026,6 +12859,7 @@ exports[`regression tests > spacebar + drag scrolls the canvas > [end of test] a
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -13048,6 +12882,8 @@ exports[`regression tests > spacebar + drag scrolls the canvas > [end of test] a
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -13101,6 +12937,8 @@ exports[`regression tests > spacebar + drag scrolls the canvas > [end of test] a
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -13130,6 +12968,7 @@ exports[`regression tests > supports nested groups > [end of test] appState 1`] 
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -13153,6 +12992,7 @@ exports[`regression tests > supports nested groups > [end of test] appState 1`] 
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": "id11",
@@ -13175,6 +13015,8 @@ exports[`regression tests > supports nested groups > [end of test] appState 1`] 
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -13229,6 +13071,8 @@ exports[`regression tests > supports nested groups > [end of test] appState 1`] 
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -13762,6 +13606,7 @@ exports[`regression tests > switches from group of selected elements to another 
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -13785,6 +13630,7 @@ exports[`regression tests > switches from group of selected elements to another 
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "down",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -13807,6 +13653,8 @@ exports[`regression tests > switches from group of selected elements to another 
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -13890,6 +13738,8 @@ exports[`regression tests > switches from group of selected elements to another 
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -14102,6 +13952,7 @@ exports[`regression tests > switches selected element on pointer down > [end of 
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -14125,6 +13976,7 @@ exports[`regression tests > switches selected element on pointer down > [end of 
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "down",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -14147,6 +13999,8 @@ exports[`regression tests > switches selected element on pointer down > [end of 
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -14229,6 +14083,8 @@ exports[`regression tests > switches selected element on pointer down > [end of 
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -14367,6 +14223,7 @@ exports[`regression tests > two-finger scroll works > [end of test] appState 1`]
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -14390,6 +14247,7 @@ exports[`regression tests > two-finger scroll works > [end of test] appState 1`]
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "down",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -14412,6 +14270,8 @@ exports[`regression tests > two-finger scroll works > [end of test] appState 1`]
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -14462,6 +14322,8 @@ exports[`regression tests > two-finger scroll works > [end of test] appState 1`]
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -14491,6 +14353,7 @@ exports[`regression tests > undo/redo drawing an element > [end of test] appStat
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -14514,6 +14377,7 @@ exports[`regression tests > undo/redo drawing an element > [end of test] appStat
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -14536,6 +14400,8 @@ exports[`regression tests > undo/redo drawing an element > [end of test] appStat
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -14588,6 +14454,8 @@ exports[`regression tests > undo/redo drawing an element > [end of test] appStat
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -14856,6 +14724,7 @@ exports[`regression tests > updates fontSize & fontFamily appState > [end of tes
     "locked": false,
     "type": "text",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -14879,6 +14748,7 @@ exports[`regression tests > updates fontSize & fontFamily appState > [end of tes
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -14901,6 +14771,8 @@ exports[`regression tests > updates fontSize & fontFamily appState > [end of tes
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -14951,6 +14823,8 @@ exports[`regression tests > updates fontSize & fontFamily appState > [end of tes
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,
@@ -14980,6 +14854,7 @@ exports[`regression tests > zoom hotkeys > [end of test] appState 1`] = `
     "locked": false,
     "type": "selection",
   },
+  "alignmentResizeAnchorIds": [],
   "bindMode": "orbit",
   "bindingPreference": "enabled",
   "boxSelectionMode": "contain",
@@ -15003,6 +14878,7 @@ exports[`regression tests > zoom hotkeys > [end of test] appState 1`] = `
   "currentItemStrokeWidthKey": "medium",
   "currentItemTextAlign": "left",
   "cursorButton": "up",
+  "debugVersionLogHighlightedElementIds": null,
   "defaultSidebarDockedPreference": false,
   "editingFrame": null,
   "editingGroupId": null,
@@ -15025,6 +14901,8 @@ exports[`regression tests > zoom hotkeys > [end of test] appState 1`] = `
   "gridSize": 20,
   "gridStep": 5,
   "height": 768,
+  "hoveredAlignmentAnchorId": null,
+  "hoveredAlignmentIcon": null,
   "hoveredArrowTextAnchor": null,
   "hoveredElementIds": {},
   "isBindingEnabled": true,
@@ -15078,6 +14956,8 @@ exports[`regression tests > zoom hotkeys > [end of test] appState 1`] = `
   "suggestedBinding": null,
   "theme": "light",
   "toast": null,
+  "versionLogHoverPreview": null,
+  "versionLogPendingConflicts": null,
   "viewBackgroundColor": "#ffffff",
   "viewModeEnabled": false,
   "width": 1440,

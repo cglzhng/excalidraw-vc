@@ -27,6 +27,7 @@ import {
 } from "./alignment";
 import {
   clampSizeToGapAlignments,
+  getGapAlignmentAnchoredResizeBlockers,
   propagateAlignmentsAfterResize,
 } from "./gapAlignment";
 import {
@@ -130,14 +131,24 @@ const clampSizeToFrozenAlignmentAxes = (
   },
 ): { nextWidth: number; nextHeight: number } => {
   const overConstrained = getAlignmentResizeLockedAxes(resizedIds, elementsMap);
-  const anchored = getAlignmentAnchoredResizeBlockers(resizedIds, elementsMap, {
+  const edgeOpts = {
     handle: opts.handle,
     shouldResizeFromCenter: opts.shouldResizeFromCenter,
     allEdgesMove: opts.rotated || opts.boxScaled,
-  });
+  };
+  const anchored = getAlignmentAnchoredResizeBlockers(
+    resizedIds,
+    elementsMap,
+    edgeOpts,
+  );
+  const gapAnchored = getGapAlignmentAnchoredResizeBlockers(
+    resizedIds,
+    elementsMap,
+    edgeOpts,
+  );
   const frozen = {
-    x: overConstrained.x || anchored.x.size > 0,
-    y: overConstrained.y || anchored.y.size > 0,
+    x: overConstrained.x || anchored.x.size > 0 || gapAnchored.x.size > 0,
+    y: overConstrained.y || anchored.y.size > 0 || gapAnchored.y.size > 0,
   };
   if (!frozen.x && !frozen.y) {
     return size;

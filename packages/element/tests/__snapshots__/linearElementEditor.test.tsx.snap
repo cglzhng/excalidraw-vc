@@ -6,12 +6,6 @@ collaboration made
 easy"
 `;
 
-exports[`Test Linear Elements > Test bound text element > should bind text to arrow when double clicked 1`] = `
-"Online whiteboard
-collaboration made
-easy"
-`;
-
 exports[`Test Linear Elements > Test bound text element > should match styles for text editor 1`] = `
 <textarea
   class="excalidraw-wysiwyg"
@@ -27,11 +21,6 @@ exports[`Test Linear Elements > Test bound text element > should resize and posi
 "Online whiteboard
 collaboration made
 easy"
-`;
-
-exports[`Test Linear Elements > Test bound text element > should resize and position the bound text and bounding box correctly when 3 pointer arrow element resized 6`] = `
-"Online whiteboard
-collaboration made easy"
 `;
 
 exports[`Test Linear Elements > Test bound text element > should resize and position the bound text correctly when 2 pointer linear element resized 2`] = `

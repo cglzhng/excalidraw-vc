@@ -13,9 +13,55 @@ import type { InteractiveCanvasAppState } from "../types";
 
 const SNAP_WIDTH = 1;
 
+/** Tolerance for calling a transient gap line the same gap as one an
+ * equal-gap guide is already drawing. Both come from the same element
+ * bounds; upstream rounds its dragged bounds, so this only has to
+ * survive that. */
+const GAP_LINE_MATCH_EPSILON = 1;
+
+/**
+ * Gaps an equal-gap guide is already reporting, so the transient snap
+ * line for the same gap can be skipped.
+ *
+ * Upstream draws one line per *snap*, two lines per snap, each at its own
+ * perpendicular coordinate — so a single evenly-spaced arrangement can
+ * report the same gap two or three times, at slightly different offsets.
+ * Our guide draws one span per gap on a single shared line. Suppressing
+ * the duplicates leaves exactly one picture of the relationship, and it
+ * is the same one the user sees when the pointer is up.
+ *
+ * Matched by interval rather than by identity because a snap line carries
+ * only coordinates. Anything unmatched — a gap between grouped elements,
+ * say, which our per-element detection doesn't enumerate — still draws,
+ * so no snap goes unreported.
+ */
+export type CoveredGap = {
+  direction: "horizontal" | "vertical";
+  from: number;
+  to: number;
+};
+
+const isCovered = (
+  snapLine: { direction: "horizontal" | "vertical"; points: readonly [GlobalPoint, GlobalPoint] },
+  covered: readonly CoveredGap[],
+): boolean => {
+  const axisIndex = snapLine.direction === "horizontal" ? 0 : 1;
+  const a = snapLine.points[0][axisIndex];
+  const b = snapLine.points[1][axisIndex];
+  return covered.some(
+    (gap) =>
+      gap.direction === snapLine.direction &&
+      Math.abs(Math.min(gap.from, gap.to) - Math.min(a, b)) <=
+        GAP_LINE_MATCH_EPSILON &&
+      Math.abs(Math.max(gap.from, gap.to) - Math.max(a, b)) <=
+        GAP_LINE_MATCH_EPSILON,
+  );
+};
+
 export const renderSnaps = (
   context: CanvasRenderingContext2D,
   appState: InteractiveCanvasAppState,
+  coveredGaps: readonly CoveredGap[] = [],
 ) => {
   if (!appState.snapLines.length) {
     return;
@@ -37,6 +83,9 @@ export const renderSnaps = (
 
       drawPointerSnapLine(snapLine, context, appState);
     } else if (snapLine.type === "gap") {
+      if (isCovered(snapLine, coveredGaps)) {
+        continue;
+      }
       context.lineWidth = snapWidth;
       context.strokeStyle = snapColor;
 

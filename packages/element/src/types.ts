@@ -65,22 +65,25 @@ export type ElementAlignment = Readonly<{
 }>;
 
 /**
- * A hard *gap* alignment: three elements, ordered along `axis`, whose two
- * gaps are held equal — the hard counterpart of the gap that upstream's
- * snapping surfaces while dragging.
+ * A hard *gap* alignment: a chain of three or more elements, ordered
+ * along `axis`, whose consecutive gaps are all held equal — the hard
+ * counterpart of the gap that upstream's snapping surfaces while
+ * dragging.
  *
- * `gap(a,b) === gap(b,c)` is equivalent to `b.center === (a.max + c.min) / 2`
- * — the middle element stays centred in the span between its neighbours —
- * which is the form the propagators actually solve.
+ * For the three-element case `gap(a,b) === gap(b,c)` is equivalent to
+ * `b.center === (a.max + c.min) / 2` — the middle element stays centred
+ * between its neighbours. Longer chains are just that constraint on
+ * every adjacent pair, which under translation makes the members'
+ * offsets an arithmetic progression.
  *
  * Unlike {@link ElementAlignment} this has no self/other asymmetry to keep
- * in sync: the identical record is stored on all three members and a
- * member's role is just its index in `ids`. Identity is `(axis, ids)`.
+ * in sync: the identical record is stored on every member and a member's
+ * role is just its index in `ids`. Identity is `(axis, ids)`.
  */
 export type ElementGapAlignment = Readonly<{
   axis: "x" | "y";
-  /** the triple, ordered along `axis` at lock time */
-  ids: readonly [string, string, string];
+  /** the chain, ordered along `axis` at lock time; at least 3 long */
+  ids: readonly string[];
 }>;
 
 type _ExcalidrawElementBase = Readonly<{
@@ -126,9 +129,9 @@ type _ExcalidrawElementBase = Readonly<{
       stored on the partner. Optional/undefined for the common case of
       no links. See `alignment.ts`. */
   alignments?: readonly ElementAlignment[];
-  /** Hard gap-alignment links: triples this element belongs to whose two
-      gaps are held equal. The same record is stored on all three members.
-      Optional/undefined for the common case of none. See
+  /** Hard gap-alignment links: chains this element belongs to whose
+      consecutive gaps are held equal. The same record is stored on every
+      member. Optional/undefined for the common case of none. See
       `gapAlignment.ts`. */
   gapAlignments?: readonly ElementGapAlignment[];
   /** Alignment anchor: when true, the element is never moved by hard-

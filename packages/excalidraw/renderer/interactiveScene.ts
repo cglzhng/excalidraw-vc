@@ -86,6 +86,7 @@ import type {
 } from "@excalidraw/element/types";
 
 import {
+  getVisibleGapGuideLines,
   renderAlignmentLocks,
   renderElementAlignmentLocks,
   renderGapAlignmentLocks,
@@ -2532,10 +2533,27 @@ const _renderInteractiveScene = ({
     }
   });
 
-  renderSnaps(context, appState);
+  // The equal-gap guides are drawn below, but the snap renderer needs to
+  // know which gaps they cover so it can drop its own duplicates of them.
+  const gapGuideLines = getVisibleGapGuideLines(
+    allElementsMap,
+    selectedElements,
+  );
+  renderSnaps(
+    context,
+    appState,
+    gapGuideLines.flatMap((line) =>
+      line.spans.map((span) => ({
+        direction:
+          line.guide.axis === "x" ? ("horizontal" as const) : ("vertical" as const),
+        from: line.guide.axis === "x" ? span.from[0] : span.from[1],
+        to: line.guide.axis === "x" ? span.to[0] : span.to[1],
+      })),
+    ),
+  );
 
   renderAlignmentLocks(context, appState, allElementsMap, selectedElements);
-  renderGapAlignmentLocks(context, appState, allElementsMap, selectedElements);
+  renderGapAlignmentLocks(context, appState, gapGuideLines);
   renderElementAlignmentLocks(
     context,
     appState,

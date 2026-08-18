@@ -1617,6 +1617,7 @@ exports[`Test Transform > should transform the elements correctly when linear el
 exports[`Test Transform > should transform the elements correctly when linear elements have single point 7`] = `
 {
   "angle": 0,
+  "authoredFontSize": 20,
   "autoResize": true,
   "backgroundColor": "transparent",
   "boundElements": null,
@@ -1660,6 +1661,7 @@ exports[`Test Transform > should transform the elements correctly when linear el
 exports[`Test Transform > should transform the elements correctly when linear elements have single point 8`] = `
 {
   "angle": 0,
+  "authoredFontSize": 20,
   "autoResize": true,
   "backgroundColor": "transparent",
   "boundElements": null,
@@ -1703,6 +1705,7 @@ exports[`Test Transform > should transform the elements correctly when linear el
 exports[`Test Transform > should transform the elements correctly when linear elements have single point 9`] = `
 {
   "angle": 0,
+  "authoredFontSize": 20,
   "autoResize": true,
   "backgroundColor": "transparent",
   "boundElements": null,
@@ -1746,6 +1749,7 @@ exports[`Test Transform > should transform the elements correctly when linear el
 exports[`Test Transform > should transform the elements correctly when linear elements have single point 10`] = `
 {
   "angle": 0,
+  "authoredFontSize": 20,
   "autoResize": true,
   "backgroundColor": "transparent",
   "boundElements": null,
