@@ -16,6 +16,7 @@ import {
   dragSelectedElements,
   getAlignmentAnchoredResizeBlockers,
   getCommonBounds,
+  getGapAlignmentAnchoredResizeBlockers,
   getCommonFrameId,
   getElementAbsoluteCoords,
   getElementsInGroup,
@@ -588,20 +589,34 @@ export class AppSelectionTool {
     transformHandleType: MaybeTransformHandleType,
     resizeFromCenter: boolean,
   ) => {
-    const blockers =
-      transformHandleType && transformHandleType !== "rotation"
-        ? getAlignmentAnchoredResizeBlockers(
-            new Set(selectedElements.map((element) => element.id)),
-            this.app.scene.getNonDeletedElementsMap(),
-            {
-              handle: transformHandleType,
-              shouldResizeFromCenter: resizeFromCenter,
-              allEdgesMove:
-                selectedElements.length > 1 ||
-                selectedElements.some((element) => element.angle !== 0),
-            },
-          )
-        : { x: new Set<string>(), y: new Set<string>() };
+    let blockers = { x: new Set<string>(), y: new Set<string>() };
+    if (transformHandleType && transformHandleType !== "rotation") {
+      const resizedIds = new Set(
+        selectedElements.map((element) => element.id),
+      );
+      const elementsMap = this.app.scene.getNonDeletedElementsMap();
+      const edgeOpts = {
+        handle: transformHandleType,
+        shouldResizeFromCenter: resizeFromCenter,
+        allEdgesMove:
+          selectedElements.length > 1 ||
+          selectedElements.some((element) => element.angle !== 0),
+      };
+      const edge = getAlignmentAnchoredResizeBlockers(
+        resizedIds,
+        elementsMap,
+        edgeOpts,
+      );
+      const gap = getGapAlignmentAnchoredResizeBlockers(
+        resizedIds,
+        elementsMap,
+        edgeOpts,
+      );
+      blockers = {
+        x: new Set([...edge.x, ...gap.x]),
+        y: new Set([...edge.y, ...gap.y]),
+      };
+    }
 
     const next = [...new Set([...blockers.x, ...blockers.y])];
     const current = this.app.state.alignmentResizeAnchorIds;

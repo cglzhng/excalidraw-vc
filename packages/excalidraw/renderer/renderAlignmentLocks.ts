@@ -296,22 +296,22 @@ export const renderAlignmentLocks = (
 };
 
 /**
- * Equal-gap guides for the current selection: two measured spans plus an
- * equals badge on each.
+ * Equal-gap guides for the current selection: one measured span per gap,
+ * with an equals badge on each.
  *
- * Two badges for one constraint, not one: what's being asserted is an
- * equality *between* the two gaps, so marking both is what the
- * constraint actually says — and it's why the badge is an equals sign
- * rather than the edge guides' padlock. It also sidesteps a placement
- * problem: the natural single point would be the middle element's
- * centre, which is already occupied by the anchor anvil.
+ * A badge per gap, not one per guide: what's being asserted is an
+ * equality *between* the gaps, so marking each is what the constraint
+ * actually says — and it's why the badge is an equals sign rather than
+ * the edge guides' padlock. It also sidesteps a placement problem: the
+ * natural single point would be the chain's centre, which is already
+ * occupied by the anchor anvil.
  *
  * Shared with the pointer handler, like {@link getAlignmentGuideLines},
  * so a click hit-tests exactly what is drawn.
  */
 export type GapAlignmentGuideLine = {
   guide: GapAlignmentGuide;
-  /** one entry per gap, in `guide.gaps` order */
+  /** the gaps to draw, in `guide.gaps` order — possibly not all of them */
   spans: {
     from: [number, number];
     to: [number, number];
@@ -320,42 +320,102 @@ export type GapAlignmentGuideLine = {
   }[];
 };
 
+/** Key for one gap, by the pair of elements bounding it. */
+const gapPairKey = (axis: string, a: string, b: string) => `${axis}:${a}|${b}`;
+
 export const getGapAlignmentGuideLines = (
   selectedElements: readonly NonDeletedExcalidrawElement[],
   elementsMap: NonDeletedSceneElementsMap,
-): GapAlignmentGuideLine[] =>
-  getGapAlignmentGuides(selectedElements, elementsMap).map((guide) => ({
-    guide,
-    spans: guide.gaps.map((gap) => {
-      // both gaps sit on the one line `guide.across` gives us — see the
+): GapAlignmentGuideLine[] => {
+  const guides = getGapAlignmentGuides(selectedElements, elementsMap);
+
+  // A soft chain may run through gaps a hard chain already holds — that
+  // is exactly the case where locking it would extend the hard one — but
+  // those gaps are already drawn and already badged. Suppress the soft
+  // copy so the two don't stack: the chain is still offered whole, it
+  // just isn't reported twice where it overlaps.
+  const hardGaps = new Set<string>();
+  for (const guide of guides) {
+    if (guide.hard) {
+      for (let i = 0; i < guide.ids.length - 1; i++) {
+        hardGaps.add(gapPairKey(guide.axis, guide.ids[i], guide.ids[i + 1]));
+      }
+    }
+  }
+
+  return guides.map((guide) => {
+    const at = (along: number): [number, number] =>
+      guide.axis === "x" ? [along, guide.across] : [guide.across, along];
+
+    const spans: GapAlignmentGuideLine["spans"] = [];
+    guide.gaps.forEach((gap, index) => {
+      if (
+        !guide.hard &&
+        hardGaps.has(
+          gapPairKey(guide.axis, guide.ids[index], guide.ids[index + 1]),
+        )
+      ) {
+        return;
+      }
+      // every gap sits on the one line `guide.across` gives us — see the
       // note there on why it isn't computed per gap
-      const at = (along: number): [number, number] =>
-        guide.axis === "x" ? [along, guide.across] : [guide.across, along];
-      return {
+      spans.push({
         from: at(gap.from),
         to: at(gap.to),
         icon: at((gap.from + gap.to) / 2),
-      };
-    }),
-  }));
+      });
+    });
+    return { guide, spans };
+  });
+};
 
 /** Half-length of the tick capping each end of a gap span, in screen px.
  * Matches the `FULL` end-cap of upstream's gap snap line so a hard gap
  * reads as the same measurement, just kept. */
 const GAP_CAP_SIZE = 8;
 
+/**
+ * The equal-gap guides actually drawn for a selection — the geometry
+ * minus the ones with nothing left to draw.
+ *
+ * Unlike the edge guides, soft gap guides stay up during a drag. Equal
+ * spacing is the same relationship whether the pointer is down or not,
+ * and upstream's transient gap lines report it in a different place and
+ * a different number (one per satisfied snap, two lines each, each at
+ * its own perpendicular coordinate). Drawing ours throughout and
+ * suppressing the ones upstream duplicates — see `renderSnaps` — makes
+ * the live feedback and the resting indicator the same picture, because
+ * they are the same fact.
+ */
+export const getVisibleGapGuideLines = (
+  elementsMap: NonDeletedSceneElementsMap,
+  selectedElements: readonly NonDeletedExcalidrawElement[],
+): GapAlignmentGuideLine[] =>
+  getGapAlignmentGuideLines(selectedElements, elementsMap).filter(
+    (line) => line.spans.length > 0,
+  );
+
+/**
+ * Whether a guide's gaps carry their equals badges.
+ *
+ * A soft guide's badge is an offer — click to keep this spacing — and
+ * mid-drag there is nothing to click: the arrangement it describes only
+ * exists while the pointer is held. So the line reports the spacing and
+ * the badge waits for the drag to end. A hard guide's badge stays, as it
+ * marks a constraint that is true either way.
+ */
+const showsBadges = (
+  appState: InteractiveCanvasAppState,
+  guide: GapAlignmentGuide,
+): boolean => guide.hard || !appState.selectedElementsAreBeingDragged;
+
 export const renderGapAlignmentLocks = (
   context: CanvasRenderingContext2D,
   appState: InteractiveCanvasAppState,
-  elementsMap: NonDeletedSceneElementsMap,
-  selectedElements: readonly NonDeletedExcalidrawElement[],
+  // already computed by the caller, which needs the same lines to tell
+  // `renderSnaps` which gaps not to draw
+  lines: readonly GapAlignmentGuideLine[],
 ) => {
-  // Same rule as the edge guides: during a drag the soft guides give way
-  // to the transient snap lines, and every drawn span keeps its badge.
-  const dragging = appState.selectedElementsAreBeingDragged;
-  const lines = getGapAlignmentGuideLines(selectedElements, elementsMap).filter(
-    (line) => !dragging || line.guide.hard,
-  );
   if (lines.length === 0) {
     return;
   }
@@ -377,7 +437,8 @@ export const renderGapAlignmentLocks = (
   };
 
   for (const { guide, spans } of lines) {
-    for (const { from, to } of spans) {
+    const badged = showsBadges(appState, guide);
+    for (const { from, to, icon } of spans) {
       // end caps, always solid — they're the measurement's endpoints and
       // would disappear into a dash pattern
       context.setLineDash([]);
@@ -387,6 +448,29 @@ export const renderGapAlignmentLocks = (
       } else {
         stroke([from[0] - cap, from[1]], [from[0] + cap, from[1]]);
         stroke([to[0] - cap, to[1]], [to[0] + cap, to[1]]);
+      }
+
+      // Upstream's midpoint mark: a pair of short ticks straddling the
+      // centre, half the height of the end caps. It is what tells a gap
+      // line apart from an alignment line at a glance, so a span without
+      // a badge to occupy its middle needs it. Where the badge *is*
+      // drawn it would only be hidden behind the disc.
+      if (!badged) {
+        const half = cap / 2;
+        const quarter = cap / 4;
+        for (const offset of [-quarter, quarter]) {
+          if (guide.axis === "x") {
+            stroke(
+              [icon[0] + offset, icon[1] - half],
+              [icon[0] + offset, icon[1] + half],
+            );
+          } else {
+            stroke(
+              [icon[0] - half, icon[1] + offset],
+              [icon[0] + half, icon[1] + offset],
+            );
+          }
+        }
       }
 
       // The span itself: solid when hard, dashed when soft — the same
@@ -402,6 +486,9 @@ export const renderGapAlignmentLocks = (
 
   context.setLineDash([]);
   for (const { guide, spans } of lines) {
+    if (!showsBadges(appState, guide)) {
+      continue;
+    }
     for (const { icon } of spans) {
       drawEqualsBadge(
         context,

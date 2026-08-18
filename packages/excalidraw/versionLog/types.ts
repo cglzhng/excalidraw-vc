@@ -362,8 +362,8 @@ export type LogOperation =
       | {
           /**
            * Which link field the op writes. Edge alignments and equal-gap
-           * triples are the same gesture ("lock what you can see") with
-           * incompatible payloads — a triple has no single partner id —
+           * chains are the same gesture ("lock what you can see") with
+           * incompatible payloads — a chain has no single partner id —
            * so they share the kind and split here rather than adding a
            * second op kind and eight more switch arms.
            */

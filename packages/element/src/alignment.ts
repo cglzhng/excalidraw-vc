@@ -463,28 +463,34 @@ const MAX_DRAG_FACTOR_PASSES = 8;
  * absent from the map doesn't move. Includes the seeds.
  *
  * A multiple rather than a set, because gap alignment doesn't move
- * everything by the same amount. Its constraint is
+ * everything by the same amount. Holding one gap equal to the next says
  *
- *     2·b.center = a.max + c.min
+ *     d(i+1) − d(i) = d(i+2) − d(i+1)
  *
- * so under translations `2·db = da + dc` — one equation per triple,
- * which the passes below solve for whichever member is still unknown.
- * Two members unknown leaves it under-determined, and the choice made
- * there is what gives gap dragging its feel:
+ * so along a chain the factors are an **arithmetic progression**,
+ * `d(i) = p + q·i`, however long the chain is. Two degrees of freedom,
+ * so two known members determine the rest and the passes below fit the
+ * line through them. (A third known member that disagrees is left alone
+ * — the chain is then over-constrained, and first-wins is the same
+ * backstop the edge propagator uses.)
  *
- *   - the **middle** is known and both outers aren't: the triple travels
- *     rigidly, `da = dc = db`. This is the case when the user drags the
- *     middle element, and translating all three preserves both gaps
- *     whatever their size.
- *   - an **outer** is known and the rest aren't: the middle holds still
- *     (`db = 0`) and the far outer mirrors the move (`dc = -da`).
- *     Dragging `a` toward the gap by `d` pulls `c` toward it by `d` too,
- *     closing both gaps by `d` while `b` stays exactly where it was.
+ * One known member leaves `q` free, and the choice there is what gives
+ * gap dragging its feel:
  *
- * Holding the middle is what makes the gesture legible: the element
- * between the two gaps is the one you are measuring against, so moving
- * it would change the thing being kept equal. Squeezing from the outside
- * leaves it as the fixed centre of the arrangement.
+ *   - an **interior** member is the known one: `q = 0`, so the chain
+ *     travels rigidly. Translating everything preserves every gap
+ *     whatever their sizes, and this is the case when the user drags a
+ *     member with neighbours on both sides.
+ *   - an **end** member is the known one: `q = ∓d`, which puts its
+ *     immediate neighbour at 0 and steps the rest of the chain along
+ *     from there. Dragging the first element toward the chain by `d`
+ *     closes every gap by `d` while the second element stays exactly
+ *     where it was.
+ *
+ * Holding the neighbour is what makes the gesture legible: the element
+ * you are moving toward is the one you are measuring against, so moving
+ * it would change the thing being kept equal. Squeezing from an end
+ * leaves it as the fixed point of the arrangement.
  *
  * Edge alignments are the simple case throughout: a partner inherits its
  * neighbour's factor exactly, which is the rigid coupling they've always
@@ -518,48 +524,51 @@ export const getAlignmentDragFactors = (
     return changed;
   };
 
-  /** One pass of `2·db = da + dc` over every triple on this axis. */
-  const solveTriples = (): boolean => {
+  /** One pass of the progression fit over every gap chain on this axis. */
+  const solveChains = (): boolean => {
     let changed = false;
     for (const el of elementsMap.values()) {
       for (const link of el.gapAlignments ?? []) {
-        if (link.axis !== axis) {
+        if (link.axis !== axis || link.ids.length < 3) {
           continue;
         }
-        const [aId, bId, cId] = link.ids;
-        const da = factors.get(aId);
-        const db = factors.get(bId);
-        const dc = factors.get(cId);
-        const unknowns = [da, db, dc].filter(
-          (factor) => factor === undefined,
-        ).length;
-
-        if (unknowns === 0 || unknowns === 3) {
-          // nothing to solve, or nothing to solve it from
-          continue;
-        }
-
-        if (unknowns === 1) {
-          if (db === undefined) {
-            factors.set(bId, (da! + dc!) / 2);
-          } else if (da === undefined) {
-            factors.set(aId, 2 * db - dc!);
-          } else {
-            factors.set(cId, 2 * db - da!);
+        const known: { index: number; factor: number }[] = [];
+        link.ids.forEach((id, index) => {
+          const factor = factors.get(id);
+          if (factor !== undefined) {
+            known.push({ index, factor });
           }
-        } else if (db !== undefined) {
-          // only the middle is known: carry the whole triple with it
-          factors.set(aId, db);
-          factors.set(cId, db);
-        } else {
-          // only one outer is known: pin the middle and mirror the move
-          // onto the far outer. `0` is recorded rather than left absent
-          // so a triple further along a chain can solve against it.
-          const known = da ?? dc!;
-          factors.set(bId, 0);
-          factors.set(da === undefined ? aId : cId, -known);
+        });
+        if (known.length === 0 || known.length === link.ids.length) {
+          // nothing to solve from, or nothing left to solve
+          continue;
         }
-        changed = true;
+
+        const first = known[0];
+        const last = known[known.length - 1];
+        let slope: number;
+        if (known.length > 1) {
+          slope = (last.factor - first.factor) / (last.index - first.index);
+        } else if (first.index === 0) {
+          // dragging the head: the next member holds still
+          slope = -first.factor;
+        } else if (first.index === link.ids.length - 1) {
+          // dragging the tail: the previous member holds still
+          slope = first.factor;
+        } else {
+          // dragging from inside: the whole chain travels together
+          slope = 0;
+        }
+        const intercept = first.factor - slope * first.index;
+
+        link.ids.forEach((id, index) => {
+          if (!factors.has(id)) {
+            // 0 is recorded rather than left absent, so a chain further
+            // along can solve against a member that holds still
+            factors.set(id, intercept + slope * index);
+            changed = true;
+          }
+        });
       }
     }
     return changed;
@@ -567,7 +576,7 @@ export const getAlignmentDragFactors = (
 
   for (let pass = 0; pass < MAX_DRAG_FACTOR_PASSES; pass++) {
     const spread = spreadEdgeLinks();
-    const solved = solveTriples();
+    const solved = solveChains();
     if (!spread && !solved) {
       break;
     }
@@ -739,43 +748,56 @@ export const getAlignmentResizeLockedAxes = (
  * through same-axis links, so an anchor anywhere in the partner's rigid
  * component freezes the resize just the same.
  */
+export type ResizeEdgeOpts = {
+  handle: string | false;
+  shouldResizeFromCenter: boolean;
+  /**
+   * Treat every edge as moving. True when the geometry doesn't let us
+   * say which edges the handle holds still — a rotated element, whose
+   * bounds both move with either dimension, or a multi-element resize,
+   * where members move by a box scale rather than by the handle.
+   */
+  allEdgesMove: boolean;
+};
+
+/**
+ * Whether a resize moves a given edge of a resized element. Shared with
+ * the equal-gap blocker, which asks the same question of the edges that
+ * bound a chain's gaps.
+ */
+export const resizeMovesEdge = (
+  axis: Axis,
+  edge: Edge,
+  opts: ResizeEdgeOpts,
+): boolean => {
+  if (opts.allEdgesMove) {
+    return true;
+  }
+  if (!opts.handle) {
+    return false;
+  }
+  if (opts.shouldResizeFromCenter) {
+    // both bounds grow outward, the centre stays put
+    return edge !== "center";
+  }
+  // "nw" / "w" hold the right edge and move the left, and so on
+  const movesMin = opts.handle.includes(axis === "x" ? "w" : "n");
+  const movesMax = opts.handle.includes(axis === "x" ? "e" : "s");
+  if (!movesMin && !movesMax) {
+    // a pure "n" / "s" handle doesn't touch x at all
+    return false;
+  }
+  // whichever side moves, the centre moves with it (by half)
+  return edge === "center" || (edge === "min" ? movesMin : movesMax);
+};
+
 export const getAlignmentAnchoredResizeBlockers = (
   resizedIds: Set<string>,
   elementsMap: ElementsMap,
-  opts: {
-    handle: string | false;
-    shouldResizeFromCenter: boolean;
-    /**
-     * Treat every edge as moving. True when the geometry doesn't let us
-     * say which edges the handle holds still — a rotated element, whose
-     * bounds both move with either dimension, or a multi-element resize,
-     * where members move by a box scale rather than by the handle.
-     */
-    allEdgesMove: boolean;
-  },
+  opts: ResizeEdgeOpts,
 ): { x: Set<string>; y: Set<string> } => {
-  /** Whether this resize moves `edge` of a resized element. */
-  const movesEdge = (axis: Axis, edge: Edge): boolean => {
-    if (opts.allEdgesMove) {
-      return true;
-    }
-    if (!opts.handle) {
-      return false;
-    }
-    if (opts.shouldResizeFromCenter) {
-      // both bounds grow outward, the centre stays put
-      return edge !== "center";
-    }
-    // "nw" / "w" hold the right edge and move the left, and so on
-    const movesMin = opts.handle.includes(axis === "x" ? "w" : "n");
-    const movesMax = opts.handle.includes(axis === "x" ? "e" : "s");
-    if (!movesMin && !movesMax) {
-      // a pure "n" / "s" handle doesn't touch x at all
-      return false;
-    }
-    // whichever side moves, the centre moves with it (by half)
-    return edge === "center" || (edge === "min" ? movesMin : movesMax);
-  };
+  const movesEdge = (axis: Axis, edge: Edge) =>
+    resizeMovesEdge(axis, edge, opts);
 
   const blockersOn = (axis: Axis): Set<string> => {
     const blockers = new Set<string>();

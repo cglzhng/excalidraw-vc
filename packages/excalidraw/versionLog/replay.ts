@@ -420,8 +420,8 @@ const enumerateMissingReferents = (
           continue;
         }
         for (const link of links) {
-          // an edge link names one partner; a gap triple names all three
-          // (the owner among them, which `isLive` filters out below)
+          // an edge link names one partner; a gap chain names every
+          // member (the owner among them, which `isLive` filters below)
           if (typeof link === "object" && link != null) {
             if ("elementId" in link) {
               partnerIds.add((link as { elementId: string }).elementId);

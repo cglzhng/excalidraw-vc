@@ -8726,9 +8726,11 @@ class App extends React.Component<AppProps, AppState> {
   }
 
   /**
-   * Promote a soft equal-gap triple to a hard one, or demote it back.
-   * The link is written to all three members at once, so this is one
-   * undo step / version-log moment — as `toggleAlignmentGuide` is.
+   * Promote a soft equal-gap chain to a hard one, or demote it back.
+   * Locking may merge the chain into one it continues; unlocking drops
+   * the whole chain. The links are written to every affected member at
+   * once, so this is one undo step / version-log moment, as
+   * `toggleAlignmentGuide` is.
    */
   private toggleGapAlignmentGuide(guide: GapAlignmentGuide) {
     const elementsMap = this.scene.getNonDeletedElementsMap();
