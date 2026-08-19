@@ -437,7 +437,7 @@ import {
   getGapAlignmentGuideLines,
   getElementLockToggle,
 } from "../renderer/renderAlignmentLocks";
-import { INDICATOR_BADGE_RADIUS } from "../renderer/helpers";
+import { INDICATOR_BADGE_RADIUS } from "../renderer/indicatorHelpers";
 import { MagicIcon, copyIcon, fullscreenIcon } from "./icons";
 import { AppStateObserver, type OnStateChange } from "./AppStateObserver";
 

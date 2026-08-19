@@ -1,5 +1,3 @@
-import { THEME } from "@excalidraw/common";
-
 import {
   getAlignmentGuides,
   getAlignmentMovers,
@@ -10,15 +8,20 @@ import {
 } from "@excalidraw/element";
 
 import {
-  INACTIVE_ICON_OPACITY,
-  INDICATOR_CROSS_SIZE,
+  drawAlignmentHighlight,
   drawAlignmentPadlock,
+  drawAnchorOverlayButton,
+  drawAnchorOverlayWarning,
   drawEqualsBadge,
+  drawGapEndCap,
+  drawGapMidpointTicks,
   drawIndicatorCross,
-  getIndicatorColor,
+  getAlignmentIndicatorColor,
+  getAnchorIconSize,
+  getIndicatorLineWidth,
   getNarrowIndicatorLineDash,
   getWideIndicatorLineDash,
-} from "./helpers";
+} from "./indicatorHelpers";
 
 import type { Bounds } from "@excalidraw/common";
 import type { AlignmentGuide, GapAlignmentGuide } from "@excalidraw/element";
@@ -138,81 +141,6 @@ export const getAlignmentGuideLines = (
 };
 
 /**
- * Anvil silhouette, as offsets from the icon's centre in units of its
- * height: overhanging horn on the left, wide face on top, pinched waist,
- * flared foot. Traced clockwise from the top-left of the face.
- */
-const ANVIL_PATH: readonly (readonly [number, number])[] = [
-  [-0.25, -0.5], // face, top-left
-  [0.57, -0.5], // face, top-right
-  [0.57, -0.3], // face, bottom-right
-  [0.25, -0.2], // underside sloping in to the waist
-  [0.19, 0.1], // waist, right
-  [0.45, 0.3], // foot flares out
-  [0.45, 0.5], // foot, bottom-right
-  [-0.35, 0.5], // foot, bottom-left
-  [-0.35, 0.3],
-  [-0.09, 0.1], // waist, left
-  [-0.19, -0.2],
-  [-0.57, -0.28], // horn tip
-];
-
-/**
- * An anvil centred on (cx, cy) and `size` tall — the "too heavy to be
- * pushed around" mark for an alignment anchor. The caller owns colour,
- * alpha and any backing.
- *
- * `filled` is the state cue, and here it carries real meaning rather
- * than just convention: a solid anvil is a lump of mass (anchored, won't
- * budge), a hollow one is an empty shell (free to be moved by its
- * alignments). Weight is the whole metaphor, so it should be what the
- * silhouette shows.
- *
- * Anvils are deliberately *not* padlocks: a padlock means "this
- * alignment is committed" (the guide-line icons), while an anvil means
- * "this element holds still and the others move around it". Two
- * different ideas, two different icons.
- */
-const drawAnvil = (
-  context: CanvasRenderingContext2D,
-  cx: number,
-  cy: number,
-  size: number,
-  color: string,
-  lineWidth: number,
-  filled: boolean,
-) => {
-  context.save();
-  context.strokeStyle = color;
-  context.fillStyle = color;
-  context.lineWidth = lineWidth;
-  context.lineJoin = "round";
-
-  context.beginPath();
-  ANVIL_PATH.forEach(([dx, dy], i) => {
-    const x = cx + dx * size;
-    const y = cy + dy * size;
-    if (i === 0) {
-      context.moveTo(x, y);
-    } else {
-      context.lineTo(x, y);
-    }
-  });
-  context.closePath();
-
-  if (filled) {
-    context.fill();
-    // stroke too, so the filled anvil reads at the same outer size as
-    // the hollow one rather than shrinking by half a line width
-    context.stroke();
-  } else {
-    context.stroke();
-  }
-
-  context.restore();
-};
-
-/**
  * Whether this badge is the one the pointer is over. Matched by position
  * because that is what `App`'s hit-test reports and what the badge is
  * drawn at — both come from the same guide geometry in the same frame,
@@ -233,33 +161,41 @@ const isHoveredIcon = (
   );
 };
 
+/**
+ * The edge-alignment guides actually drawn for a selection.
+ *
+ * While dragging, keep the persisted hard lines visible (partners are
+ * following), but drop the soft coincidences — those are an at-rest
+ * affordance and the transient snap guides already cover the live case.
+ * Whatever line is drawn keeps its padlock: the badge is what says the
+ * line is a kept alignment rather than a passing snap, so a hard line
+ * without one reads as the wrong thing.
+ */
+export const getVisibleAlignmentGuideLines = (
+  elementsMap: NonDeletedSceneElementsMap,
+  selectedElements: readonly NonDeletedExcalidrawElement[],
+  appState: InteractiveCanvasAppState,
+): AlignmentGuideLine[] =>
+  getAlignmentGuideLines(selectedElements, elementsMap).filter(
+    (line) => !appState.selectedElementsAreBeingDragged || line.guide.hard,
+  );
+
 export const renderAlignmentLocks = (
   context: CanvasRenderingContext2D,
   appState: InteractiveCanvasAppState,
-  elementsMap: NonDeletedSceneElementsMap,
-  selectedElements: readonly NonDeletedExcalidrawElement[],
+  lines: readonly AlignmentGuideLine[],
 ) => {
-  // While dragging, keep the persisted hard lines visible (partners are
-  // following), but drop the soft coincidences — those are an at-rest
-  // affordance and the transient snap guides already cover the live
-  // case. Whatever line is drawn keeps its padlock: the badge is what
-  // says the line is a kept alignment rather than a passing snap, so a
-  // hard line without one reads as the wrong thing.
-  const dragging = appState.selectedElementsAreBeingDragged;
-  const lines = getAlignmentGuideLines(selectedElements, elementsMap).filter(
-    (line) => !dragging || line.guide.hard,
-  );
   if (lines.length === 0) {
     return;
   }
 
   const zoom = appState.zoom.value;
-  const color = getIndicatorColor(appState.theme, appState.zenModeEnabled);
+  const color = getAlignmentIndicatorColor(appState.theme, appState.zenModeEnabled);
 
   context.save();
   context.translate(appState.scrollX, appState.scrollY);
   context.strokeStyle = color;
-  context.lineWidth = 1 / zoom;
+  context.lineWidth = getIndicatorLineWidth(zoom);
 
   for (const { guide, from, to } of lines) {
     context.setLineDash(guide.hard ? [] : getWideIndicatorLineDash(zoom));
@@ -270,16 +206,32 @@ export const renderAlignmentLocks = (
   }
 
   // Crosses mark the anchor points the line is pinned to, as the snap
-  // guides do. Solid regardless of the line's dash — they're a couple of
-  // pixels across and would disappear into the gaps.
-  context.setLineDash([]);
-  const crossSize = INDICATOR_CROSS_SIZE / zoom;
+  // guides do.
   for (const { crosses } of lines) {
     for (const [x, y] of crosses) {
-      drawIndicatorCross(context, x, y, crossSize);
+      drawIndicatorCross(context, x, y, zoom);
     }
   }
 
+  context.restore();
+};
+
+/** The padlocks for {@link renderAlignmentLocks}' guides, drawn in a
+ * separate pass so no guide line can be laid over a badge. */
+export const renderAlignmentLockIcons = (
+  context: CanvasRenderingContext2D,
+  appState: InteractiveCanvasAppState,
+  lines: readonly AlignmentGuideLine[],
+) => {
+  if (lines.length === 0) {
+    return;
+  }
+  const zoom = appState.zoom.value;
+  const color = getAlignmentIndicatorColor(appState.theme, appState.zenModeEnabled);
+
+  context.save();
+  context.translate(appState.scrollX, appState.scrollY);
+  context.setLineDash([]);
   for (const { guide, icon } of lines) {
     drawAlignmentPadlock(
       context,
@@ -291,7 +243,6 @@ export const renderAlignmentLocks = (
       isHoveredIcon(appState, icon),
     );
   }
-
   context.restore();
 };
 
@@ -369,11 +320,6 @@ export const getGapAlignmentGuideLines = (
   });
 };
 
-/** Half-length of the tick capping each end of a gap span, in screen px.
- * Matches the `FULL` end-cap of upstream's gap snap line so a hard gap
- * reads as the same measurement, just kept. */
-const GAP_CAP_SIZE = 8;
-
 /**
  * The equal-gap guides actually drawn for a selection — the geometry
  * minus the ones with nothing left to draw.
@@ -421,13 +367,12 @@ export const renderGapAlignmentLocks = (
   }
 
   const zoom = appState.zoom.value;
-  const color = getIndicatorColor(appState.theme, appState.zenModeEnabled);
-  const cap = GAP_CAP_SIZE / zoom;
+  const color = getAlignmentIndicatorColor(appState.theme, appState.zenModeEnabled);
 
   context.save();
   context.translate(appState.scrollX, appState.scrollY);
   context.strokeStyle = color;
-  context.lineWidth = 1 / zoom;
+  context.lineWidth = getIndicatorLineWidth(zoom);
 
   const stroke = (from: [number, number], to: [number, number]) => {
     context.beginPath();
@@ -439,38 +384,11 @@ export const renderGapAlignmentLocks = (
   for (const { guide, spans } of lines) {
     const badged = showsBadges(appState, guide);
     for (const { from, to, icon } of spans) {
-      // end caps, always solid — they're the measurement's endpoints and
-      // would disappear into a dash pattern
-      context.setLineDash([]);
-      if (guide.axis === "x") {
-        stroke([from[0], from[1] - cap], [from[0], from[1] + cap]);
-        stroke([to[0], to[1] - cap], [to[0], to[1] + cap]);
-      } else {
-        stroke([from[0] - cap, from[1]], [from[0] + cap, from[1]]);
-        stroke([to[0] - cap, to[1]], [to[0] + cap, to[1]]);
-      }
+      drawGapEndCap(context, from[0], from[1], guide.axis, zoom);
+      drawGapEndCap(context, to[0], to[1], guide.axis, zoom);
 
-      // Upstream's midpoint mark: a pair of short ticks straddling the
-      // centre, half the height of the end caps. It is what tells a gap
-      // line apart from an alignment line at a glance, so a span without
-      // a badge to occupy its middle needs it. Where the badge *is*
-      // drawn it would only be hidden behind the disc.
       if (!badged) {
-        const half = cap / 2;
-        const quarter = cap / 4;
-        for (const offset of [-quarter, quarter]) {
-          if (guide.axis === "x") {
-            stroke(
-              [icon[0] + offset, icon[1] - half],
-              [icon[0] + offset, icon[1] + half],
-            );
-          } else {
-            stroke(
-              [icon[0] - half, icon[1] + offset],
-              [icon[0] + half, icon[1] + offset],
-            );
-          }
-        }
+        drawGapMidpointTicks(context, icon[0], icon[1], guide.axis, zoom);
       }
 
       // The span itself: solid when hard, dashed when soft — the same
@@ -484,24 +402,147 @@ export const renderGapAlignmentLocks = (
     }
   }
 
+  context.restore();
+};
+
+/** Whether the pointer is on any of a gap guide's badges — one hover
+ * answers for the whole chain, since they are one constraint and one
+ * click. */
+const isHoveredGapGuide = (
+  appState: InteractiveCanvasAppState,
+  spans: GapAlignmentGuideLine["spans"],
+): boolean => spans.some(({ icon }) => isHoveredIcon(appState, icon));
+
+/**
+ * The equals badges for {@link renderGapAlignmentLocks}' guides, drawn in
+ * a separate pass so no guide line can be laid over a badge.
+ *
+ * Every badge of a chain lights together, unlike the edge padlocks, which
+ * light one at a time. That difference is the constraint's: a padlock is
+ * its own alignment, so hovering it says something about that line alone,
+ * whereas a chain's badges are one assertion written in several places —
+ * clicking any of them toggles all of them, and the hover has to promise
+ * the same thing the click will do.
+ */
+export const renderGapAlignmentIcons = (
+  context: CanvasRenderingContext2D,
+  appState: InteractiveCanvasAppState,
+  lines: readonly GapAlignmentGuideLine[],
+) => {
+  if (lines.length === 0) {
+    return;
+  }
+  const zoom = appState.zoom.value;
+  const color = getAlignmentIndicatorColor(appState.theme, appState.zenModeEnabled);
+
+  context.save();
+  context.translate(appState.scrollX, appState.scrollY);
   context.setLineDash([]);
   for (const { guide, spans } of lines) {
     if (!showsBadges(appState, guide)) {
       continue;
     }
+    const hovered = isHoveredGapGuide(appState, spans);
     for (const { icon } of spans) {
-      drawEqualsBadge(
-        context,
-        icon[0],
-        icon[1],
-        zoom,
-        color,
-        guide.hard,
-        isHoveredIcon(appState, icon),
-      );
+      drawEqualsBadge(context, icon[0], icon[1], zoom, color, guide.hard, hovered);
+    }
+  }
+  context.restore();
+};
+
+/**
+ * The elements the hovered badge's alignment is about, minus the ones
+ * already selected — those carry a selection border and a second outline
+ * on top of it would say nothing.
+ *
+ * A gap badge lights the whole chain rather than the two elements
+ * bounding its own gap: the chain is one constraint, and the equality it
+ * asserts is between gaps that all belong to it.
+ */
+const getHighlightedAlignmentIds = (
+  appState: InteractiveCanvasAppState,
+  selectedElements: readonly NonDeletedExcalidrawElement[],
+  edgeLines: readonly AlignmentGuideLine[],
+  gapLines: readonly GapAlignmentGuideLine[],
+): Set<string> => {
+  const ids = new Set<string>();
+  if (!appState.hoveredAlignmentIcon) {
+    return ids;
+  }
+
+  for (const { guide, icon } of edgeLines) {
+    if (isHoveredIcon(appState, icon)) {
+      ids.add(guide.selfId);
+      ids.add(guide.elementId);
+    }
+  }
+  for (const { guide, spans } of gapLines) {
+    if (isHoveredGapGuide(appState, spans)) {
+      for (const id of guide.ids) {
+        ids.add(id);
+      }
     }
   }
 
+  for (const element of selectedElements) {
+    ids.delete(element.id);
+  }
+  return ids;
+};
+
+/**
+ * Outline every element the badge under the pointer is talking about.
+ *
+ * Two alignments in a crowded selection can be drawn in nearly the same
+ * place — a guide to one partner and a guide to another that happens to
+ * share the edge, or two chains through overlapping members — and the
+ * lines alone can't say which is which. Hovering a badge names its
+ * participants directly, which is the question the line can't answer.
+ *
+ * Drawn before the guides so a highlight never covers the line or badge
+ * that produced it.
+ */
+export const renderAlignmentHoverHighlights = (
+  context: CanvasRenderingContext2D,
+  appState: InteractiveCanvasAppState,
+  elementsMap: NonDeletedSceneElementsMap,
+  selectedElements: readonly NonDeletedExcalidrawElement[],
+  edgeLines: readonly AlignmentGuideLine[],
+  gapLines: readonly GapAlignmentGuideLine[],
+) => {
+  const ids = getHighlightedAlignmentIds(
+    appState,
+    selectedElements,
+    edgeLines,
+    gapLines,
+  );
+  if (ids.size === 0) {
+    return;
+  }
+
+  const color = getAlignmentIndicatorColor(
+    appState.theme,
+    appState.zenModeEnabled,
+  );
+
+  context.save();
+  context.translate(appState.scrollX, appState.scrollY);
+  for (const id of ids) {
+    const element = elementsMap.get(id);
+    if (!element) {
+      continue;
+    }
+    const b = getElementBounds(element, elementsMap);
+    drawAlignmentHighlight(
+      context,
+      b[0],
+      b[1],
+      b[2],
+      b[3],
+      appState.zoom.value,
+      color,
+    );
+  }
   context.restore();
 };
 
@@ -516,17 +557,15 @@ const anchorIconCenter = (
   return [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
 };
 
-/** The anvil's height for an element: scaled to the element, clamped to a
- * sane screen-space range so it still reads on a tiny shape and doesn't
- * swamp a huge one. */
+/** The anvil's height for an element — the element's shorter side, handed
+ * to {@link getAnchorIconSize} to be scaled and clamped. */
 const anchorIconSize = (
   element: NonDeletedExcalidrawElement,
   elementsMap: NonDeletedSceneElementsMap,
   zoom: number,
 ): number => {
   const b = getElementBounds(element, elementsMap);
-  const minDim = Math.min(b[2] - b[0], b[3] - b[1]);
-  return Math.min(Math.max(minDim * 0.6, 16 / zoom), 60 / zoom);
+  return getAnchorIconSize(Math.min(b[2] - b[0], b[3] - b[1]), zoom);
 };
 
 /**
@@ -580,14 +619,12 @@ export const getElementLockToggle = (
  * Element-anchor UI: the anchor toggle over the middle of the single
  * selected element — shown whenever an element is selected (and while
  * it's being dragged, so it tracks the element), like a transform handle.
- * `color` is the selection colour, matching the rotation handle.
  */
 export const renderElementAlignmentLocks = (
   context: CanvasRenderingContext2D,
   appState: InteractiveCanvasAppState,
   elementsMap: NonDeletedSceneElementsMap,
   selectedElements: readonly NonDeletedExcalidrawElement[],
-  color: string,
 ) => {
   const zoom = appState.zoom.value;
   const toggle = getElementLockToggle(selectedElements, elementsMap, zoom);
@@ -598,71 +635,14 @@ export const renderElementAlignmentLocks = (
 
   context.save();
   context.translate(appState.scrollX, appState.scrollY);
-  drawAnchorOverlay(
+  drawAnchorOverlayButton(
     context,
     toggle.center[0],
     toggle.center[1],
     toggle.size,
-    color,
     isAlignmentAnchor(el),
     appState.hoveredAlignmentAnchorId === toggle.elementId,
   );
-  context.restore();
-};
-
-/** Opacity of the anvil overlay when the element *is* anchored. It sits
- * over the element's own fill, so it has to stay translucent enough to
- * read as an annotation rather than as part of the drawing. */
-const ANCHOR_OVERLAY_OPACITY = 0.6;
-
-/**
- * The drag-time anvil's red — deliberately darker than the alignment
- * indicator red the guide lines use.
- *
- * The overlay is drawn at {@link ANCHOR_OVERLAY_OPACITY} over the element's
- * own artwork, and a mid red washes out to pink at that alpha: it reads
- * light and thin, which is the opposite of what an anvil is for. Starting
- * from a darker red leaves it heavy once the alpha has taken its cut.
- * On a dark canvas "darker" means deeper and more saturated rather than
- * closer to black, which would vanish into the background.
- */
-const ANCHOR_OVERLAY_COLOR_LIGHT = "#a51111";
-const ANCHOR_OVERLAY_COLOR_DARK = "#ff6b6b";
-
-const getAnchorOverlayColor = (
-  theme: InteractiveCanvasAppState["theme"],
-  zenModeEnabled: boolean,
-): string =>
-  theme === THEME.LIGHT || zenModeEnabled
-    ? ANCHOR_OVERLAY_COLOR_LIGHT
-    : ANCHOR_OVERLAY_COLOR_DARK;
-
-/** Outline weight as a fraction of the anvil's height. The resting weight
- * is thin enough to sit quietly over the element's own artwork; hover
- * thickens it to the drag-overlay's weight, which is the affordance —
- * the icon firms up under the pointer to say it can be clicked. */
-const ANCHOR_LINE_RATIO = 0.03;
-const ANCHOR_LINE_RATIO_HOVER = 0.06;
-
-/** A large, translucent anvil centred on and scaled to an element — both
- * the anchor toggle and the "this anchor is holding you" overlay shown
- * while dragging. Solid when anchored, and a fainter hollow outline when
- * not, so an offered toggle never competes with the element under it. */
-const drawAnchorOverlay = (
-  context: CanvasRenderingContext2D,
-  cx: number,
-  cy: number,
-  size: number,
-  color: string,
-  anchored: boolean,
-  hovered: boolean,
-) => {
-  const ratio = hovered ? ANCHOR_LINE_RATIO_HOVER : ANCHOR_LINE_RATIO;
-  context.save();
-  context.globalAlpha = anchored
-    ? ANCHOR_OVERLAY_OPACITY
-    : ANCHOR_OVERLAY_OPACITY * INACTIVE_ICON_OPACITY;
-  drawAnvil(context, cx, cy, size, color, Math.max(size * ratio, 1), anchored);
   context.restore();
 };
 
@@ -679,12 +659,8 @@ const drawAnchorOverlay = (
  * held, which only `App.maybeHandleResize` knows, so it publishes the
  * answer as `alignmentResizeAnchorIds`.
  *
- * Drawn in the alignment red rather than the selection colour the toggle
- * uses. The two anvils say different things: on a selected element it is a
- * control offering a choice, here it is the explanation for a transform
- * that just refused to happen. Red is already this fork's alignment
- * vocabulary (the guides and their padlocks), so the overlay reads as part
- * of the constraint it is reporting — and never as something to click.
+ * Drawn as the *warning* anvil rather than the toggle's button form — see
+ * {@link drawAnchorOverlayWarning} for why the two look different.
  */
 export const renderAnchorLockOverlays = (
   context: CanvasRenderingContext2D,
@@ -713,7 +689,6 @@ export const renderAnchorLockOverlays = (
   }
 
   const zoom = appState.zoom.value;
-  const color = getAnchorOverlayColor(appState.theme, appState.zenModeEnabled);
   context.save();
   context.translate(appState.scrollX, appState.scrollY);
   for (const id of anchors) {
@@ -722,16 +697,13 @@ export const renderAnchorLockOverlays = (
       continue;
     }
     const center = anchorIconCenter(el, elementsMap);
-    drawAnchorOverlay(
+    drawAnchorOverlayWarning(
       context,
       center[0],
       center[1],
       anchorIconSize(el, elementsMap, zoom),
-      color,
-      // only ever drawn for an element that *is* anchored, and never a
-      // hover target — this is feedback during a drag, not a control
-      true,
-      true,
+      appState.theme,
+      appState.zenModeEnabled,
     );
   }
   context.restore();
