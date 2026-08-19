@@ -86,9 +86,13 @@ import type {
 } from "@excalidraw/element/types";
 
 import {
+  getVisibleAlignmentGuideLines,
   getVisibleGapGuideLines,
+  renderAlignmentHoverHighlights,
+  renderAlignmentLockIcons,
   renderAlignmentLocks,
   renderElementAlignmentLocks,
+  renderGapAlignmentIcons,
   renderGapAlignmentLocks,
   renderAnchorLockOverlays,
 } from "../renderer/renderAlignmentLocks";
@@ -108,13 +112,16 @@ import {
 
 import {
   bootstrapCanvas,
-  drawPadlock,
   fillCircle,
-  getNarrowIndicatorLineDash,
-  getWideIndicatorLineDash,
   getNormalizedCanvasDimensions,
   strokeRectWithRotation_simple,
 } from "./helpers";
+import {
+  drawBindingLeader,
+  drawBindingPadlock,
+  getNarrowIndicatorLineDash,
+  getWideIndicatorLineDash,
+} from "./indicatorHelpers";
 
 import type {
   AppState,
@@ -1379,23 +1386,42 @@ const renderFocusPointCicle = (
 };
 
 /**
- * Colour of the endpoint padlocks — the point handles' own stroke, so the
- * badge reads as part of that control rather than a separate mark.
+ * The endpoint whose binding is currently in flight, and whether it would
+ * bind if the user let go now — or null when no endpoint is being dragged.
+ *
+ * `startBinding` / `endBinding` are only rewritten when the drag commits,
+ * so mid-gesture they describe where the endpoint *was*. `suggestedBinding`
+ * is the live answer, and it is already what the binding highlight on the
+ * target shape is drawn from; reading it here keeps the padlock and that
+ * highlight saying the same thing at the same moment.
+ *
+ * It carries no end of its own, so the dragged end has to be recovered
+ * from the editor's selected points. When both ends are dragged the
+ * strategy attributes the suggestion to the start (`linearElementEditor.ts`),
+ * and this follows it rather than claiming the answer for both.
  */
-const BINDING_LOCK_COLOR = "#5e5ad8";
+const getInFlightBinding = (
+  appState: InteractiveCanvasAppState,
+  arrow: NonDeleted<ExcalidrawArrowElement>,
+): { type: "start" | "end"; bound: boolean } | null => {
+  const editor = appState.selectedLinearElement;
+  if (!editor || !editor.isDragging || editor.elementId !== arrow.id) {
+    return null;
+  }
+  const indices = editor.selectedPointsIndices;
+  if (!indices) {
+    return null;
+  }
+  const type = indices.includes(0)
+    ? "start"
+    : indices.includes(arrow.points.length - 1)
+    ? "end"
+    : null;
 
-/**
- * The same padlock, washed out, for an endpoint surfaced because the
- * *shape* is selected rather than the arrow. There is no point handle
- * under it then — nothing to grab, nothing to drag — so it is pure
- * annotation, and the lighter weight says so before the user tries.
- */
-const BINDING_LOCK_COLOR_PASSIVE = "#aeacec";
-
-/** Just enough white behind the passive padlock to keep it readable when
- * the arrow's own stroke runs through it — well short of the solid disc
- * that makes the interactive badge look pressable. */
-const BINDING_LOCK_PASSIVE_BACKING = 0.6;
+  return type
+    ? { type, bound: appState.isBindingEnabled && !!appState.suggestedBinding }
+    : null;
+};
 
 /**
  * A padlock over each bound arrow endpoint the current selection makes
@@ -1437,16 +1463,25 @@ const renderBindingLocks = (
     type: "start" | "end",
     onHandle: boolean,
   ) => {
-    const binding = type === "start" ? arrow.startBinding : arrow.endBinding;
-    const bindableElement =
-      binding?.elementId && elementsMap.get(binding.elementId);
+    // an endpoint under the pointer answers for itself; the stored binding
+    // is a gesture behind until pointer-up
+    const inFlight = getInFlightBinding(appState, arrow);
+    if (inFlight?.type === type) {
+      if (!inFlight.bound) {
+        return;
+      }
+    } else {
+      const binding = type === "start" ? arrow.startBinding : arrow.endBinding;
+      const bindableElement =
+        binding?.elementId && elementsMap.get(binding.elementId);
 
-    if (
-      !bindableElement ||
-      !isBindableElement(bindableElement) ||
-      bindableElement.isDeleted
-    ) {
-      return;
+      if (
+        !bindableElement ||
+        !isBindableElement(bindableElement) ||
+        bindableElement.isDeleted
+      ) {
+        return;
+      }
     }
     const key = `${arrow.id}:${type}`;
     marks.set(key, {
@@ -1506,24 +1541,16 @@ const renderBindingLocks = (
       type,
       point,
       elementsMap,
-      onHandle ? BINDING_LOCK_COLOR : BINDING_LOCK_COLOR_PASSIVE,
+      onHandle,
     );
 
-    drawPadlock(
+    drawBindingPadlock(
       context,
       point[0],
       point[1],
       appState.zoom.value,
-      onHandle ? BINDING_LOCK_COLOR : BINDING_LOCK_COLOR_PASSIVE,
-      true,
-      // sized off the handle it covers, so the badge reads as that control
-      // rather than as something sitting over it — but a couple of px
-      // wider, because the padlock inside the disc makes a same-radius
-      // badge look smaller than the plain dot it replaces
-      LinearElementEditor.POINT_HANDLE_SIZE / 2 + 2,
-      // the solid white disc is what makes a badge look like a chip you
-      // can press; the passive mark keeps only a hint of it
-      onHandle ? 1 : BINDING_LOCK_PASSIVE_BACKING,
+      LinearElementEditor.POINT_HANDLE_SIZE / 2,
+      onHandle,
     );
   }
 
@@ -1561,6 +1588,15 @@ const MIDPOINT_LEADER_MIN_GAP = 6;
  * The leader says it. It is the same relationship debug mode draws
  * between an arrow and its binding, promoted to something a user can
  * see, and it costs nothing when the endpoint is already on its port.
+ *
+ * Elbow arrows are excluded, because for them the gap the leader explains
+ * cannot exist: an elbow endpoint is placed *at* its fixed point
+ * (`getGlobalPoint` in `elbowArrow.ts` resolves it through the same
+ * `getGlobalFixedPointForBindableElement` used here), so the two always
+ * coincide. The one moment they don't is mid-drag, where the endpoint
+ * follows the pointer while `fixedPoint` still holds the port the user is
+ * dragging away from — precisely when a leader back to that port is
+ * describing a binding that is about to stop existing.
  */
 const renderMidpointBindingLeader = (
   context: CanvasRenderingContext2D,
@@ -1569,8 +1605,11 @@ const renderMidpointBindingLeader = (
   type: "start" | "end",
   endpoint: GlobalPoint,
   elementsMap: NonDeletedSceneElementsMap,
-  color: string,
+  onHandle: boolean,
 ) => {
+  if (isElbowArrow(arrow)) {
+    return;
+  }
   const binding = type === "start" ? arrow.startBinding : arrow.endBinding;
   const target = binding && elementsMap.get(binding.elementId);
   if (!binding || !target || !isBindableElement(target)) {
@@ -1595,22 +1634,7 @@ const renderMidpointBindingLeader = (
     return;
   }
 
-  context.save();
-  context.strokeStyle = color;
-  context.fillStyle = color;
-  context.lineWidth = 1 / zoom;
-  context.setLineDash(getNarrowIndicatorLineDash(zoom));
-  context.beginPath();
-  context.moveTo(endpoint[0], endpoint[1]);
-  context.lineTo(port[0], port[1]);
-  context.stroke();
-
-  // a dot on the port end, so the leader reads as pointing *at* something
-  context.setLineDash([]);
-  context.beginPath();
-  context.arc(port[0], port[1], 2 / zoom, 0, Math.PI * 2);
-  context.fill();
-  context.restore();
+  drawBindingLeader(context, endpoint, port, zoom, onHandle);
 };
 
 const renderFocusPointIndicator = ({
@@ -2552,14 +2576,34 @@ const _renderInteractiveScene = ({
     ),
   );
 
-  renderAlignmentLocks(context, appState, allElementsMap, selectedElements);
+  // Every guide line first, then every badge, so no line can be laid
+  // over an icon. Within the icon pass, equal-gap badges come before
+  // edge padlocks: where the two land on the same spot, the padlock is
+  // the one that takes the hover and the click
+  // (`getAlignmentGuideIconAt` is hit-tested first), so it has to be the
+  // one on top.
+  const edgeGuideLines = getVisibleAlignmentGuideLines(
+    allElementsMap,
+    selectedElements,
+    appState,
+  );
+  renderAlignmentHoverHighlights(
+    context,
+    appState,
+    allElementsMap,
+    selectedElements,
+    edgeGuideLines,
+    gapGuideLines,
+  );
   renderGapAlignmentLocks(context, appState, gapGuideLines);
+  renderAlignmentLocks(context, appState, edgeGuideLines);
+  renderGapAlignmentIcons(context, appState, gapGuideLines);
+  renderAlignmentLockIcons(context, appState, edgeGuideLines);
   renderElementAlignmentLocks(
     context,
     appState,
     allElementsMap,
     selectedElements,
-    renderConfig.selectionColor,
   );
   renderAnchorLockOverlays(context, appState, allElementsMap, selectedElements);
 

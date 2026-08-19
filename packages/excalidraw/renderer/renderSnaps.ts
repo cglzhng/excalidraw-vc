@@ -1,17 +1,17 @@
-import { pointFrom, type GlobalPoint, type LocalPoint } from "@excalidraw/math";
+import { type GlobalPoint, type LocalPoint } from "@excalidraw/math";
 
 import {
-  INDICATOR_CROSS_SIZE,
+  drawGapEndCap,
+  drawGapMidpointTicks,
   drawIndicatorCross,
-  getIndicatorColor,
+  getAlignmentIndicatorColor,
+  getIndicatorLineWidth,
   getNarrowIndicatorLineDash,
   getWideIndicatorLineDash,
-} from "./helpers";
+} from "./indicatorHelpers";
 
 import type { PointSnapLine, PointerSnapLine } from "../snapping";
 import type { InteractiveCanvasAppState } from "../types";
-
-const SNAP_WIDTH = 1;
 
 /** Tolerance for calling a transient gap line the same gap as one an
  * equal-gap guide is already drawing. Both come from the same element
@@ -67,11 +67,12 @@ export const renderSnaps = (
     return;
   }
 
-  const snapColor = getIndicatorColor(appState.theme, appState.zenModeEnabled);
+  const snapColor = getAlignmentIndicatorColor(appState.theme, appState.zenModeEnabled);
   // in zen mode make the cross more visible since we don't draw the lines
-  const snapWidth =
-    (appState.zenModeEnabled ? SNAP_WIDTH * 1.5 : SNAP_WIDTH) /
-    appState.zoom.value;
+  const snapWidth = getIndicatorLineWidth(
+    appState.zoom.value,
+    appState.zenModeEnabled,
+  );
 
   context.save();
   context.translate(appState.scrollX, appState.scrollY);
@@ -143,11 +144,7 @@ const drawCross = <Point extends LocalPoint | GlobalPoint>(
   appState: InteractiveCanvasAppState,
   context: CanvasRenderingContext2D,
 ) => {
-  const size =
-    (appState.zenModeEnabled
-      ? INDICATOR_CROSS_SIZE * 1.5
-      : INDICATOR_CROSS_SIZE) / appState.zoom.value;
-  drawIndicatorCross(context, x, y, size);
+  drawIndicatorCross(context, x, y, appState.zoom.value, appState.zenModeEnabled);
 };
 
 const drawLine = <Point extends LocalPoint | GlobalPoint>(
@@ -174,81 +171,26 @@ const drawGapLine = <Point extends LocalPoint | GlobalPoint>(
   // \    \   \       \
   // (1)  (2) (3)     (4)
 
-  const FULL = 8 / appState.zoom.value;
-  const HALF = FULL / 2;
-  const QUARTER = FULL / 4;
+  const zoom = appState.zoom.value;
+  const axis = direction === "horizontal" ? "x" : "y";
+  const halfPoint =
+    direction === "horizontal"
+      ? [(from[0] + to[0]) / 2, from[1]]
+      : [from[0], (from[1] + to[1]) / 2];
 
-  if (direction === "horizontal") {
-    const halfPoint = [(from[0] + to[0]) / 2, from[1]];
-    // (1)
-    if (!appState.zenModeEnabled) {
-      drawLine(
-        pointFrom(from[0], from[1] - FULL),
-        pointFrom(from[0], from[1] + FULL),
-        context,
-      );
-    }
+  // (1) and (4)
+  if (!appState.zenModeEnabled) {
+    drawGapEndCap(context, from[0], from[1], axis, zoom);
+    drawGapEndCap(context, to[0], to[1], axis, zoom);
+  }
 
-    // (3)
-    drawLine(
-      pointFrom(halfPoint[0] - QUARTER, halfPoint[1] - HALF),
-      pointFrom(halfPoint[0] - QUARTER, halfPoint[1] + HALF),
-      context,
-    );
-    drawLine(
-      pointFrom(halfPoint[0] + QUARTER, halfPoint[1] - HALF),
-      pointFrom(halfPoint[0] + QUARTER, halfPoint[1] + HALF),
-      context,
-    );
+  // (3)
+  drawGapMidpointTicks(context, halfPoint[0], halfPoint[1], axis, zoom);
 
-    if (!appState.zenModeEnabled) {
-      // (4)
-      drawLine(
-        pointFrom(to[0], to[1] - FULL),
-        pointFrom(to[0], to[1] + FULL),
-        context,
-      );
-
-      // (2)
-      context.setLineDash(getNarrowIndicatorLineDash(appState.zoom.value));
-      drawLine(from, to, context);
-      context.setLineDash([]);
-    }
-  } else {
-    const halfPoint = [from[0], (from[1] + to[1]) / 2];
-    // (1)
-    if (!appState.zenModeEnabled) {
-      drawLine(
-        pointFrom(from[0] - FULL, from[1]),
-        pointFrom(from[0] + FULL, from[1]),
-        context,
-      );
-    }
-
-    // (3)
-    drawLine(
-      pointFrom(halfPoint[0] - HALF, halfPoint[1] - QUARTER),
-      pointFrom(halfPoint[0] + HALF, halfPoint[1] - QUARTER),
-      context,
-    );
-    drawLine(
-      pointFrom(halfPoint[0] - HALF, halfPoint[1] + QUARTER),
-      pointFrom(halfPoint[0] + HALF, halfPoint[1] + QUARTER),
-      context,
-    );
-
-    if (!appState.zenModeEnabled) {
-      // (4)
-      drawLine(
-        pointFrom(to[0] - FULL, to[1]),
-        pointFrom(to[0] + FULL, to[1]),
-        context,
-      );
-
-      // (2)
-      context.setLineDash(getNarrowIndicatorLineDash(appState.zoom.value));
-      drawLine(from, to, context);
-      context.setLineDash([]);
-    }
+  // (2)
+  if (!appState.zenModeEnabled) {
+    context.setLineDash(getNarrowIndicatorLineDash(zoom));
+    drawLine(from, to, context);
+    context.setLineDash([]);
   }
 };

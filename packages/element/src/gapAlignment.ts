@@ -417,16 +417,27 @@ export const getGapAlignmentGuides = (
     }
   }
 
-  // A soft chain often runs through elements that are already hard-linked
-  // to each other — that is exactly the arrangement where locking it
-  // would extend the existing chain. The hard link has to be surfaced
-  // even though no *selected* element belongs to it, or the run it holds
-  // would be reported as unlocked: the renderer only suppresses a soft
-  // span where it can see a hard guide covering the same gap, and the
-  // padlocked badges the user should see come from that guide.
-  const reached = new Set(guides.flatMap((guide) => guide.ids));
+  // A soft chain may run through gaps that are already hard-linked —
+  // the arrangement where locking it would extend the existing chain.
+  // That hard link has to be surfaced even though no *selected* element
+  // belongs to it, or the run it holds would be reported as unlocked:
+  // the renderer only suppresses a soft span where it can see a hard
+  // guide covering the same gap, and the padlocked badges the user
+  // should see come from that guide.
+  //
+  // Only when the soft chain covers it as a contiguous run, though —
+  // the same test `lockGapAlignment` uses to decide what it absorbs. A
+  // hard chain that merely shares elements with the selection's soft
+  // chain holds different gaps, is none of the selection's business, and
+  // would be drawn as an unrelated second constraint.
+  const soft = guides.filter((guide) => !guide.hard);
   for (const link of collectHardChains(elementsMap)) {
-    if (link.ids.some((id) => reached.has(id))) {
+    if (
+      soft.some(
+        (guide) =>
+          guide.axis === link.axis && isContiguousRun(guide.ids, link.ids),
+      )
+    ) {
       add(link.axis, link.ids, true);
     }
   }
