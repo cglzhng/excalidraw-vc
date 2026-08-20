@@ -368,6 +368,7 @@ import {
   getReferenceSnapPoints,
   SnapCache,
   isGridModeEnabled,
+  type ResizeSnapContext,
 } from "../snapping";
 import { Renderer } from "../scene/Renderer";
 import {
@@ -9493,6 +9494,10 @@ class App extends React.Component<AppProps, AppState> {
     event: KeyboardModifiersObject,
     selectedElements: readonly NonDeletedExcalidrawElement[],
     recomputeAnyways: boolean = false,
+    // Present only for a resize, and only so the cache can tell which
+    // hard-aligned partners this gesture will actually move: that is a
+    // per-edge question, and the handle is the thing that answers it.
+    resize: ResizeSnapContext | null = null,
   ) {
     if (
       isSnappingEnabled({
@@ -9508,6 +9513,7 @@ class App extends React.Component<AppProps, AppState> {
           selectedElements,
           this.state,
           this.scene.getNonDeletedElementsMap(),
+          resize,
         ),
       );
     }
@@ -10078,6 +10084,14 @@ class App extends React.Component<AppProps, AppState> {
           prevState.alignmentResizeAnchorIds,
           [],
         ),
+        // not `updateStable`: it compares shallowly, and two distinct
+        // empty arrays under `x` / `y` never match, so every pointer-up
+        // would hand consumers a new object saying nothing changed
+        alignmentResizeMoverIds:
+          prevState.alignmentResizeMoverIds.x.length === 0 &&
+          prevState.alignmentResizeMoverIds.y.length === 0
+            ? prevState.alignmentResizeMoverIds
+            : { x: [], y: [] },
         selectionElement: null,
         frameToHighlight: null,
         elementsToHighlight: null,

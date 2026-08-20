@@ -87,6 +87,7 @@ import type {
 } from "@excalidraw/element/types";
 
 import {
+  getAlignmentDragMovers,
   getVisibleAlignmentGuideLines,
   getVisibleGapGuideLines,
   renderAlignmentHoverHighlights,
@@ -2583,11 +2584,22 @@ const _renderInteractiveScene = ({
     }
   });
 
+  // What a drag is setting in motion, if anything — null at rest. Solved
+  // once and shared: the guides show the constraints doing the moving,
+  // and the anvil overlays the anchors standing in the way, which are two
+  // readings of the same answer.
+  const alignmentDragMovers = getAlignmentDragMovers(
+    allElementsMap,
+    selectedElements,
+    appState,
+  );
+
   // The equal-gap guides are drawn below, but the snap renderer needs to
   // know which gaps they cover so it can drop its own duplicates of them.
   const gapGuideLines = getVisibleGapGuideLines(
     allElementsMap,
     selectedElements,
+    alignmentDragMovers,
   );
   renderSnaps(
     context,
@@ -2611,7 +2623,7 @@ const _renderInteractiveScene = ({
   const edgeGuideLines = getVisibleAlignmentGuideLines(
     allElementsMap,
     selectedElements,
-    appState,
+    alignmentDragMovers,
   );
   renderAlignmentHoverHighlights(
     context,
@@ -2631,7 +2643,13 @@ const _renderInteractiveScene = ({
     allElementsMap,
     selectedElements,
   );
-  renderAnchorLockOverlays(context, appState, allElementsMap, selectedElements);
+  renderAnchorLockOverlays(
+    context,
+    appState,
+    allElementsMap,
+    selectedElements,
+    alignmentDragMovers,
+  );
 
   context.restore();
 

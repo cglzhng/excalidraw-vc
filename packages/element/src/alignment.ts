@@ -847,6 +847,79 @@ export const getAlignmentAnchoredResizeBlockers = (
 };
 
 /**
+ * Which elements a resize of `resizedIds` sets moving, per axis — the
+ * resize counterpart of {@link getAlignmentMovers}.
+ *
+ * A resize propagates differently from a drag, and the difference is the
+ * edge: a drag moves an element whole, so every link it holds transmits,
+ * whereas a resize moves only the edges its handle controls. A link
+ * anchored to an edge that stays put demands nothing, so it moves nothing
+ * — which is why this asks {@link resizeMovesEdge} per link rather than
+ * flooding from the resized element outright.
+ *
+ * A resized element is itself reported as moving on an axis when at least
+ * one of its links there is transmitting. That makes the answer usable as
+ * a plain "does this element move on this axis" test, including for the
+ * driver, while still leaving out a driver whose links all hang off
+ * stationary edges.
+ *
+ * The flood stops at anchors, and it never starts on an axis the resize
+ * is frozen on: an anchor in the way refuses the size change entirely
+ * (`clampSizeToFrozenAlignmentAxes`), so nothing on that axis moves at
+ * all — including the partners that would otherwise have followed.
+ */
+export const getAlignmentResizeMovers = (
+  resizedIds: Set<string>,
+  elementsMap: ElementsMap,
+  opts: ResizeEdgeOpts,
+  frozen: { x: boolean; y: boolean },
+): { x: Set<string>; y: Set<string> } => {
+  const moversOn = (axis: Axis): Set<string> => {
+    const movers = new Set<string>();
+    if (frozen[axis]) {
+      return movers;
+    }
+
+    /** Everything the demand on `startId` carries to, anchors excluded —
+     * an anchor holds still, so nothing past it is reached either. */
+    const flood = (startId: string) => {
+      const queue = [startId];
+      while (queue.length > 0) {
+        const id = queue.pop()!;
+        if (movers.has(id) || resizedIds.has(id)) {
+          continue;
+        }
+        if (isAlignmentAnchor(elementsMap.get(id))) {
+          continue;
+        }
+        movers.add(id);
+        for (const link of elementsMap.get(id)?.alignments ?? []) {
+          if (link.axis === axis) {
+            queue.push(link.elementId);
+          }
+        }
+      }
+    };
+
+    for (const driverId of resizedIds) {
+      for (const link of elementsMap.get(driverId)?.alignments ?? []) {
+        if (
+          link.axis === axis &&
+          !resizedIds.has(link.elementId) &&
+          resizeMovesEdge(axis, link.selfEdge, opts)
+        ) {
+          movers.add(driverId);
+          flood(link.elementId);
+        }
+      }
+    }
+    return movers;
+  };
+
+  return { x: moversOn("x"), y: moversOn("y") };
+};
+
+/**
  * After the directly-dragged elements have been moved by `offset`, drag
  * their hard-aligned partners to preserve the alignment.
  *

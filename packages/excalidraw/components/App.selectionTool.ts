@@ -15,8 +15,11 @@ import {
   cropElement,
   dragSelectedElements,
   getAlignmentAnchoredResizeBlockers,
+  getAlignmentResizeLockedAxes,
+  getAlignmentResizeMovers,
   getCommonBounds,
   getGapAlignmentAnchoredResizeBlockers,
+  getGapAlignmentResizeMovers,
   getCommonFrameId,
   getElementAbsoluteCoords,
   getElementsInGroup,
@@ -579,10 +582,17 @@ export class AppSelectionTool {
   };
 
   /**
-   * Publish the anchors blocking the in-progress resize, so the anvil
-   * overlay can point at them the way it already does for a drag.
-   * Rewritten only when the set changes — this runs on every pointermove,
-   * and a fresh array each time would churn every consumer for nothing.
+   * Publish what the in-progress resize is doing to the alignment graph:
+   * the anchors refusing it, so the anvil overlay can point at them the
+   * way it already does for a drag, and the elements it is moving, so the
+   * guides can show the constraints doing the moving.
+   *
+   * Both live here rather than in the renderer for the same reason: the
+   * answers depend on which transform handle is held, and a resize moves
+   * only the edges that handle controls. The renderer never sees it.
+   *
+   * Rewritten only when the sets change — this runs on every pointermove,
+   * and fresh arrays each time would churn every consumer for nothing.
    */
   private updateAlignmentResizeAnchors = (
     selectedElements: readonly NonDeletedExcalidrawElement[],
@@ -590,6 +600,8 @@ export class AppSelectionTool {
     resizeFromCenter: boolean,
   ) => {
     let blockers = { x: new Set<string>(), y: new Set<string>() };
+    let movers = { x: new Set<string>(), y: new Set<string>() };
+
     if (transformHandleType && transformHandleType !== "rotation") {
       const resizedIds = new Set(
         selectedElements.map((element) => element.id),
@@ -616,15 +628,53 @@ export class AppSelectionTool {
         x: new Set([...edge.x, ...gap.x]),
         y: new Set([...edge.y, ...gap.y]),
       };
+
+      // An axis is frozen when an anchor refuses it or the constraints
+      // there are over-determined — the same union `resizeElements.ts`
+      // clamps on. Nothing moves on a frozen axis, so nothing there is
+      // being enforced and no guide should claim otherwise.
+      const overConstrained = getAlignmentResizeLockedAxes(
+        resizedIds,
+        elementsMap,
+      );
+      const frozen = {
+        x: blockers.x.size > 0 || overConstrained.x,
+        y: blockers.y.size > 0 || overConstrained.y,
+      };
+      const edgeMovers = getAlignmentResizeMovers(
+        resizedIds,
+        elementsMap,
+        edgeOpts,
+        frozen,
+      );
+      const gapMovers = getGapAlignmentResizeMovers(
+        resizedIds,
+        elementsMap,
+        edgeOpts,
+        frozen,
+      );
+      movers = {
+        x: new Set([...edgeMovers.x, ...gapMovers.x]),
+        y: new Set([...edgeMovers.y, ...gapMovers.y]),
+      };
     }
 
-    const next = [...new Set([...blockers.x, ...blockers.y])];
+    const nextAnchors = [...new Set([...blockers.x, ...blockers.y])];
+    const nextMovers = { x: [...movers.x], y: [...movers.y] };
     const current = this.app.state.alignmentResizeAnchorIds;
+    const currentMovers = this.app.state.alignmentResizeMoverIds;
+
+    const sameIds = (next: string[], prev: readonly string[]) =>
+      next.length === prev.length && next.every((id, i) => id === prev[i]);
+
+    if (!sameIds(nextAnchors, current)) {
+      this.app.setState({ alignmentResizeAnchorIds: nextAnchors });
+    }
     if (
-      next.length !== current.length ||
-      next.some((id, index) => id !== current[index])
+      !sameIds(nextMovers.x, currentMovers.x) ||
+      !sameIds(nextMovers.y, currentMovers.y)
     ) {
-      this.app.setState({ alignmentResizeAnchorIds: next });
+      this.app.setState({ alignmentResizeMoverIds: nextMovers });
     }
   };
 
@@ -725,7 +775,10 @@ export class AppSelectionTool {
 
       const originalElements = [...pointerDownState.originalElements.values()];
 
-      this.app.maybeCacheReferenceSnapPoints(event, selectedElements);
+      this.app.maybeCacheReferenceSnapPoints(event, selectedElements, false, {
+        handle: transformHandleType,
+        shouldResizeFromCenter: shouldResizeFromCenter(event),
+      });
 
       const { snapOffset, snapLines } = snapResizingElements(
         selectedElements,

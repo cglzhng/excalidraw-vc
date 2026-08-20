@@ -146,6 +146,7 @@ export const getDefaultAppState = (): Omit<
     hoveredAlignmentAnchorId: null,
     hoveredAlignmentIcon: null,
     alignmentResizeAnchorIds: [],
+    alignmentResizeMoverIds: { x: [], y: [] },
     bindMode: "orbit",
     boxSelectionMode: "contain",
     colorTopPicks: {
@@ -313,6 +314,7 @@ const APP_STATE_STORAGE_CONF = (<
   hoveredAlignmentAnchorId: { browser: false, export: false, server: false },
   hoveredAlignmentIcon: { browser: false, export: false, server: false },
   alignmentResizeAnchorIds: { browser: false, export: false, server: false },
+  alignmentResizeMoverIds: { browser: false, export: false, server: false },
   bindMode: { browser: true, export: false, server: false },
   colorTopPicks: { browser: true, export: false, server: false },
   fontTopPicks: { browser: true, export: false, server: false },
