@@ -16,6 +16,7 @@ import {
   drawGapEndCap,
   drawGapMidpointTicks,
   drawIndicatorCross,
+  drawIndicatorLineHalo,
   getAlignmentIndicatorColor,
   getAnchorIconSize,
   getIndicatorLineWidth,
@@ -162,23 +163,125 @@ const isHoveredIcon = (
 };
 
 /**
+ * Everything the gesture in progress sets in motion, per axis — or null
+ * when there is no gesture, which is when the guides fall back to simply
+ * describing the selection.
+ *
+ * The two gestures answer it from different places, because they know it
+ * at different times. A **drag** is solvable here: `getAlignmentMovers`
+ * is the solver `dragElements.ts` itself uses, and the seeds are all it
+ * needs. A **resize** is not: which edges move depends on the transform
+ * handle, which only `App.maybeHandleResize` sees, so it solves the same
+ * question there and publishes the answer as `alignmentResizeMoverIds`.
+ * Either way what comes back is what the propagator will actually move,
+ * so the guides show the constraints being enforced rather than a guess
+ * at them.
+ *
+ * Null means *no gesture*, not "a gesture that moves nothing" — hence
+ * the read of `isResizing` rather than a test on the published sets. A
+ * resize whose element has no hard links, or whose links all hang off
+ * edges the handle leaves alone, drives nothing and publishes empty
+ * sets, but it is still a gesture and the guides behave there as in any
+ * other resize.
+ *
+ * Computed once per frame by the caller and handed to each pass that
+ * needs it. The drag solve sweeps every element's chains to a fixed
+ * point, so three passes asking separately would be three sweeps a frame
+ * for one answer that cannot have changed between them.
+ */
+export type AlignmentDragMovers = { x: Set<string>; y: Set<string> };
+
+export const getAlignmentDragMovers = (
+  elementsMap: NonDeletedSceneElementsMap,
+  selectedElements: readonly NonDeletedExcalidrawElement[],
+  appState: InteractiveCanvasAppState,
+): AlignmentDragMovers | null => {
+  if (appState.selectedElementsAreBeingDragged) {
+    return getAlignmentMovers(
+      new Set(selectedElements.map((element) => element.id)),
+      elementsMap,
+    );
+  }
+
+  if (appState.isResizing) {
+    const resize = appState.alignmentResizeMoverIds;
+    return { x: new Set(resize.x), y: new Set(resize.y) };
+  }
+
+  return null;
+};
+
+/**
+ * The elements to build guides from during a gesture: everything moving,
+ * plus the selection itself.
+ *
+ * The selection is in there even when it moves nothing, because the soft
+ * gap guides are still scoped to it and still drawn — a resize that
+ * drives no alignment must not come out looking like a scene with no
+ * alignments in it. What the selection's *hard* links do is then decided
+ * by the filters, not by this list.
+ */
+const getGuideSourceElements = (
+  elementsMap: NonDeletedSceneElementsMap,
+  selectedElements: readonly NonDeletedExcalidrawElement[],
+  movers: AlignmentDragMovers,
+): NonDeletedExcalidrawElement[] => {
+  const elements = [...selectedElements];
+  const seen = new Set(selectedElements.map((element) => element.id));
+  for (const id of new Set([...movers.x, ...movers.y])) {
+    if (seen.has(id)) {
+      continue;
+    }
+    const element = elementsMap.get(id);
+    if (element) {
+      elements.push(element);
+    }
+  }
+  return elements;
+};
+
+/**
  * The edge-alignment guides actually drawn for a selection.
  *
- * While dragging, keep the persisted hard lines visible (partners are
- * following), but drop the soft coincidences — those are an at-rest
- * affordance and the transient snap guides already cover the live case.
- * Whatever line is drawn keeps its padlock: the badge is what says the
- * line is a kept alignment rather than a passing snap, so a hard line
- * without one reads as the wrong thing.
+ * At rest that is simply the selection's own guides. During a gesture —
+ * drag or resize alike — it is every hard link the gesture is
+ * *enforcing*, which reaches past the selection: dragging A moves its
+ * partner B, and B's own link to C is what then moves C, so all three
+ * lines are load-bearing and the user should see why C moved. Soft
+ * coincidences are dropped, because their padlock is an offer that
+ * cannot be taken up with the pointer already down, and the transient
+ * snap guides report the live coincidences anyway. Whatever line is
+ * drawn keeps its padlock: the badge is what says the line is a kept
+ * alignment rather than a passing snap.
+ *
+ * A link counts as enforced only when *both* its ends are moving on its
+ * own axis. That excludes two things a looser "touches something that
+ * moved" test would wrongly include: a link on the other axis, which the
+ * gesture isn't transmitting through, and a link whose ends both sit
+ * still — a gap chain can hold a member in place while its neighbours
+ * travel, and a resize handle moves only the edges it controls, so
+ * either way the links hanging off what stayed put are being satisfied
+ * by nothing happening rather than by doing any work.
  */
 export const getVisibleAlignmentGuideLines = (
   elementsMap: NonDeletedSceneElementsMap,
   selectedElements: readonly NonDeletedExcalidrawElement[],
-  appState: InteractiveCanvasAppState,
-): AlignmentGuideLine[] =>
-  getAlignmentGuideLines(selectedElements, elementsMap).filter(
-    (line) => !appState.selectedElementsAreBeingDragged || line.guide.hard,
+  movers: AlignmentDragMovers | null,
+): AlignmentGuideLine[] => {
+  if (!movers) {
+    return getAlignmentGuideLines(selectedElements, elementsMap);
+  }
+
+  return getAlignmentGuideLines(
+    getGuideSourceElements(elementsMap, selectedElements, movers),
+    elementsMap,
+  ).filter(
+    ({ guide }) =>
+      guide.hard &&
+      movers[guide.axis].has(guide.selfId) &&
+      movers[guide.axis].has(guide.elementId),
   );
+};
 
 export const renderAlignmentLocks = (
   context: CanvasRenderingContext2D,
@@ -197,8 +300,18 @@ export const renderAlignmentLocks = (
   context.strokeStyle = color;
   context.lineWidth = getIndicatorLineWidth(zoom);
 
-  for (const { guide, from, to } of lines) {
-    context.setLineDash(guide.hard ? [] : getWideIndicatorLineDash(zoom));
+  // Halos first, so a neighbouring line is never buried under one.
+  for (const { from, to, icon } of lines) {
+    if (isHoveredIcon(appState, icon)) {
+      drawIndicatorLineHalo(context, from, to, zoom, color);
+    }
+  }
+
+  // A hovered soft line goes solid: the dash says "not kept yet", and the
+  // hover is a preview of the click that would keep it.
+  for (const { guide, from, to, icon } of lines) {
+    const solid = guide.hard || isHoveredIcon(appState, icon);
+    context.setLineDash(solid ? [] : getWideIndicatorLineDash(zoom));
     context.beginPath();
     context.moveTo(from[0], from[1]);
     context.lineTo(to[0], to[1]);
@@ -332,28 +445,64 @@ export const getGapAlignmentGuideLines = (
  * suppressing the ones upstream duplicates — see `renderSnaps` — makes
  * the live feedback and the resting indicator the same picture, because
  * they are the same fact.
+ *
+ * During a drag the *hard* chains reach past the selection, for the same
+ * reason the edge guides do: a chain two links away can be what is
+ * stepping an element along, and the user should see the constraint that
+ * moved it. A chain qualifies once any one member is moving on its axis —
+ * unlike an edge link, a chain does its work precisely when its members
+ * move by *different* amounts, so a still member is a sign of the
+ * constraint working rather than idling.
+ *
+ * The wider set is enumerated in the same pass rather than a second call,
+ * so `getGapAlignmentGuideLines` still sees every hard chain at once when
+ * it decides which soft spans to suppress. Soft chains are then held back
+ * to the selection's own, since an unlocked coincidence between two
+ * elements the user isn't touching is not an offer they asked for.
  */
 export const getVisibleGapGuideLines = (
   elementsMap: NonDeletedSceneElementsMap,
   selectedElements: readonly NonDeletedExcalidrawElement[],
-): GapAlignmentGuideLine[] =>
-  getGapAlignmentGuideLines(selectedElements, elementsMap).filter(
-    (line) => line.spans.length > 0,
+  movers: AlignmentDragMovers | null,
+): GapAlignmentGuideLine[] => {
+  if (!movers) {
+    return getGapAlignmentGuideLines(selectedElements, elementsMap).filter(
+      (line) => line.spans.length > 0,
+    );
+  }
+
+  const selectedIds = new Set(selectedElements.map((element) => element.id));
+
+  return getGapAlignmentGuideLines(
+    getGuideSourceElements(elementsMap, selectedElements, movers),
+    elementsMap,
+  ).filter(
+    (line) =>
+      line.spans.length > 0 &&
+      (line.guide.hard
+        ? line.guide.ids.some((id) => movers[line.guide.axis].has(id))
+        : line.guide.ids.some((id) => selectedIds.has(id))),
   );
+};
 
 /**
  * Whether a guide's gaps carry their equals badges.
  *
  * A soft guide's badge is an offer — click to keep this spacing — and
- * mid-drag there is nothing to click: the arrangement it describes only
- * exists while the pointer is held. So the line reports the spacing and
- * the badge waits for the drag to end. A hard guide's badge stays, as it
- * marks a constraint that is true either way.
+ * mid-gesture there is nothing to click: the pointer is already down, and
+ * the arrangement it describes only exists while it is held. So the line
+ * reports the spacing and the badge waits for the gesture to end. A hard
+ * guide's badge stays, as it marks a constraint that is true either way.
+ *
+ * A resize counts as a gesture here for the same reason a drag does,
+ * which is also why the soft *edge* guides drop out entirely during one.
  */
 const showsBadges = (
   appState: InteractiveCanvasAppState,
   guide: GapAlignmentGuide,
-): boolean => guide.hard || !appState.selectedElementsAreBeingDragged;
+): boolean =>
+  guide.hard ||
+  !(appState.selectedElementsAreBeingDragged || appState.isResizing);
 
 export const renderGapAlignmentLocks = (
   context: CanvasRenderingContext2D,
@@ -381,8 +530,21 @@ export const renderGapAlignmentLocks = (
     context.stroke();
   };
 
+  // Halos first, so a neighbouring span is never buried under one.
+  for (const { spans } of lines) {
+    if (isHoveredGapGuide(appState, spans)) {
+      for (const { from, to } of spans) {
+        drawIndicatorLineHalo(context, from, to, zoom, color);
+      }
+    }
+  }
+
   for (const { guide, spans } of lines) {
     const badged = showsBadges(appState, guide);
+    // Hovering any one badge lights the whole chain, so the whole chain's
+    // spans go solid together — the same rule the badges follow, for the
+    // same reason: one hover, one constraint.
+    const solid = guide.hard || isHoveredGapGuide(appState, spans);
     for (const { from, to, icon } of spans) {
       drawGapEndCap(context, from[0], from[1], guide.axis, zoom);
       drawGapEndCap(context, to[0], to[1], guide.axis, zoom);
@@ -397,7 +559,7 @@ export const renderGapAlignmentLocks = (
       // (`drawGapLine` in renderSnaps.ts), and a soft gap guide is
       // offering exactly the relationship that line just showed, so the
       // two have to look the same.
-      context.setLineDash(guide.hard ? [] : getNarrowIndicatorLineDash(zoom));
+      context.setLineDash(solid ? [] : getNarrowIndicatorLineDash(zoom));
       stroke(from, to);
     }
   }
@@ -667,15 +829,15 @@ export const renderAnchorLockOverlays = (
   appState: InteractiveCanvasAppState,
   elementsMap: NonDeletedSceneElementsMap,
   selectedElements: readonly NonDeletedExcalidrawElement[],
+  movers: AlignmentDragMovers | null,
 ) => {
   if (selectedElements.length === 0) {
     return;
   }
   const anchors = new Set<string>(appState.alignmentResizeAnchorIds);
 
-  if (appState.selectedElementsAreBeingDragged) {
+  if (movers) {
     const directlyMoved = new Set(selectedElements.map((el) => el.id));
-    const movers = getAlignmentMovers(directlyMoved, elementsMap);
     for (const component of [movers.x, movers.y]) {
       for (const id of component) {
         if (!directlyMoved.has(id) && isAlignmentAnchor(elementsMap.get(id))) {

@@ -10,6 +10,13 @@ import type { AppState } from "../types";
  * A hairline: these annotate the drawing, they aren't part of it. */
 const INDICATOR_LINE_WIDTH = 1;
 
+/** How far a hovered line's wash spreads either side of it, and how faint
+ * it is. Narrower than the badge's halo deliberately: a line is long, so
+ * it covers ground a badge never does, and the same spread that reads as
+ * a soft glow round a chip reads as a stripe drawn across the canvas. */
+const LINE_HOVER_HALO_WIDTH = 2;
+const LINE_HOVER_HALO_OPACITY = 0.35;
+
 /**
  * Zen mode draws little more than the crosses and the gap ticks, so what
  * survives is thickened to carry the whole message on its own.
@@ -55,8 +62,15 @@ const BADGE_HOVER_HALO_OPACITY = 0.35;
  * involves: a broad, translucent band rather than a line, so it reads as
  * a wash over the element the way a selection highlight does. Weight is
  * what carries it across a crowded canvas; the alpha is what keeps it
- * from competing with the guides and badges drawn on top of it. */
-const ALIGNMENT_HIGHLIGHT_PADDING = 4;
+ * from competing with the guides and badges drawn on top of it.
+ *
+ * Stroked on the bounds themselves rather than offset from them, so the
+ * band straddles the element's edge — the same placement as the green
+ * selection halo, which is centred on the silhouette it traces. Sitting
+ * on the edge is what makes it read as a mark *on* the element; a band
+ * floating clear of the bounds reads as a box drawn around it, and next
+ * to an alignment guide running along that same edge, a box is one more
+ * line to tell apart. */
 const ALIGNMENT_HIGHLIGHT_LINE_WIDTH = 6;
 const ALIGNMENT_HIGHLIGHT_OPACITY = 0.4;
 const ALIGNMENT_HIGHLIGHT_CORNER_RADIUS = 4;
@@ -512,11 +526,6 @@ export const drawBindingLeader = (
  * that is the box alignment itself works from (`getElementBounds`) — an
  * outline hugging the rotated shape would claim a different box than the
  * one the guide is derived from.
- *
- * The padding is measured to the band's centre, so half the width sits
- * inside it: the band overlaps the element's own edge instead of floating
- * clear of it, which is what makes it read as a highlight on the element
- * rather than a box around it.
  */
 export const drawAlignmentHighlight = (
   context: CanvasRenderingContext2D,
@@ -527,8 +536,9 @@ export const drawAlignmentHighlight = (
   zoom: number,
   color: string,
 ) => {
-  const pad = ALIGNMENT_HIGHLIGHT_PADDING / zoom;
   const radius = ALIGNMENT_HIGHLIGHT_CORNER_RADIUS / zoom;
+  const w = x2 - x1;
+  const h = y2 - y1;
 
   context.save();
   context.globalAlpha = ALIGNMENT_HIGHLIGHT_OPACITY;
@@ -538,15 +548,9 @@ export const drawAlignmentHighlight = (
   context.setLineDash([]);
   context.beginPath();
   if (context.roundRect) {
-    context.roundRect(
-      x1 - pad,
-      y1 - pad,
-      x2 - x1 + pad * 2,
-      y2 - y1 + pad * 2,
-      radius,
-    );
+    context.roundRect(x1, y1, w, h, radius);
   } else {
-    context.rect(x1 - pad, y1 - pad, x2 - x1 + pad * 2, y2 - y1 + pad * 2);
+    context.rect(x1, y1, w, h);
   }
   context.stroke();
   context.restore();
@@ -555,6 +559,39 @@ export const drawAlignmentHighlight = (
 // ---------------------------------------------------------------------------
 // Line marks
 // ---------------------------------------------------------------------------
+
+/**
+ * The wash behind an indicator line the pointer's badge belongs to — the
+ * line's own {@link drawBadgeHoverHalo}, spread along it instead of round
+ * a point, so hovering the badge lights the whole assertion rather than
+ * just the chip that names it.
+ *
+ * Always solid, whatever dash the line above carries: a dashed halo would
+ * read as a second, thicker guide rather than as backing for the one
+ * already there. Butt caps, so it stops exactly where the line does — the
+ * line's ends are its anchor points, and a cap overhanging them would put
+ * colour past the thing being marked.
+ */
+export const drawIndicatorLineHalo = (
+  context: CanvasRenderingContext2D,
+  from: readonly [number, number],
+  to: readonly [number, number],
+  zoom: number,
+  color: string,
+) => {
+  context.save();
+  context.globalAlpha = LINE_HOVER_HALO_OPACITY;
+  context.strokeStyle = color;
+  context.lineWidth =
+    getIndicatorLineWidth(zoom) + (LINE_HOVER_HALO_WIDTH * 2) / zoom;
+  context.lineCap = "butt";
+  context.setLineDash([]);
+  context.beginPath();
+  context.moveTo(from[0], from[1]);
+  context.lineTo(to[0], to[1]);
+  context.stroke();
+  context.restore();
+};
 
 /**
  * The X marking a point an indicator line is anchored to — an element

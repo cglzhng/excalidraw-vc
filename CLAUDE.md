@@ -7,7 +7,7 @@ This is a **fork of Excalidraw** that adds two custom systems on top of upstream
 1. **Version control / time travel** — a semantic version log built by observing the store's durable increments, with jump, selective undo (skip a change), dependency analysis, and interactive conflict resolution. See [Version control](#version-control-time-travel).
 2. **Hard alignment** — a persistent "alignment lock" between elements: aligned elements move and resize together to maintain a shared edge, or a shared spacing. See [Hard alignment](#hard-alignment).
 
-`terminology.md` (repo root) is the glossary for both systems — read it first. `VERSION_CONTROL_PLAN.md` covers the version-control design in depth. When editing, match the surrounding code's comment density and idiom.
+`terminology.md` (repo root) is the glossary for both systems — read it first. `VERSION_CONTROL_PLAN.md` covers the version-control design in depth, and `limitations.md` records the behaviour that is deliberately bounded or left unsolved — check it before treating a rough edge as a fresh bug. When editing, match the surrounding code's comment density and idiom.
 
 ## Project Structure
 

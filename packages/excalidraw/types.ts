@@ -253,6 +253,11 @@ export type InteractiveCanvasAppState = Readonly<
     hoveredAlignmentAnchorId: AppState["hoveredAlignmentAnchorId"];
     hoveredAlignmentIcon: AppState["hoveredAlignmentIcon"];
     alignmentResizeAnchorIds: AppState["alignmentResizeAnchorIds"];
+    alignmentResizeMoverIds: AppState["alignmentResizeMoverIds"];
+    // a resize is a gesture like a drag, and the alignment guides treat
+    // the two alike; `alignmentResizeMoverIds` can't stand in for this,
+    // since a resize that drives no alignment publishes nothing
+    isResizing: AppState["isResizing"];
     // Non-used but needed in binding highlight arrow overdraw
     hoveredElementIds: AppState["hoveredElementIds"];
     frameRendering: AppState["frameRendering"];
@@ -592,6 +597,12 @@ export interface AppState {
    * it. Transient feedback, so — like the hover above — not observed by
    * the store. */
   alignmentResizeAnchorIds: readonly string[];
+  /** elements the in-progress resize is moving through their alignments,
+   * per axis, so the guides can show the constraints doing the moving.
+   * Computed alongside the anchors above and for the same reason: which
+   * edges move depends on the transform handle. Also transient, also
+   * unobserved. */
+  alignmentResizeMoverIds: { x: readonly string[]; y: readonly string[] };
   // when locking multiple units of elements together, we assign a temporary
   // groupId to them so we can unlock them together;
   // as elements are unlocked, we remove the groupId from the elements
