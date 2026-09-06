@@ -453,6 +453,87 @@ export const isAlignmentAnchor = (
   element: ExcalidrawElement | undefined,
 ): boolean => !!element && (!!element.alignmentLocked || element.locked);
 
+/**
+ * The group an element moves with, or null if it is in none.
+ *
+ * The **outermost** group, because that is the unit a click selects and
+ * so the unit the user is positioning. Inner groups are only addressable
+ * after entering one, which is editor state the alignment engine has no
+ * access to and no notion of.
+ */
+const outermostGroupId = (element: ExcalidrawElement): string | null =>
+  element.groupIds.length > 0
+    ? element.groupIds[element.groupIds.length - 1]
+    : null;
+
+/** Outermost group id → its member ids, in one sweep, so a propagator
+ * can ask "what else moves with this" without rescanning per element. */
+export const getGroupMembers = (
+  elementsMap: ElementsMap,
+): Map<string, string[]> => {
+  const byGroup = new Map<string, string[]>();
+  for (const element of elementsMap.values()) {
+    const groupId = outermostGroupId(element);
+    if (!groupId) {
+      continue;
+    }
+    const members = byGroup.get(groupId);
+    if (members) {
+      members.push(element.id);
+    } else {
+      byGroup.set(groupId, [element.id]);
+    }
+  }
+  return byGroup;
+};
+
+/**
+ * Spread a per-element quantity across group membership: a group keeps
+ * its layout, so a member with no value of its own takes a sibling's.
+ *
+ * This is what makes an alignment move a *group* move. Alignment links
+ * are between elements, and without this an element dragged along by a
+ * link would slide out of the group it was drawn as part of — the
+ * arrangement the user grouped in order to preserve is exactly what the
+ * constraint would break.
+ *
+ * Never overwrites an existing value. Two members can already disagree —
+ * one pinned by a gap chain, another pulled by an edge link — and no
+ * rigid translation satisfies both; first-wins is the same backstop the
+ * over-constrained cases elsewhere in this file take. Only ever adding
+ * also keeps the fixed-point loops that call this monotone, so they
+ * terminate.
+ */
+export const spreadAcrossGroups = <T>(
+  valueById: Map<string, T>,
+  groupMembers: ReadonlyMap<string, string[]>,
+  skip?: (id: string) => boolean,
+): boolean => {
+  let changed = false;
+  for (const members of groupMembers.values()) {
+    let value: T | undefined;
+    for (const id of members) {
+      if (skip?.(id)) {
+        continue;
+      }
+      value = valueById.get(id);
+      if (value !== undefined) {
+        break;
+      }
+    }
+    if (value === undefined) {
+      continue;
+    }
+    for (const id of members) {
+      if (!valueById.has(id) && !skip?.(id)) {
+        valueById.set(id, value);
+        changed = true;
+      }
+    }
+  }
+  return changed;
+};
+
 /** Bound on the propagation passes below. A chain settles in a pass or
  * two; the cap is only there so a cyclic link graph can't spin. */
 const MAX_DRAG_FACTOR_PASSES = 8;
@@ -505,6 +586,7 @@ export const getAlignmentDragFactors = (
   for (const id of seeds) {
     factors.set(id, 1);
   }
+  const groupMembers = getGroupMembers(elementsMap);
 
   /** Edge links: a partner moves exactly as its neighbour does. */
   const spreadEdgeLinks = (): boolean => {
@@ -574,10 +656,14 @@ export const getAlignmentDragFactors = (
     return changed;
   };
 
+  // Groups are spread before the chains solve, so a chain solving against
+  // a grouped member sees the factor the group actually gives it rather
+  // than pinning it and having the group contradict that afterwards.
   for (let pass = 0; pass < MAX_DRAG_FACTOR_PASSES; pass++) {
     const spread = spreadEdgeLinks();
+    const grouped = spreadAcrossGroups(factors, groupMembers);
     const solved = solveChains();
-    if (!spread && !solved) {
+    if (!spread && !grouped && !solved) {
       break;
     }
   }
@@ -1006,25 +1092,48 @@ export const floodAlignmentAxis = (
   barriers: Set<string>,
   elementsMap: ElementsMap,
 ) => {
-  const queue = [...deltaById.keys()];
-  while (queue.length > 0) {
-    const id = queue.pop()!;
-    const delta = deltaById.get(id)!;
-    const links = elementsMap.get(id)?.alignments;
-    if (!links) {
-      continue;
-    }
-    for (const link of links) {
-      if (
-        link.axis === axis &&
-        !barriers.has(link.elementId) &&
-        !deltaById.has(link.elementId) &&
-        // an anchor stops propagation — the chain doesn't move past it
-        !isAlignmentAnchor(elementsMap.get(link.elementId))
-      ) {
-        deltaById.set(link.elementId, delta);
-        queue.push(link.elementId);
+  const flood = (): boolean => {
+    let changed = false;
+    const queue = [...deltaById.keys()];
+    while (queue.length > 0) {
+      const id = queue.pop()!;
+      const delta = deltaById.get(id)!;
+      const links = elementsMap.get(id)?.alignments;
+      if (!links) {
+        continue;
       }
+      for (const link of links) {
+        if (
+          link.axis === axis &&
+          !barriers.has(link.elementId) &&
+          !deltaById.has(link.elementId) &&
+          // an anchor stops propagation — the chain doesn't move past it
+          !isAlignmentAnchor(elementsMap.get(link.elementId))
+        ) {
+          deltaById.set(link.elementId, delta);
+          queue.push(link.elementId);
+          changed = true;
+        }
+      }
+    }
+    return changed;
+  };
+
+  // A group translates as one, so a member the flood reaches carries its
+  // siblings — and those siblings have links of their own to flood on
+  // from, hence the alternation rather than a single pass at the end.
+  // Both steps only add entries, so this settles.
+  const groupMembers = getGroupMembers(elementsMap);
+  const skip = (id: string) =>
+    // the resized elements moved under the pointer, not by a translation,
+    // and an anchor must not move at all
+    barriers.has(id) || isAlignmentAnchor(elementsMap.get(id));
+
+  for (;;) {
+    const flooded = flood();
+    const grouped = spreadAcrossGroups(deltaById, groupMembers, skip);
+    if (!flooded && !grouped) {
+      break;
     }
   }
 };

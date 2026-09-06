@@ -948,6 +948,15 @@ const detectAlignmentChange = (
  * chain (drag → aligned partner → the partner's bound arrow) collapses
  * into one top-level op with two consequents. See `classifyEntries`.
  */
+/** The group an element moves with — outermost, matching the rule the
+ * alignment propagators use (`getGroupMembers` in `alignment.ts`). */
+const groupOf = (
+  element: OrderedExcalidrawElement | undefined,
+): string | undefined =>
+  element && element.groupIds.length > 0
+    ? element.groupIds[element.groupIds.length - 1]
+    : undefined;
+
 const findConsequentAlignmentChanges = (
   entries: readonly LogEntry[],
   changedElements: Record<string, OrderedExcalidrawElement>,
@@ -1024,6 +1033,22 @@ const findConsequentAlignmentChanges = (
     for (const link of changedElements[id]?.gapAlignments ?? []) {
       for (const memberId of link.ids) {
         if (memberId !== id && inPlay.has(memberId)) {
+          addEdge(id, memberId);
+          addEdge(memberId, id);
+        }
+      }
+    }
+    // Group membership couples elements the same way, because alignment
+    // now moves a whole group when it moves any member of one. The
+    // sibling carried along has no alignment link to the driver, so
+    // without this edge it lands in its own component and surfaces as an
+    // unrelated move — one drag, two rows. Elements the user selected
+    // are never absorbed as followers, so a group dragged directly still
+    // reads as the several ops it is.
+    const groupId = groupOf(changedElements[id]);
+    if (groupId) {
+      for (const memberId of inPlay) {
+        if (memberId !== id && groupOf(changedElements[memberId]) === groupId) {
           addEdge(id, memberId);
           addEdge(memberId, id);
         }

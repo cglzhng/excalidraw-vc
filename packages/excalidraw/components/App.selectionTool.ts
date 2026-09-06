@@ -1121,6 +1121,11 @@ export class AppSelectionTool {
           this.app,
           event,
           this.app.scene.getNonDeletedElementsMap(),
+          // What a multi-element drag snaps by. Read from the
+          // pointer-down hit rather than re-tested each frame: the
+          // pointer can slide onto a different member mid-drag, and
+          // swapping the source there would make the guides jump.
+          pointerDownState.hit.element,
         );
 
         this.app.setState({ snapLines });

@@ -54,14 +54,6 @@ gaps bounded by comoving elements land correctly — but a pair that only
 *starts* overlapping mid-drag was never enumerated and cannot appear. A gap
 that fails to show up, rather than one drawn in the wrong place.
 
-**Groups that don't move as one are dropped, not corrected.** A gap side and
-a reference snap point both come from a maximum group's common bounds, which
-only mean something if the group translates rigidly. Grouping is not
-alignment, so two members can take different factors; when they disagree the
-gap is dropped (`gapSideShift`) and the snap point is masked with no
-correction applied (`groupFactor`). Correcting these would mean tracking
-sub-group geometry, which the snap cache isn't shaped for.
-
 **The resize snap mask treats frozen axes as free.** `getSnapComovers` passes
 `frozen: {x: false, y: false}`, because the freeze is decided later in the
 same pointermove and reading it would be a frame stale and flicker the mask.
@@ -81,8 +73,50 @@ shape to copy.
 
 ## Hard alignment — groups
 
-**Group alignment behaves unintuitively.** Aligning elements *inside* groups,
-and aligning groups themselves. Not yet diagnosed.
+Alignment is **element-level** by design: a link is always between two
+elements, never between an element and a group. Snapping now matches — the
+reference caches enumerate elements rather than maximum groups, so a group's
+members are each snappable and the group's union box is not a target at all.
+
+Both sides of snapping now follow that rule. A multi-element drag snaps
+*from* the element it was grabbed by — not the selection's common bounding
+box, which is a rectangle no element occupies — and snaps *to* individual
+elements, group members included.
+
+**A multi-selection grabbed by its empty interior does not snap.** Excalidraw
+lets you drag a multi-selection from anywhere inside its bounding box; when
+that point is over no element there is nothing to measure from, and the box
+is deliberately not a substitute, so the drag runs unsnapped. Deliberate, and
+the reason the behaviour is worth knowing rather than fixing: the alternative
+is snapping by a rectangle the user cannot see or point at.
+
+Moving is the one place a group *is* a unit: when a constraint moves an
+element, `spreadAcrossGroups` carries its group siblings by the same amount,
+so the arrangement the user grouped survives the constraint that moved it.
+Three things follow, all bounded.
+
+**Always the outermost group.** Entering a group to work on its inner
+structure is editor state (`editingGroupId`) that the alignment engine, which
+lives in `packages/element`, cannot see. Alignment therefore always moves the
+outermost group, even while you are editing an inner one.
+
+**Group and constraint conflicts are first-wins, not reconciled.** If two
+members of one group already have different displacements — one pinned by a
+gap chain, another pulled by an edge link — no rigid translation satisfies
+both. The spread only fills in members with no displacement of their own and
+never overwrites, so the group silently distorts rather than the conflict
+being reported. This is the same backstop the over-constrained edge and chain
+cases take, and keeping the spread purely additive is also what guarantees
+the fixed-point loops around it terminate.
+
+**An anchored group member freezes a drag but not a resize.** On the drag
+path the anchor picks up a non-zero factor from its siblings, so
+`getAlignmentLockedAxes` freezes the axis and the group holds together — an
+anchor anywhere in a group anchors the group, as it should. On the resize
+path `floodAlignmentAxis` only *skips* the anchor, so its siblings still move
+and the group comes apart around it. Fixing it means teaching
+`getAlignmentAnchoredResizeBlockers` about groups; the flood has no way to
+refuse, only to not enter.
 
 ---
 

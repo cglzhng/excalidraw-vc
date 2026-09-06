@@ -11,9 +11,11 @@ import {
   buildResizeAlignmentDeltas,
   floodAlignmentAxis,
   getAlignmentDragFactors,
+  getGroupMembers,
   isAlignable,
   isAlignmentAnchor,
   resizeMovesEdge,
+  spreadAcrossGroups,
 } from "./alignment";
 import { newElementWith } from "./mutateElement";
 
@@ -1406,6 +1408,18 @@ export const propagateAlignmentsAfterResize = (
     elementsMap,
     edgePinned,
   );
+  // Groups last, over whatever both passes placed: a member either pass
+  // moved carries its siblings, so the arrangement the user grouped
+  // survives the constraint that moved it. It runs after rather than
+  // inside the chain solve because a group is rigid and a chain is not —
+  // where the two disagree about one element, the group wins and the
+  // chain absorbs it, which is the same order of authority the drag path
+  // takes.
+  const groupMembers = getGroupMembers(elementsMap);
+  const skip = (id: string) =>
+    resizedIds.has(id) || isAlignmentAnchor(elementsMap.get(id));
+  spreadAcrossGroups(dxById, groupMembers, skip);
+  spreadAcrossGroups(dyById, groupMembers, skip);
   applyAlignmentDeltas(originalElements, dxById, dyById, scene);
 };
 

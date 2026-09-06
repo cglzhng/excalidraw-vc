@@ -21,8 +21,6 @@ import {
 } from "@excalidraw/element";
 import { isBoundToContainer, isLinearElement } from "@excalidraw/element";
 
-import { getMaximumGroups } from "@excalidraw/element";
-
 import {
   getSelectedElements,
   getVisibleAndNonSelectedElements,
@@ -383,16 +381,19 @@ export const getVisibleGaps = (
     elementsMap,
   );
 
-  const referenceBounds = getMaximumGroups(referenceElements, elementsMap)
-    .filter(
-      (elementsGroup) =>
-        !(elementsGroup.length === 1 && isBoundToContainer(elementsGroup[0])),
-    )
-    .map((group) => ({
-      bounds: getCommonBounds(group).map((bound) =>
+  // One reference per element, groups included: a group's members are
+  // each snappable in their own right. Upstream collapses a group to its
+  // common bounds here, which makes the union box the only thing in the
+  // scene you can measure a gap to — and in a fork where alignment is
+  // element-level and draws its guides per element, a gap you can see an
+  // alignment for but cannot snap to is the wrong half of the pair.
+  const referenceBounds = referenceElements
+    .filter((element) => !isBoundToContainer(element))
+    .map((element) => ({
+      bounds: getCommonBounds([element]).map((bound) =>
         round(bound),
       ) as unknown as Bounds,
-      ids: group.map((element) => element.id),
+      ids: [element.id],
     }));
 
   const horizontallySorted = referenceBounds.sort(
@@ -623,6 +624,11 @@ const shiftCachedGap = (
 
 const getGapSnaps = (
   selectedElements: readonly NonDeletedExcalidrawElement[],
+  // the geometry the gap is measured to, which for a multi-element drag
+  // is the grabbed element rather than the whole selection — the full
+  // selection is still what decides whether a gap is already held by a
+  // hard constraint, since every member of it is moving
+  sourceElements: readonly NonDeletedExcalidrawElement[],
   dragOffset: Vector2D,
   app: AppClassProperties,
   event: KeyboardModifiersObject,
@@ -670,7 +676,7 @@ const getGapSnaps = (
       );
 
     const [minX, minY, maxX, maxY] = getDraggedElementsBounds(
-      selectedElements,
+      sourceElements,
       dragOffset,
     ).map((bound) => round(bound));
     const centerX = (minX + maxX) / 2;
@@ -902,47 +908,23 @@ export const getReferenceSnapPoints = (
   // valid snap targets on the free axis.
   const factors = getSnapComovers(selectedElements, elementsMap, resize);
 
-  /**
-   * The one factor a whole group travels by, or null when its members
-   * disagree.
-   *
-   * A group's snap points come from its *common* bounds, so they only
-   * mean anything if the group moves as one. Grouping is not alignment,
-   * though, and two members can be pulled by different constraints — in
-   * which case there is no correction to make, and null both masks the
-   * axis and leaves the cached coordinate alone.
-   */
-  const groupFactor = (
-    elementGroup: readonly NonDeletedExcalidrawElement[],
-    axis: "x" | "y",
-  ): number | null => {
-    let shared: number | null = null;
-    for (const element of elementGroup) {
-      const factor = factors[axis].get(element.id) ?? 0;
-      if (shared === null) {
-        shared = factor;
-      } else if (shared !== factor) {
-        return null;
-      }
-    }
-    return shared;
-  };
-
-  return getMaximumGroups(referenceElements, elementsMap)
-    .filter(
-      (elementsGroup) =>
-        !(elementsGroup.length === 1 && isBoundToContainer(elementsGroup[0])),
-    )
-    .flatMap((elementGroup): ReferenceSnapPoint[] => {
-      const factorX = groupFactor(elementGroup, "x");
-      const factorY = groupFactor(elementGroup, "y");
-      return getElementsCorners(elementGroup, elementsMap).map((point) => ({
+  // Per element rather than per maximum group, for the reason given in
+  // `getVisibleGaps`. It also makes the factor lookup exact: a group's
+  // points came from its common bounds and so needed one factor the whole
+  // group agreed on, which grouping never guaranteed — an element's own
+  // points only ever answer for itself.
+  return referenceElements
+    .filter((element) => !isBoundToContainer(element))
+    .flatMap((element): ReferenceSnapPoint[] => {
+      const factorX = factors.x.get(element.id) ?? 0;
+      const factorY = factors.y.get(element.id) ?? 0;
+      return getElementsCorners([element], elementsMap).map((point) => ({
         point,
         // standing still is exactly what makes a point snappable
         snapX: factorX === 0,
         snapY: factorY === 0,
-        factorX: factorX ?? 0,
-        factorY: factorY ?? 0,
+        factorX,
+        factorY,
       }));
     });
 };
@@ -1019,12 +1001,58 @@ const getPointSnaps = (
   }
 };
 
+/**
+ * The geometry a drag snaps *from*.
+ *
+ * A single selection answers for itself. A multi-element one does not:
+ * upstream measures the common bounding box, which is a rectangle no
+ * element occupies and which alignment — element-level in this fork —
+ * never refers to. So the drag snaps by the one element it was grabbed
+ * by, which is the element the user pointed at and the only one they can
+ * be said to be positioning.
+ *
+ * Null means the grab landed inside the selection's bounding box without
+ * touching anything (Excalidraw lets you drag a multi-selection from its
+ * empty interior). There is no element to measure, and the box is not a
+ * substitute, so that drag simply doesn't snap.
+ *
+ * A bound label resolves to its container: grabbing the text of a
+ * labelled shape is grabbing the shape.
+ *
+ * Only the grabbed element's *id* is taken from the caller. The element
+ * itself is looked up in `selectedElements`, which are the pointer-down
+ * snapshots — the live one has already been moved by this frame's drag,
+ * and `dragOffset` is measured from the drag origin, so measuring from
+ * the live copy would count the drag twice over.
+ */
+const getSnapSourceElements = (
+  selectedElements: readonly NonDeletedExcalidrawElement[],
+  grabbed: NonDeletedExcalidrawElement | null,
+): readonly NonDeletedExcalidrawElement[] | null => {
+  if (selectedElements.length <= 1) {
+    return selectedElements;
+  }
+  if (!grabbed) {
+    return null;
+  }
+  const sourceId = isBoundToContainer(grabbed)
+    ? grabbed.containerId
+    : grabbed.id;
+  // the grabbed element can sit outside the selection — a label whose
+  // container isn't selected, or a stale reference after the selection
+  // changed mid-gesture
+  const source = selectedElements.find((element) => element.id === sourceId);
+  return source ? [source] : null;
+};
+
 export const snapDraggedElements = (
   elements: ExcalidrawElement[],
   dragOffset: Vector2D,
   app: AppClassProperties,
   event: KeyboardModifiersObject,
   elementsMap: ElementsMap,
+  // the element the drag was grabbed by — see `getSnapSourceElements`
+  grabbedElement: NonDeletedExcalidrawElement | null = null,
 ) => {
   const appState = app.state;
   const selectedElements = getSelectedElements(elements, appState);
@@ -1081,6 +1109,14 @@ export const snapDraggedElements = (
     y: lockedAxes.y || cappedY ? 0 : snapDistance,
   };
 
+  // Nothing to measure from. Returned after the clamps above, not before:
+  // those write back into `dragOffset`, and the caller drags by that same
+  // object whether or not anything snapped.
+  const sourceElements = getSnapSourceElements(selectedElements, grabbedElement);
+  if (!sourceElements) {
+    return { snapOffset: { x: 0, y: 0 }, snapLines: [] };
+  }
+
   // What each element travels by, as a multiple of the drag offset. The
   // cached gaps are stated in pre-drag coordinates, and this is what
   // brings the ones bounded by a comoving element up to date.
@@ -1090,7 +1126,7 @@ export const snapDraggedElements = (
     y: getAlignmentDragFactors(selectedIds, "y", elementsMap),
   };
 
-  const selectionPoints = getElementsCorners(selectedElements, elementsMap, {
+  const selectionPoints = getElementsCorners(sourceElements, elementsMap, {
     dragOffset,
   });
 
@@ -1108,6 +1144,7 @@ export const snapDraggedElements = (
 
   getGapSnaps(
     selectedElements,
+    sourceElements,
     dragOffset,
     app,
     event,
@@ -1142,7 +1179,7 @@ export const snapDraggedElements = (
 
   getPointSnaps(
     selectedElements,
-    getElementsCorners(selectedElements, elementsMap, {
+    getElementsCorners(sourceElements, elementsMap, {
       dragOffset: newDragOffset,
     }),
     app,
@@ -1155,6 +1192,7 @@ export const snapDraggedElements = (
 
   getGapSnaps(
     selectedElements,
+    sourceElements,
     newDragOffset,
     app,
     event,
@@ -1167,7 +1205,7 @@ export const snapDraggedElements = (
   const pointSnapLines = createPointSnapLines(nearestSnapsX, nearestSnapsY);
 
   const gapSnapLines = createGapSnapLines(
-    selectedElements,
+    sourceElements,
     newDragOffset,
     [...nearestSnapsX, ...nearestSnapsY].filter(
       (snap) => snap.type === "gap",
