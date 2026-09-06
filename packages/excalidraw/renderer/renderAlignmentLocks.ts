@@ -8,6 +8,8 @@ import {
 } from "@excalidraw/element";
 
 import {
+  BADGE_CLUSTER_DISTANCE,
+  drawAlignmentClusterBadge,
   drawAlignmentHighlight,
   drawAlignmentPadlock,
   drawAnchorOverlayButton,
@@ -19,6 +21,7 @@ import {
   drawIndicatorLineHalo,
   getAlignmentIndicatorColor,
   getAnchorIconSize,
+  getBadgeFanRadius,
   getIndicatorLineWidth,
   getNarrowIndicatorLineDash,
   getWideIndicatorLineDash,
@@ -58,29 +61,28 @@ const edgeCoord = (
 };
 
 /**
- * How far along the line an element reaches — the anchor points it
- * contributes, as `[min, max]` on the axis the line *runs* along (the
- * perpendicular of `axis`).
+ * Where an element meets a guide line: the points it contributes there,
+ * projected onto the axis the line *runs* along (the perpendicular of
+ * `axis`). The line is drawn between the outermost of these and a cross
+ * marks each, which is exactly what the transient snap guide does with
+ * the points behind it (`drawPointsSnapLine`).
  *
- * This is the rule that makes an alignment guide look like a snap guide:
- * snapping derives its lines from element corners and centres, so a side
- * (min / max) contributes that whole side of the element, while a centre
- * contributes a single point. Hence a centre-to-centre guide is drawn
- * centre-to-centre rather than across both elements, exactly as the
- * transient snap guide for the same coincidence would be.
+ * Both ends and the middle, whichever edge is aligned, because that is
+ * the set snapping offers: every one of an element's lines carries a
+ * point at each end and one in the middle — a side gets its two corners
+ * and its edge midpoint, a centre line gets two edge midpoints and the
+ * centre itself.
+ *
+ * A centre was once treated as a single point, which matched the snap
+ * line back when a rectangle offered only corners and a centre: nothing
+ * then sat on its centre lines except the centre. That is also what made
+ * a rectangle centred inside another draw one bare cross — two identical
+ * points with no extent between them.
  */
-const anchorExtent = (
-  bounds: Bounds,
-  axis: "x" | "y",
-  edge: "min" | "center" | "max",
-): [number, number] => {
+const guideAnchors = (bounds: Bounds, axis: "x" | "y"): number[] => {
   const [lo, hi] =
     axis === "x" ? [bounds[1], bounds[3]] : [bounds[0], bounds[2]];
-  if (edge === "center") {
-    const mid = (lo + hi) / 2;
-    return [mid, mid];
-  }
-  return [lo, hi];
+  return [lo, (lo + hi) / 2, hi];
 };
 
 export type AlignmentGuideLine = {
@@ -92,6 +94,9 @@ export type AlignmentGuideLine = {
   crosses: [number, number][];
   /** padlock badge centre, scene coords */
   icon: [number, number];
+  /** inside a collapsed cluster — the line still draws, the badge does
+   * not (see {@link layOutAlignmentBadges}) */
+  badgeHidden?: boolean;
 };
 
 /**
@@ -113,12 +118,12 @@ export const getAlignmentGuideLines = (
     const boundsA = getElementBounds(self, elementsMap);
     const boundsB = getElementBounds(partner, elementsMap);
 
-    // The line spans the union of what each side reaches; each end of
-    // each side's reach is an anchor worth marking. Duplicates collapse
-    // (two elements can share an anchor exactly).
-    const spanA = anchorExtent(boundsA, guide.axis, guide.selfEdge);
-    const spanB = anchorExtent(boundsB, guide.axis, guide.otherEdge);
-    const along = Array.from(new Set([...spanA, ...spanB])).sort(
+    // The line spans the union of what each side reaches, and every point
+    // either side puts on it is worth marking. Duplicates collapse (two
+    // elements can share an anchor exactly).
+    const anchorsA = guideAnchors(boundsA, guide.axis);
+    const anchorsB = guideAnchors(boundsB, guide.axis);
+    const along = Array.from(new Set([...anchorsA, ...anchorsB])).sort(
       (a, b) => a - b,
     );
 
@@ -301,16 +306,17 @@ export const renderAlignmentLocks = (
   context.lineWidth = getIndicatorLineWidth(zoom);
 
   // Halos first, so a neighbouring line is never buried under one.
-  for (const { from, to, icon } of lines) {
-    if (isHoveredIcon(appState, icon)) {
+  for (const { from, to, icon, badgeHidden } of lines) {
+    if (!badgeHidden && isHoveredIcon(appState, icon)) {
       drawIndicatorLineHalo(context, from, to, zoom, color);
     }
   }
 
   // A hovered soft line goes solid: the dash says "not kept yet", and the
   // hover is a preview of the click that would keep it.
-  for (const { guide, from, to, icon } of lines) {
-    const solid = guide.hard || isHoveredIcon(appState, icon);
+  for (const { guide, from, to, icon, badgeHidden } of lines) {
+    const solid =
+      guide.hard || (!badgeHidden && isHoveredIcon(appState, icon));
     context.setLineDash(solid ? [] : getWideIndicatorLineDash(zoom));
     context.beginPath();
     context.moveTo(from[0], from[1]);
@@ -345,7 +351,10 @@ export const renderAlignmentLockIcons = (
   context.save();
   context.translate(appState.scrollX, appState.scrollY);
   context.setLineDash([]);
-  for (const { guide, icon } of lines) {
+  for (const { guide, icon, badgeHidden } of lines) {
+    if (badgeHidden) {
+      continue;
+    }
     drawAlignmentPadlock(
       context,
       icon[0],
@@ -381,6 +390,8 @@ export type GapAlignmentGuideLine = {
     to: [number, number];
     /** padlock centre, scene coords */
     icon: [number, number];
+    /** inside a collapsed cluster — see {@link AlignmentGuideLine} */
+    badgeHidden?: boolean;
   }[];
 };
 
@@ -486,6 +497,217 @@ export const getVisibleGapGuideLines = (
 };
 
 /**
+ * A knot of badges too close together to aim between, and what it does
+ * about it.
+ *
+ * Alignment badges sit at their line's midpoint, and guides from one
+ * selected element all share an endpoint, so their midpoints crowd —
+ * worst of all when elements are centred, where several lines coincide
+ * outright. Since the hit-test takes the *nearest* badge, exactly
+ * coincident ones leave all but one permanently unreachable: not merely
+ * fiddly, but impossible.
+ *
+ * Collapsed, a cluster is one badge carrying its count. Opened — the
+ * pointer resting on it — its members move out onto a ring, where each is
+ * an ordinary badge again, separately hoverable and separately clickable.
+ * Nothing about what a badge *means* changes; only where it is drawn.
+ */
+export type AlignmentBadgeCluster = {
+  /** where the cluster sits, and the identity it is remembered by */
+  center: [number, number];
+  count: number;
+  open: boolean;
+};
+
+/** One badge's place in the layout, with the way to write its result
+ * back to whichever line or span it came from. */
+type BadgeSlot = {
+  /** stable across frames, so an opened fan doesn't reshuffle */
+  key: string;
+  icon: [number, number];
+  place: (icon: [number, number] | null) => void;
+};
+
+const badgeSlots = (
+  edgeLines: AlignmentGuideLine[],
+  gapLines: GapAlignmentGuideLine[],
+): BadgeSlot[] => {
+  const slots: BadgeSlot[] = [];
+  for (const line of edgeLines) {
+    const { axis, selfId, selfEdge, elementId, otherEdge } = line.guide;
+    slots.push({
+      key: `e:${axis}:${selfId}:${selfEdge}:${elementId}:${otherEdge}`,
+      icon: line.icon,
+      place: (icon) => {
+        if (icon) {
+          line.icon = icon;
+        } else {
+          line.badgeHidden = true;
+        }
+      },
+    });
+  }
+  for (const line of gapLines) {
+    line.spans.forEach((span, index) => {
+      slots.push({
+        key: `g:${line.guide.axis}:${line.guide.ids.join(",")}:${index}`,
+        icon: span.icon,
+        place: (icon) => {
+          if (icon) {
+            span.icon = icon;
+          } else {
+            span.badgeHidden = true;
+          }
+        },
+      });
+    });
+  }
+  return slots;
+};
+
+/** Single-linkage grouping: badges chain into one cluster when each is
+ * near the next, which is what makes a row of overlapping badges one knot
+ * rather than several pairs. */
+const clusterSlots = (
+  slots: readonly BadgeSlot[],
+  threshold: number,
+): number[][] => {
+  const parent = slots.map((_, index) => index);
+  const find = (index: number): number => {
+    let root = index;
+    while (parent[root] !== root) {
+      parent[root] = parent[parent[root]];
+      root = parent[root];
+    }
+    return root;
+  };
+  for (let i = 0; i < slots.length; i++) {
+    for (let j = i + 1; j < slots.length; j++) {
+      const dx = slots[i].icon[0] - slots[j].icon[0];
+      const dy = slots[i].icon[1] - slots[j].icon[1];
+      if (Math.hypot(dx, dy) < threshold) {
+        parent[find(i)] = find(j);
+      }
+    }
+  }
+  const groups = new Map<number, number[]>();
+  slots.forEach((_, index) => {
+    const root = find(index);
+    const group = groups.get(root);
+    if (group) {
+      group.push(index);
+    } else {
+      groups.set(root, [index]);
+    }
+  });
+  return [...groups.values()];
+};
+
+/**
+ * Place every badge for a frame, collapsing the crowded ones and fanning
+ * out the one the pointer has opened.
+ *
+ * `expanded` is a cluster's centre, not an index: clusters are derived
+ * fresh each frame from wherever the guides currently are, so the only
+ * identity that survives between frames is where the thing sits. It is
+ * also the same way `hoveredAlignmentIcon` is remembered, for the same
+ * reason.
+ *
+ * A cluster's centre is the mean of its members, so it does not depend on
+ * the order they were found in; the fan's *order* is by slot key, so an
+ * open ring keeps its arrangement as the pointer moves around it.
+ *
+ * Returns copies. The renderer and the pointer handler both call this and
+ * must agree exactly, so neither may hold the originals.
+ */
+export const layOutAlignmentBadges = (
+  edgeLines: readonly AlignmentGuideLine[],
+  gapLines: readonly GapAlignmentGuideLine[],
+  zoom: number,
+  expanded: readonly [number, number] | null,
+): {
+  edgeLines: AlignmentGuideLine[];
+  gapLines: GapAlignmentGuideLine[];
+  clusters: AlignmentBadgeCluster[];
+} => {
+  const outEdge = edgeLines.map((line) => ({ ...line }));
+  const outGap = gapLines.map((line) => ({
+    ...line,
+    spans: line.spans.map((span) => ({ ...span })),
+  }));
+
+  const slots = badgeSlots(outEdge, outGap);
+  const clusters: AlignmentBadgeCluster[] = [];
+
+  for (const members of clusterSlots(slots, BADGE_CLUSTER_DISTANCE / zoom)) {
+    if (members.length < 2) {
+      continue;
+    }
+    const center: [number, number] = [
+      members.reduce((sum, i) => sum + slots[i].icon[0], 0) / members.length,
+      members.reduce((sum, i) => sum + slots[i].icon[1], 0) / members.length,
+    ];
+
+    if (
+      !expanded ||
+      Math.abs(expanded[0] - center[0]) >= HOVER_MATCH_EPSILON ||
+      Math.abs(expanded[1] - center[1]) >= HOVER_MATCH_EPSILON
+    ) {
+      for (const index of members) {
+        slots[index].place(null);
+      }
+      clusters.push({ center, count: members.length, open: false });
+      continue;
+    }
+
+    const ordered = [...members].sort((a, b) =>
+      slots[a].key < slots[b].key ? -1 : 1,
+    );
+    const radius = getBadgeFanRadius(ordered.length, zoom);
+    ordered.forEach((index, position) => {
+      // from straight up, clockwise — an arbitrary start, but a fixed one,
+      // so the same cluster always opens into the same arrangement
+      const angle = -Math.PI / 2 + (position * 2 * Math.PI) / ordered.length;
+      slots[index].place([
+        center[0] + Math.cos(angle) * radius,
+        center[1] + Math.sin(angle) * radius,
+      ]);
+    });
+    clusters.push({ center, count: ordered.length, open: true });
+  }
+
+  return { edgeLines: outEdge, gapLines: outGap, clusters };
+};
+
+/** The counted badge standing in for each collapsed cluster, drawn with
+ * the other badges so nothing is laid over it. */
+export const renderAlignmentClusterBadges = (
+  context: CanvasRenderingContext2D,
+  appState: InteractiveCanvasAppState,
+  clusters: readonly AlignmentBadgeCluster[],
+) => {
+  const zoom = appState.zoom.value;
+  const color = getAlignmentIndicatorColor(appState.theme, appState.zenModeEnabled);
+
+  context.save();
+  context.translate(appState.scrollX, appState.scrollY);
+  context.setLineDash([]);
+  for (const cluster of clusters) {
+    if (!cluster.open) {
+      drawAlignmentClusterBadge(
+        context,
+        cluster.center[0],
+        cluster.center[1],
+        zoom,
+        color,
+        cluster.count,
+      );
+    }
+  }
+  context.restore();
+};
+
+/**
  * Whether a guide's gaps carry their equals badges.
  *
  * A soft guide's badge is an offer — click to keep this spacing — and
@@ -573,7 +795,10 @@ export const renderGapAlignmentLocks = (
 const isHoveredGapGuide = (
   appState: InteractiveCanvasAppState,
   spans: GapAlignmentGuideLine["spans"],
-): boolean => spans.some(({ icon }) => isHoveredIcon(appState, icon));
+): boolean =>
+  spans.some(
+    ({ icon, badgeHidden }) => !badgeHidden && isHoveredIcon(appState, icon),
+  );
 
 /**
  * The equals badges for {@link renderGapAlignmentLocks}' guides, drawn in
@@ -605,7 +830,10 @@ export const renderGapAlignmentIcons = (
       continue;
     }
     const hovered = isHoveredGapGuide(appState, spans);
-    for (const { icon } of spans) {
+    for (const { icon, badgeHidden } of spans) {
+      if (badgeHidden) {
+        continue;
+      }
       drawEqualsBadge(context, icon[0], icon[1], zoom, color, guide.hard, hovered);
     }
   }
@@ -632,8 +860,8 @@ const getHighlightedAlignmentIds = (
     return ids;
   }
 
-  for (const { guide, icon } of edgeLines) {
-    if (isHoveredIcon(appState, icon)) {
+  for (const { guide, icon, badgeHidden } of edgeLines) {
+    if (!badgeHidden && isHoveredIcon(appState, icon)) {
       ids.add(guide.selfId);
       ids.add(guide.elementId);
     }

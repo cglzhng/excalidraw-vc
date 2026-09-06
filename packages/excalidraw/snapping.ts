@@ -276,61 +276,46 @@ export const getElementsCorners = (
     const halfWidth = (x2 - x1) / 2;
     const halfHeight = (y2 - y1) / 2;
 
-    if (
-      (element.type === "diamond" || element.type === "ellipse") &&
-      !boundingBoxCorners
-    ) {
-      const leftMid = pointRotateRads<GlobalPoint>(
-        pointFrom(x1, y1 + halfHeight),
+    const at = (px: number, py: number) =>
+      pointRotateRads<GlobalPoint>(
+        pointFrom(px, py),
         pointFrom(cx, cy),
         element.angle,
       );
-      const topMid = pointRotateRads<GlobalPoint>(
-        pointFrom(x1 + halfWidth, y1),
-        pointFrom(cx, cy),
-        element.angle,
-      );
-      const rightMid = pointRotateRads<GlobalPoint>(
-        pointFrom(x2, y1 + halfHeight),
-        pointFrom(cx, cy),
-        element.angle,
-      );
-      const bottomMid = pointRotateRads<GlobalPoint>(
-        pointFrom(x1 + halfWidth, y2),
-        pointFrom(cx, cy),
-        element.angle,
-      );
-      const center = pointFrom<GlobalPoint>(cx, cy);
 
-      result = omitCenter
-        ? [leftMid, topMid, rightMid, bottomMid]
-        : [leftMid, topMid, rightMid, bottomMid, center];
+    const edgeMidpoints = [
+      at(x1, y1 + halfHeight),
+      at(x1 + halfWidth, y1),
+      at(x2, y1 + halfHeight),
+      at(x1 + halfWidth, y2),
+    ];
+    const corners = [at(x1, y1), at(x2, y1), at(x1, y2), at(x2, y2)];
+    const center = pointFrom<GlobalPoint>(cx, cy);
+
+    if (boundingBoxCorners) {
+      // The plain box, for an element still being drawn out — its own
+      // geometry isn't settled, and the corner under the pointer is the
+      // whole of what the user is placing.
+      result = omitCenter ? corners : [...corners, center];
     } else {
-      const topLeft = pointRotateRads<GlobalPoint>(
-        pointFrom(x1, y1),
-        pointFrom(cx, cy),
-        element.angle,
-      );
-      const topRight = pointRotateRads<GlobalPoint>(
-        pointFrom(x2, y1),
-        pointFrom(cx, cy),
-        element.angle,
-      );
-      const bottomLeft = pointRotateRads<GlobalPoint>(
-        pointFrom(x1, y2),
-        pointFrom(cx, cy),
-        element.angle,
-      );
-      const bottomRight = pointRotateRads<GlobalPoint>(
-        pointFrom(x2, y2),
-        pointFrom(cx, cy),
-        element.angle,
-      );
-      const center = pointFrom<GlobalPoint>(cx, cy);
-
+      // VERSION-LOG: every shape contributes both its corners and its
+      // edge midpoints. Upstream gave a rectangle only corners and an
+      // ellipse only midpoints, and each set leaves one kind of alignment
+      // with nothing to draw: a snap line runs through every point that
+      // shares the snapped coordinate, so a box's corners — which share
+      // neither coordinate with its centre — collapse a concentric pair
+      // to one bare cross, while an ellipse's midpoints collapse a
+      // side-to-side alignment the same way.
+      //
+      // Together they add no new coordinates: unrotated, either set
+      // already offers {x1, cx, x2} and {y1, cy, y2}, so the same
+      // alignments snap by the same offsets. What they add is *extent*,
+      // and having every shape carry a point at each end of every one of
+      // its lines plus one in the middle is what lets the resting guides
+      // (`guideAnchors`) state the same rule and draw the same picture.
       result = omitCenter
-        ? [topLeft, topRight, bottomLeft, bottomRight]
-        : [topLeft, topRight, bottomLeft, bottomRight, center];
+        ? [...corners, ...edgeMidpoints]
+        : [...corners, ...edgeMidpoints, center];
     }
   } else if (elements.length > 1) {
     const [minX, minY, maxX, maxY] = getDraggedElementsBounds(

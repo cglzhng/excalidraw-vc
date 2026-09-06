@@ -58,6 +58,21 @@ const BADGE_HOVER_HALO_WIDTH = 4;
 
 const BADGE_HOVER_HALO_OPACITY = 0.35;
 
+/** Badge centres closer together than this belong to one cluster. A badge
+ * is `2 * INDICATOR_BADGE_RADIUS` across, so anything under that is
+ * already overlapping; a little more also catches the ones that merely
+ * touch, which are just as hard to aim between. */
+export const BADGE_CLUSTER_DISTANCE = 20;
+
+/** The ring a cluster's badges sit on once opened. Big enough that the
+ * circumference seats them all without touching, and never so small that
+ * the fan reads as one blob — {@link getBadgeFanRadius}. */
+const BADGE_FAN_MIN_RADIUS = 20;
+const BADGE_FAN_ARC_PER_BADGE = 2.4;
+
+/** The count on a collapsed cluster, as a fraction of the badge radius. */
+const BADGE_COUNT_FONT_RATIO = 1.25;
+
 /** The outline drawn round every element a hovered badge's alignment
  * involves: a broad, translucent band rather than a line, so it reads as
  * a wash over the element the way a selection highlight does. Weight is
@@ -417,6 +432,58 @@ export const drawEqualsBadge = (
     context.lineTo(cx + halfBar, cy + dy);
     context.stroke();
   }
+  context.restore();
+};
+
+// ---------------------------------------------------------------------------
+// Badge clusters
+// ---------------------------------------------------------------------------
+
+/**
+ * How far from its anchor a cluster's badges sit once fanned out.
+ *
+ * Derived from the count rather than fixed, so the ring grows as it has
+ * to: each badge needs a slice of arc a bit wider than itself, and
+ * `2πr = n · arc` is what that costs in radius. The floor keeps a pair
+ * from opening into a ring so tight it reads as the blob it replaced.
+ */
+export const getBadgeFanRadius = (count: number, zoom: number): number =>
+  Math.max(
+    BADGE_FAN_MIN_RADIUS,
+    (count * INDICATOR_BADGE_RADIUS * BADGE_FAN_ARC_PER_BADGE) / (2 * Math.PI),
+  ) / zoom;
+
+/**
+ * A cluster of badges too close to aim between, drawn as one badge
+ * carrying how many it stands for.
+ *
+ * Deliberately not a padlock or an equals sign: it is not a control and
+ * toggles nothing, so it must not offer either glyph's promise. It is a
+ * count, and what it affords is *opening* — which is why it takes the
+ * plain disc and rim every badge shares, and nothing else.
+ */
+export const drawAlignmentClusterBadge = (
+  context: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  zoom: number,
+  color: string,
+  count: number,
+) => {
+  const r = INDICATOR_BADGE_RADIUS / zoom;
+
+  context.save();
+  context.lineWidth = badgeLineWidth(r, zoom);
+
+  fillBadgeDisc(context, cx, cy, r, color, false, 1);
+  context.strokeStyle = color;
+  context.stroke();
+
+  context.fillStyle = color;
+  context.font = `600 ${r * BADGE_COUNT_FONT_RATIO}px sans-serif`;
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(String(count), cx, cy);
   context.restore();
 };
 
