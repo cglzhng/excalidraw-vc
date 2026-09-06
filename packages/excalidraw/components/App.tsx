@@ -470,11 +470,15 @@ import NewElementCanvas from "./canvases/NewElementCanvas";
 import { isPointHittingLink } from "./hyperlink/helpers";
 import { CursorHint, CursorHints } from "./CursorHint";
 import {
-  getAlignmentGuideLines,
-  getGapAlignmentGuideLines,
   getElementLockToggle,
+  getVisibleAlignmentGuideLines,
+  getVisibleGapGuideLines,
+  layOutAlignmentBadges,
 } from "../renderer/renderAlignmentLocks";
-import { INDICATOR_BADGE_RADIUS } from "../renderer/indicatorHelpers";
+import {
+  getBadgeFanRadius,
+  INDICATOR_BADGE_RADIUS,
+} from "../renderer/indicatorHelpers";
 import { MagicIcon, copyIcon, fullscreenIcon } from "./icons";
 import { AppStateObserver, type OnStateChange } from "./AppStateObserver";
 
@@ -8257,12 +8261,30 @@ class App extends React.Component<AppProps, AppState> {
 
       // Same for a guide badge. They stay clickable only at rest, so
       // don't offer the cursor — or the hover halo — mid-drag.
-      const hoveredIcon = this.state.selectedElementsAreBeingDragged
-        ? null
-        : (
-            this.getAlignmentGuideIconAt(scenePointer) ??
-            this.getGapAlignmentIconAt(scenePointer)
-          )?.center ?? null;
+      //
+      // Which cluster is open is settled first, because it decides where
+      // the badges are: the layout it produces is what the hover is then
+      // tested against, and is the layout the renderer will reach on its
+      // own from the state set here.
+      const atRest = !this.state.selectedElementsAreBeingDragged;
+      const expandedCluster = atRest
+        ? this.nextExpandedAlignmentCluster(scenePointer)
+        : null;
+      if (
+        this.state.expandedAlignmentCluster?.[0] !== expandedCluster?.[0] ||
+        this.state.expandedAlignmentCluster?.[1] !== expandedCluster?.[1]
+      ) {
+        this.setState({ expandedAlignmentCluster: expandedCluster });
+      }
+
+      const badgeLayout = atRest
+        ? this.getAlignmentBadgeLayout(expandedCluster)
+        : null;
+      const hoveredIcon =
+        (
+          this.getAlignmentGuideIconAt(scenePointer, badgeLayout) ??
+          this.getGapAlignmentIconAt(scenePointer, badgeLayout)
+        )?.center ?? null;
       if (
         this.state.hoveredAlignmentIcon?.[0] !== hoveredIcon?.[0] ||
         this.state.hoveredAlignmentIcon?.[1] !== hoveredIcon?.[1]
@@ -8270,7 +8292,18 @@ class App extends React.Component<AppProps, AppState> {
         this.setState({ hoveredAlignmentIcon: hoveredIcon });
       }
 
-      if (hoveredAnchorId || hoveredIcon) {
+      // A collapsed cluster is a target too — it opens rather than
+      // toggling, but the cursor should say it can be pointed at.
+      const overCluster = (badgeLayout?.clusters ?? []).some(
+        (cluster) =>
+          !cluster.open &&
+          Math.hypot(
+            scenePointer.x - cluster.center[0],
+            scenePointer.y - cluster.center[1],
+          ) <= this.alignmentIconHitRadius,
+      );
+
+      if (hoveredAnchorId || hoveredIcon || overCluster) {
         this.cursor.set(CURSOR_TYPE.POINTER);
       } else if (
         hitElement &&
@@ -8829,6 +8862,14 @@ class App extends React.Component<AppProps, AppState> {
     // are small targets sitting over draggable things, so not consuming
     // the press let the tiniest cursor jitter start a drag before the
     // click registered. Drag the element by grabbing off the badge.
+    // A collapsed cluster opens on the press, ahead of the badges it
+    // stands for — nothing of theirs is on screen to be hit yet. It is
+    // also the only way in without a hovering pointer, so touch can
+    // reach a crowded badge at all.
+    if (this.handleAlignmentClusterOnPointerDown(pointerDownState.origin)) {
+      return;
+    }
+
     if (this.handleAlignmentIconOnPointerDown(pointerDownState.origin)) {
       return;
     }
@@ -9513,21 +9554,88 @@ class App extends React.Component<AppProps, AppState> {
   }
 
   /**
+   * Where every alignment badge sits this frame, crowded ones collapsed
+   * and the opened one fanned out — the same solve the renderer does, so
+   * a hit-test can only ever land on something drawn.
+   *
+   * `expanded` is passed rather than read from state because the pointer
+   * handler decides which cluster is open and then immediately needs the
+   * layout that follows from it; `setState` would not have applied yet.
+   */
+  private getAlignmentBadgeLayout(
+    expanded: [number, number] | null = this.state.expandedAlignmentCluster,
+  ) {
+    const selected = this.scene.getSelectedElements(this.state);
+    if (selected.length === 0) {
+      return null;
+    }
+    const elementsMap = this.scene.getNonDeletedElementsMap();
+    // No movers: badges are only hit-testable at rest, and at rest a null
+    // mover set is what the renderer passes too.
+    return layOutAlignmentBadges(
+      getVisibleAlignmentGuideLines(elementsMap, selected, null),
+      getVisibleGapGuideLines(elementsMap, selected, null),
+      this.state.zoom.value,
+      expanded,
+    );
+  }
+
+  /**
+   * Which cluster should be open with the pointer here.
+   *
+   * Opening asks for the pointer to be on the collapsed badge itself.
+   * Staying open is far looser — anywhere inside the ring plus a badge's
+   * width — because the whole point is to then travel out to one of the
+   * fanned badges, and a fan that shut as you reached for it would be
+   * worse than no fan at all.
+   */
+  private nextExpandedAlignmentCluster(scenePointer: {
+    x: number;
+    y: number;
+  }): [number, number] | null {
+    const clusters = this.getAlignmentBadgeLayout()?.clusters ?? [];
+    const current = this.state.expandedAlignmentCluster;
+    const distanceTo = (center: readonly [number, number]) =>
+      Math.hypot(scenePointer.x - center[0], scenePointer.y - center[1]);
+
+    const open = current
+      ? clusters.find(
+          (cluster) =>
+            Math.abs(cluster.center[0] - current[0]) < 0.01 &&
+            Math.abs(cluster.center[1] - current[1]) < 0.01,
+        )
+      : undefined;
+    if (
+      open &&
+      distanceTo(open.center) <=
+        getBadgeFanRadius(open.count, this.state.zoom.value) +
+          this.alignmentIconHitRadius
+    ) {
+      return current;
+    }
+
+    let nearest: { center: [number, number]; dist: number } | null = null;
+    for (const cluster of clusters) {
+      const dist = distanceTo(cluster.center);
+      if (dist <= this.alignmentIconHitRadius && (!nearest || dist < nearest.dist)) {
+        nearest = { center: cluster.center, dist };
+      }
+    }
+    return nearest?.center ?? null;
+  }
+
+  /**
    * The alignment-guide padlock under `scenePointer`, if any (the nearest
    * one, when two lines' badges overlap) — the one hit-test shared by the
    * hover affordance and the press, so the cursor can never promise a
    * click the pointer-down won't take. Guides are recomputed on demand
    * rather than cached — this mirrors the element-link icon hit-test.
    */
-  private getAlignmentGuideIconAt(scenePointer: { x: number; y: number }) {
-    const selected = this.scene.getSelectedElements(this.state);
-    if (selected.length === 0) {
-      return null;
-    }
-    const lines = getAlignmentGuideLines(
-      selected,
-      this.scene.getNonDeletedElementsMap(),
-    );
+  private getAlignmentGuideIconAt(
+    scenePointer: { x: number; y: number },
+    layout = this.getAlignmentBadgeLayout(),
+  ) {
+    const lines = (layout?.edgeLines ?? []).filter((line) => !line.badgeHidden);
     const hitRadius = this.alignmentIconHitRadius;
 
     let closest: {
@@ -9553,6 +9661,32 @@ class App extends React.Component<AppProps, AppState> {
    * toggling and return true (the pointer-down is then consumed; the
    * toggle happens on pointer-up).
    */
+  /**
+   * If `scenePointer` lands on a collapsed badge cluster, open it and
+   * consume the press. Nothing is armed for pointer-up: a cluster is not
+   * a toggle, and the press has done its whole job by the time it is
+   * released.
+   */
+  private handleAlignmentClusterOnPointerDown(scenePointer: {
+    x: number;
+    y: number;
+  }): boolean {
+    const clusters = this.getAlignmentBadgeLayout()?.clusters ?? [];
+    for (const cluster of clusters) {
+      if (
+        !cluster.open &&
+        Math.hypot(
+          scenePointer.x - cluster.center[0],
+          scenePointer.y - cluster.center[1],
+        ) <= this.alignmentIconHitRadius
+      ) {
+        this.setState({ expandedAlignmentCluster: cluster.center });
+        return true;
+      }
+    }
+    return false;
+  }
+
   private handleAlignmentIconOnPointerDown(scenePointer: {
     x: number;
     y: number;
@@ -9596,15 +9730,11 @@ class App extends React.Component<AppProps, AppState> {
    * two padlocks (one per gap) and either one toggles the whole triple,
    * so both are tested and the nearest wins.
    */
-  private getGapAlignmentIconAt(scenePointer: { x: number; y: number }) {
-    const selected = this.scene.getSelectedElements(this.state);
-    if (selected.length === 0) {
-      return null;
-    }
-    const lines = getGapAlignmentGuideLines(
-      selected,
-      this.scene.getNonDeletedElementsMap(),
-    );
+  private getGapAlignmentIconAt(
+    scenePointer: { x: number; y: number },
+    layout = this.getAlignmentBadgeLayout(),
+  ) {
+    const lines = layout?.gapLines ?? [];
     const hitRadius = this.alignmentIconHitRadius;
 
     let closest: {
@@ -9615,6 +9745,9 @@ class App extends React.Component<AppProps, AppState> {
     } | null = null;
     for (const line of lines) {
       for (const span of line.spans) {
+        if (span.badgeHidden) {
+          continue;
+        }
         const dist = Math.hypot(
           scenePointer.x - span.icon[0],
           scenePointer.y - span.icon[1],

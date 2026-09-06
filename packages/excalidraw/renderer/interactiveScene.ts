@@ -89,6 +89,8 @@ import {
   getAlignmentDragMovers,
   getVisibleAlignmentGuideLines,
   getVisibleGapGuideLines,
+  layOutAlignmentBadges,
+  renderAlignmentClusterBadges,
   renderAlignmentHoverHighlights,
   renderAlignmentLockIcons,
   renderAlignmentLocks,
@@ -2599,18 +2601,31 @@ const _renderInteractiveScene = ({
     selectedElements,
     alignmentDragMovers,
   );
+  // Where every badge actually lands: the ones crowded too close to aim
+  // between collapse into a single counted badge, and the one the pointer
+  // has opened fans out onto a ring. Solved once here for all the passes
+  // below; `App` derives the same layout for hit-testing, and the two
+  // have to agree or the cursor promises a click that won't land.
+  const badgeLayout = layOutAlignmentBadges(
+    edgeGuideLines,
+    gapGuideLines,
+    appState.zoom.value,
+    appState.expandedAlignmentCluster,
+  );
+
   renderAlignmentHoverHighlights(
     context,
     appState,
     allElementsMap,
     selectedElements,
-    edgeGuideLines,
-    gapGuideLines,
+    badgeLayout.edgeLines,
+    badgeLayout.gapLines,
   );
-  renderGapAlignmentLocks(context, appState, gapGuideLines);
-  renderAlignmentLocks(context, appState, edgeGuideLines);
-  renderGapAlignmentIcons(context, appState, gapGuideLines);
-  renderAlignmentLockIcons(context, appState, edgeGuideLines);
+  renderGapAlignmentLocks(context, appState, badgeLayout.gapLines);
+  renderAlignmentLocks(context, appState, badgeLayout.edgeLines);
+  renderGapAlignmentIcons(context, appState, badgeLayout.gapLines);
+  renderAlignmentLockIcons(context, appState, badgeLayout.edgeLines);
+  renderAlignmentClusterBadges(context, appState, badgeLayout.clusters);
   renderElementAlignmentLocks(
     context,
     appState,

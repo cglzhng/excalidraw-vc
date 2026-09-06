@@ -252,6 +252,7 @@ export type InteractiveCanvasAppState = Readonly<
     activeLockedId: AppState["activeLockedId"];
     hoveredAlignmentAnchorId: AppState["hoveredAlignmentAnchorId"];
     hoveredAlignmentIcon: AppState["hoveredAlignmentIcon"];
+    expandedAlignmentCluster: AppState["expandedAlignmentCluster"];
     alignmentResizeAnchorIds: AppState["alignmentResizeAnchorIds"];
     alignmentResizeMoverIds: AppState["alignmentResizeMoverIds"];
     // a resize is a gesture like a drag, and the alignment guides treat
@@ -591,6 +592,14 @@ export interface AppState {
    * id of its own. Transient hover affordance, so — like the anchor
    * above — deliberately not observed by the store. */
   hoveredAlignmentIcon: [number, number] | null;
+  /** centre of the badge cluster currently fanned open, if any. Badges
+   * that crowd together collapse into one counted badge; resting the
+   * pointer on it opens the others out onto a ring where each can be
+   * aimed at. Identified by position for the same reason the hover above
+   * is: clusters are derived fresh each frame, so where the thing sits is
+   * the only identity that survives between them. Transient, and likewise
+   * not observed by the store. */
+  expandedAlignmentCluster: [number, number] | null;
   /** anchors currently refusing the in-progress resize, so the anvil
    * overlay can name them. Computed where the transform handle is known
    * (`maybeHandleResize`) rather than in the renderer, which never sees
