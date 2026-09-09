@@ -254,6 +254,7 @@ export type InteractiveCanvasAppState = Readonly<
     hoveredAlignmentIcon: AppState["hoveredAlignmentIcon"];
     expandedAlignmentCluster: AppState["expandedAlignmentCluster"];
     alignmentResizeAnchorIds: AppState["alignmentResizeAnchorIds"];
+    alignmentResizeStretchAnchorIds: AppState["alignmentResizeStretchAnchorIds"];
     alignmentResizeMoverIds: AppState["alignmentResizeMoverIds"];
     // a resize is a gesture like a drag, and the alignment guides treat
     // the two alike; `alignmentResizeMoverIds` can't stand in for this,
@@ -606,6 +607,12 @@ export interface AppState {
    * it. Transient feedback, so — like the hover above — not observed by
    * the store. */
   alignmentResizeAnchorIds: readonly string[];
+  /** anchors that are *permitting* the in-progress resize but forcing a
+   * partner to stretch to get past them. Not blockers — the gesture is
+   * going through — but they are the reason an element changed size
+   * instead of moving, so they carry the anvil in its lighter form.
+   * Transient and unobserved, like the blockers above. */
+  alignmentResizeStretchAnchorIds: readonly string[];
   /** elements the in-progress resize is moving through their alignments,
    * per axis, so the guides can show the constraints doing the moving.
    * Computed alongside the anchors above and for the same reason: which

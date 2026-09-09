@@ -398,6 +398,11 @@ export type GapAlignmentGuideLine = {
 /** Key for one gap, by the pair of elements bounding it. */
 const gapPairKey = (axis: string, a: string, b: string) => `${axis}:${a}|${b}`;
 
+/** Below this a gap is two elements touching. Matches the tolerance
+ * alignment detection treats two edges as coincident at, which is the
+ * same judgement from the other side. */
+const ZERO_GAP_EPSILON = 1;
+
 export const getGapAlignmentGuideLines = (
   selectedElements: readonly NonDeletedExcalidrawElement[],
   elementsMap: NonDeletedSceneElementsMap,
@@ -430,6 +435,14 @@ export const getGapAlignmentGuideLines = (
           gapPairKey(guide.axis, guide.ids[index], guide.ids[index + 1]),
         )
       ) {
+        return;
+      }
+      // A soft chain of touching elements is not an offer worth making:
+      // there is no spacing to keep equal, and its badge would land on the
+      // shared edge, where the edge alignment's own padlock already is. A
+      // *hard* one keeps its badges even at zero, or a chain dragged shut
+      // against its own contact cap would have no way left to unlock it.
+      if (!guide.hard && gap.to - gap.from <= ZERO_GAP_EPSILON) {
         return;
       }
       // every gap sits on the one line `guide.across` gives us — see the
@@ -1074,27 +1087,39 @@ export const renderAnchorLockOverlays = (
       }
     }
   }
-  if (anchors.size === 0) {
+  // An anchor that is only forcing a partner to stretch, not refusing —
+  // shown for the same reason, in the lighter form. If one is somehow
+  // both, refusing wins: that is the more urgent thing to say.
+  const stretchAnchors = new Set(
+    appState.alignmentResizeStretchAnchorIds.filter((id) => !anchors.has(id)),
+  );
+  if (anchors.size === 0 && stretchAnchors.size === 0) {
     return;
   }
 
   const zoom = appState.zoom.value;
   context.save();
   context.translate(appState.scrollX, appState.scrollY);
-  for (const id of anchors) {
-    const el = elementsMap.get(id);
-    if (!el) {
-      continue;
+  for (const [ids, blocking] of [
+    [anchors, true],
+    [stretchAnchors, false],
+  ] as const) {
+    for (const id of ids) {
+      const el = elementsMap.get(id);
+      if (!el) {
+        continue;
+      }
+      const center = anchorIconCenter(el, elementsMap);
+      drawAnchorOverlayWarning(
+        context,
+        center[0],
+        center[1],
+        anchorIconSize(el, elementsMap, zoom),
+        appState.theme,
+        appState.zenModeEnabled,
+        blocking,
+      );
     }
-    const center = anchorIconCenter(el, elementsMap);
-    drawAnchorOverlayWarning(
-      context,
-      center[0],
-      center[1],
-      anchorIconSize(el, elementsMap, zoom),
-      appState.theme,
-      appState.zenModeEnabled,
-    );
   }
   context.restore();
 };

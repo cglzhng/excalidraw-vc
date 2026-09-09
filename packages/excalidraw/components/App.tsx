@@ -119,7 +119,7 @@ import {
   getElementAbsoluteCoords,
   lockAlignmentPair,
   unlockAlignmentPair,
-  getAlignmentAnchoredResizeBlockers,
+  getAlignmentResizeAnchorEffects,
   getGapAlignmentAnchoredResizeBlockers,
   getAlignmentResizeLockedAxes,
   getAlignmentResizeMovers,
@@ -12140,6 +12140,10 @@ class App extends React.Component<AppProps, AppState> {
           prevState.alignmentResizeAnchorIds,
           [],
         ),
+        alignmentResizeStretchAnchorIds: updateStable(
+          prevState.alignmentResizeStretchAnchorIds,
+          [],
+        ),
         // not `updateStable`: it compares shallowly, and two distinct
         // empty arrays under `x` / `y` never match, so every pointer-up
         // would hand consumers a new object saying nothing changed
@@ -14159,6 +14163,7 @@ class App extends React.Component<AppProps, AppState> {
     resizeFromCenter: boolean,
   ) => {
     let blockers = { x: new Set<string>(), y: new Set<string>() };
+    let stretchCauses = new Set<string>();
     let movers = { x: new Set<string>(), y: new Set<string>() };
 
     if (transformHandleType && transformHandleType !== "rotation") {
@@ -14173,7 +14178,7 @@ class App extends React.Component<AppProps, AppState> {
           selectedElements.length > 1 ||
           selectedElements.some((element) => element.angle !== 0),
       };
-      const edge = getAlignmentAnchoredResizeBlockers(
+      const edge = getAlignmentResizeAnchorEffects(
         resizedIds,
         elementsMap,
         edgeOpts,
@@ -14184,9 +14189,12 @@ class App extends React.Component<AppProps, AppState> {
         edgeOpts,
       );
       blockers = {
-        x: new Set([...edge.x, ...gap.x]),
-        y: new Set([...edge.y, ...gap.y]),
+        x: new Set([...edge.blockers.x, ...gap.x]),
+        y: new Set([...edge.blockers.y, ...gap.y]),
       };
+      // Not per axis: the overlay marks the element, and an anchor that
+      // forces a stretch on either axis is equally the reason for it.
+      stretchCauses = new Set([...edge.causes.x, ...edge.causes.y]);
 
       // An axis is frozen when an anchor refuses it or the constraints
       // there are over-determined — the same union `resizeElements.ts`
@@ -14219,8 +14227,10 @@ class App extends React.Component<AppProps, AppState> {
     }
 
     const nextAnchors = [...new Set([...blockers.x, ...blockers.y])];
+    const nextStretchAnchors = [...stretchCauses];
     const nextMovers = { x: [...movers.x], y: [...movers.y] };
     const current = this.state.alignmentResizeAnchorIds;
+    const currentStretch = this.state.alignmentResizeStretchAnchorIds;
     const currentMovers = this.state.alignmentResizeMoverIds;
 
     const sameIds = (next: string[], prev: readonly string[]) =>
@@ -14228,6 +14238,9 @@ class App extends React.Component<AppProps, AppState> {
 
     if (!sameIds(nextAnchors, current)) {
       this.setState({ alignmentResizeAnchorIds: nextAnchors });
+    }
+    if (!sameIds(nextStretchAnchors, currentStretch)) {
+      this.setState({ alignmentResizeStretchAnchorIds: nextStretchAnchors });
     }
     if (
       !sameIds(nextMovers.x, currentMovers.x) ||

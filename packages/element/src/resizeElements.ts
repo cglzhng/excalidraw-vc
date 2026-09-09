@@ -115,6 +115,122 @@ import type { ElementUpdate } from "./mutateElement";
  * maintained aspect ratio, where changing one dimension changes the
  * other.
  */
+/**
+ * The smallest extent a resize may leave an element with.
+ *
+ * Upstream lets a handle cross the opposite edge, flipping the element
+ * and passing a negative width or height down to be normalised further
+ * on. Alignment cannot follow that: mid-flip an element's min edge sits
+ * above its max, so every link recorded against an edge names the other
+ * one and every gap the element bounds runs backwards — the same
+ * objection the drag path makes to a chain reordering past contact.
+ *
+ * Held for **every** single-element resize rather than only for aligned
+ * ones. A handle that stops at the far edge on some shapes and folds
+ * through it on others is harder to predict than either rule on its own,
+ * and the alignment an element carries isn't visible in the gesture.
+ * Flipping stays available through the flip actions.
+ */
+const MIN_RESIZE_EXTENT = 2;
+
+const clampSizeToMinimumExtent = (size: {
+  nextWidth: number;
+  nextHeight: number;
+}) => ({
+  nextWidth: Math.max(size.nextWidth, MIN_RESIZE_EXTENT),
+  nextHeight: Math.max(size.nextHeight, MIN_RESIZE_EXTENT),
+});
+
+/**
+ * The same refusal for a multi-element resize, where neither half of it
+ * transfers directly.
+ *
+ * The **floor** is a bound on the box's *scale*, not its size: the
+ * selection scales as one, so the narrowest member reaches the minimum
+ * first, and holding the box itself at `MIN_RESIZE_EXTENT` would instead
+ * put every member far below it. Members with no extent on an axis — a
+ * vertical line has no width — are skipped rather than divided by; they
+ * are already as small as they can get and scaling can't change that.
+ *
+ * The **fold-through** can't be stopped by a floor at all. The box size
+ * is an absolute distance from the anchor, so past the crossing it grows
+ * again while `flipByX` / `flipByY` mirror the selection. Those flags are
+ * therefore what says the pointer has crossed, and the axis is pinned at
+ * its floor and the flip dropped — matching the single-element path, and
+ * for the same reason: a mirrored element has its min and max edges
+ * swapped, so every stored edge link on it reads the wrong edge from then
+ * on and jumps by the element's width.
+ */
+const clampMultiElementResize = (
+  next: {
+    nextWidth: number;
+    nextHeight: number;
+    flipByX: boolean;
+    flipByY: boolean;
+  },
+  selectedElements: readonly NonDeletedExcalidrawElement[],
+  originalElements: ElementsMap,
+  box: BoundingBox,
+  shouldMaintainAspectRatio: boolean,
+) => {
+  /** The scale at which the first member of the selection reaches the
+   * floor on this dimension, or 0 if none of them has any extent there
+   * — a vertical line never gets narrower than it already is. */
+  const minScaleFor = (dimension: "width" | "height") => {
+    let least = Infinity;
+    for (const element of selectedElements) {
+      const extent = (originalElements.get(element.id) ?? element)[dimension];
+      if (extent > 0) {
+        least = Math.min(least, extent);
+      }
+    }
+    return least === Infinity ? 0 : MIN_RESIZE_EXTENT / least;
+  };
+
+  if (shouldMaintainAspectRatio) {
+    // One scale drives both dimensions, so the floor has to be a floor on
+    // *it*: flooring the two sides independently would change the ratio
+    // the gesture exists to preserve.
+    const minScale = Math.max(minScaleFor("width"), minScaleFor("height"));
+    // That scale is the larger of two absolute ratios, so it starts
+    // growing again as soon as the pointer passes the anchor on *either*
+    // axis — and it feeds both dimensions. So a crossing anywhere pins
+    // the whole box, not just the axis whose own flag is set.
+    const scale =
+      next.flipByX || next.flipByY
+        ? minScale
+        : Math.max(
+            box.width > 0
+              ? Math.abs(next.nextWidth) / box.width
+              : box.height > 0
+              ? Math.abs(next.nextHeight) / box.height
+              : 1,
+            minScale,
+          );
+    return {
+      nextWidth: box.width * scale,
+      nextHeight: box.height * scale,
+      flipByX: false,
+      flipByY: false,
+    };
+  }
+
+  // Without a shared scale the two dimensions are read off their own
+  // axis, so each is held on its own.
+  const floorFor = (dimension: "width" | "height") =>
+    box[dimension] * minScaleFor(dimension);
+
+  return {
+    nextWidth: Math.max(next.flipByX ? 0 : next.nextWidth, floorFor("width")),
+    nextHeight: Math.max(
+      next.flipByY ? 0 : next.nextHeight,
+      floorFor("height"),
+    ),
+    flipByX: false,
+    flipByY: false,
+  };
+};
+
 const clampSizeToFrozenAlignmentAxes = (
   size: { nextWidth: number; nextHeight: number },
   original: { width: number; height: number },
@@ -198,16 +314,20 @@ export const transformElements = (
       if (latestElement && origElement) {
         const { nextWidth, nextHeight } = clampSizeToGapAlignments(
           clampSizeToFrozenAlignmentAxes(
-            getNextSingleWidthAndHeightFromPointer(
-              latestElement,
-              origElement,
-              transformHandleType,
-              pointerX,
-              pointerY,
-              {
-                shouldMaintainAspectRatio,
-                shouldResizeFromCenter,
-              },
+            // first, so nothing downstream has to reason about an
+            // element whose edges have crossed over
+            clampSizeToMinimumExtent(
+              getNextSingleWidthAndHeightFromPointer(
+                latestElement,
+                origElement,
+                transformHandleType,
+                pointerX,
+                pointerY,
+                {
+                  shouldMaintainAspectRatio,
+                  shouldResizeFromCenter,
+                },
+              ),
             ),
             origElement,
             new Set([elementId]),
@@ -280,13 +400,21 @@ export const transformElements = (
           shouldResizeFromCenter,
         },
       );
-      const { flipByX, flipByY, originalBoundingBox } = next;
+      const { originalBoundingBox } = next;
+      const held = clampMultiElementResize(
+        next,
+        selectedElements,
+        originalElements,
+        originalBoundingBox,
+        shouldMaintainAspectRatio,
+      );
+      const { flipByX, flipByY } = held;
       // The selection scales as one box, so a freeze from any member
       // holds the whole box — and a rotated member couples both
       // dimensions for everyone.
       const resizedIds = new Set(selectedElements.map((el) => el.id));
       const { nextWidth, nextHeight } = clampSizeToFrozenAlignmentAxes(
-        next,
+        held,
         originalBoundingBox,
         resizedIds,
         elementsMap,

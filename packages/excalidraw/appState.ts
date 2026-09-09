@@ -135,6 +135,7 @@ export const getDefaultAppState = (): Omit<
     hoveredAlignmentIcon: null,
     expandedAlignmentCluster: null,
     alignmentResizeAnchorIds: [],
+    alignmentResizeStretchAnchorIds: [],
     alignmentResizeMoverIds: { x: [], y: [] },
     bindMode: "orbit",
     boxSelectionMode: "contain",
@@ -283,6 +284,11 @@ const APP_STATE_STORAGE_CONF = (<
   hoveredAlignmentIcon: { browser: false, export: false, server: false },
   expandedAlignmentCluster: { browser: false, export: false, server: false },
   alignmentResizeAnchorIds: { browser: false, export: false, server: false },
+  alignmentResizeStretchAnchorIds: {
+    browser: false,
+    export: false,
+    server: false,
+  },
   alignmentResizeMoverIds: { browser: false, export: false, server: false },
   bindMode: { browser: true, export: false, server: false },
 });
