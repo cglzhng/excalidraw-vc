@@ -841,9 +841,20 @@ export const drawAnchorOverlayButton = (
   );
 };
 
-// The anchor warning shown mid-gesture on an anchored element if it is
-// blocking the drag or resize the user is attempting
-// Since it is a warning, it is always filled and thick
+// The anchor warning shown mid-gesture on an anchored element that is
+// standing in the way of the drag or resize the user is attempting.
+//
+// Always thick, and at full overlay strength either way: the element is
+// anchored in both cases, and that is what the anvil is reporting. Only
+// the *fill* carries the difference — solid when the anchor is refusing
+// the gesture outright, hollow when it is merely the reason a partner had
+// to stretch rather than move, which is a thing to know rather than a
+// thing to fix.
+//
+// Hence this doesn't route through `drawAnchorOverlay`, whose `anchored`
+// flag ties the fill to the opacity. That pairing is right for the
+// button, where hollow means "not anchored"; here it would fade an anchor
+// that is very much anchored.
 export const drawAnchorOverlayWarning = (
   context: CanvasRenderingContext2D,
   cx: number,
@@ -851,10 +862,23 @@ export const drawAnchorOverlayWarning = (
   size: number,
   theme: AppState["theme"],
   zenModeEnabled: boolean,
+  blocking = true,
 ) => {
   const color =
     theme === THEME.LIGHT || zenModeEnabled
       ? ANCHOR_WARNING_COLOR_LIGHT
       : ANCHOR_WARNING_COLOR_DARK;
-  drawAnchorOverlay(context, cx, cy, size, color, true, true);
+
+  context.save();
+  context.globalAlpha = ANCHOR_OVERLAY_OPACITY;
+  drawAnvil(
+    context,
+    cx,
+    cy,
+    size,
+    color,
+    Math.max(size * ANCHOR_LINE_RATIO_HOVER, 1),
+    blocking,
+  );
+  context.restore();
 };

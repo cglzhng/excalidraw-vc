@@ -10217,6 +10217,10 @@ class App extends React.Component<AppProps, AppState> {
           prevState.alignmentResizeAnchorIds,
           [],
         ),
+        alignmentResizeStretchAnchorIds: updateStable(
+          prevState.alignmentResizeStretchAnchorIds,
+          [],
+        ),
         // not `updateStable`: it compares shallowly, and two distinct
         // empty arrays under `x` / `y` never match, so every pointer-up
         // would hand consumers a new object saying nothing changed

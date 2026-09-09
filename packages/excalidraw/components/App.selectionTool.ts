@@ -14,7 +14,7 @@ import {
   addElementsToFrame,
   cropElement,
   dragSelectedElements,
-  getAlignmentAnchoredResizeBlockers,
+  getAlignmentResizeAnchorEffects,
   getAlignmentResizeLockedAxes,
   getAlignmentResizeMovers,
   getCommonBounds,
@@ -600,6 +600,7 @@ export class AppSelectionTool {
     resizeFromCenter: boolean,
   ) => {
     let blockers = { x: new Set<string>(), y: new Set<string>() };
+    let stretchCauses = new Set<string>();
     let movers = { x: new Set<string>(), y: new Set<string>() };
 
     if (transformHandleType && transformHandleType !== "rotation") {
@@ -614,7 +615,7 @@ export class AppSelectionTool {
           selectedElements.length > 1 ||
           selectedElements.some((element) => element.angle !== 0),
       };
-      const edge = getAlignmentAnchoredResizeBlockers(
+      const edge = getAlignmentResizeAnchorEffects(
         resizedIds,
         elementsMap,
         edgeOpts,
@@ -625,9 +626,12 @@ export class AppSelectionTool {
         edgeOpts,
       );
       blockers = {
-        x: new Set([...edge.x, ...gap.x]),
-        y: new Set([...edge.y, ...gap.y]),
+        x: new Set([...edge.blockers.x, ...gap.x]),
+        y: new Set([...edge.blockers.y, ...gap.y]),
       };
+      // Not per axis: the overlay marks the element, and an anchor that
+      // forces a stretch on either axis is equally the reason for it.
+      stretchCauses = new Set([...edge.causes.x, ...edge.causes.y]);
 
       // An axis is frozen when an anchor refuses it or the constraints
       // there are over-determined — the same union `resizeElements.ts`
@@ -660,8 +664,10 @@ export class AppSelectionTool {
     }
 
     const nextAnchors = [...new Set([...blockers.x, ...blockers.y])];
+    const nextStretchAnchors = [...stretchCauses];
     const nextMovers = { x: [...movers.x], y: [...movers.y] };
     const current = this.app.state.alignmentResizeAnchorIds;
+    const currentStretch = this.app.state.alignmentResizeStretchAnchorIds;
     const currentMovers = this.app.state.alignmentResizeMoverIds;
 
     const sameIds = (next: string[], prev: readonly string[]) =>
@@ -669,6 +675,11 @@ export class AppSelectionTool {
 
     if (!sameIds(nextAnchors, current)) {
       this.app.setState({ alignmentResizeAnchorIds: nextAnchors });
+    }
+    if (!sameIds(nextStretchAnchors, currentStretch)) {
+      this.app.setState({
+        alignmentResizeStretchAnchorIds: nextStretchAnchors,
+      });
     }
     if (
       !sameIds(nextMovers.x, currentMovers.x) ||

@@ -1089,13 +1089,21 @@ const findConsequentAlignmentChanges = (
     let followers: string[];
     if (compSelected.length > 0) {
       // Selection is authoritative: the selected element(s) were
-      // directly manipulated; any non-selected element that only
-      // translated followed via alignment. (When the user selects and
+      // directly manipulated; any non-selected element that changed
+      // geometrically followed via alignment. (When the user selects and
       // drags several aligned elements together, they're all selected,
       // so none is absorbed — each stays a top-level op.)
+      //
+      // A follower may have *resized* rather than translated: alignment
+      // stretches a partner that can't travel, so a non-selected
+      // transformer in this component is as much a consequence as a
+      // non-selected translator. Nothing else resizes an element the user
+      // never touched in a moment where one they did touch also changed.
       driverId = [...compSelected].sort()[0];
       followers = component.filter(
-        (id) => !selectedIds.has(id) && translators.has(id),
+        (id) =>
+          !selectedIds.has(id) &&
+          (translators.has(id) || transformers.has(id)),
       );
     } else if (compTransformers.length > 0) {
       // Fallback (no selection overlap): resize / rotate gesture.

@@ -16,6 +16,28 @@ point-in-time.
 
 ## Hard alignment — resize propagation
 
+**A partner that can't travel stretches, except in two cases.** A resize
+asks each partner to move first and to stretch only if an anchor in its link
+component forbids moving. Two demands have no stretched reading and stay
+refused: one landing on a partner's **centre**, since which edge should
+absorb it depends on which one the blockage pins — a question the traversal
+never asks — and one landing on a **rotated** partner, whose bounds are not
+its width and height, so an AABB-derived size change would be wrong. Both
+were refused before this existed, so neither is a regression; they are the
+cases where the old behaviour survives.
+
+**Drags still only translate.** The move-else-stretch rule is on the resize
+path alone. `getAlignmentDragFactors` carries one scalar per element, which
+is a translation by construction, so a drag blocked by an anchor still
+freezes the axis rather than stretching anything. Deliberately unresolved:
+whether a drag *should* resize other elements is a design question, not an
+oversight.
+
+**A stretched partner is not size-clamped.** `applyAlignmentDeltas` floors a
+stretched element at one unit, but nothing refuses the gesture as it
+approaches that floor, so an alignment can squash a partner to a sliver
+rather than stopping the resize the way an anchor does.
+
 **Rotated driver escapes the gap-alignment resize cap.** Resize a *rotated*
 member of a hard gap chain and its gaps run straight past zero into
 negative; every unrotated member stops at contact. `clampSizeToGapAlignments`

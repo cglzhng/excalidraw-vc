@@ -12,6 +12,7 @@ import {
   floodAlignmentAxis,
   getAlignmentDragFactors,
   getGroupMembers,
+  getTranslationBlockingAnchors,
   isAlignable,
   isAlignmentAnchor,
   resizeMovesEdge,
@@ -1018,10 +1019,26 @@ export const getGapAlignmentAnchoredResizeBlockers = (
       if (link.axis !== axis) {
         continue;
       }
-      const anchors = link.ids.filter(
-        (id) => !resizedIds.has(id) && isAlignmentAnchor(elementsMap.get(id)),
-      );
-      if (anchors.length === 0) {
+      // A member is immovable if it is anchored *or* if translating it
+      // would have to move an anchor it is edge-linked to. The correction
+      // only ever translates members, and it runs after the edge pass, so
+      // a member shifted here never gets the chance to carry its own edge
+      // partners along — the alignment to the anchor would simply break.
+      const anchors = new Set<string>();
+      for (const id of link.ids) {
+        if (resizedIds.has(id)) {
+          continue;
+        }
+        for (const anchorId of getTranslationBlockingAnchors(
+          id,
+          axis,
+          elementsMap,
+          resizedIds,
+        )) {
+          anchors.add(anchorId);
+        }
+      }
+      if (anchors.size === 0) {
         continue;
       }
       const disturbs = link.ids.some(
@@ -1140,9 +1157,9 @@ export const getGapAlignmentResizeMovers = (
  * members whose shift is already decided determine it.
  *
  * Which is why the choice of slope for a single known member is the same
- * choice the drag makes, and has to be: an *end* member takes `∓t`, which
- * pins its neighbour and steps the rest along, and an *interior* one takes
- * zero, so the chain travels rigidly. Anything else and dragging an
+ * choice the drag makes, and has to be: an *end* member pins the far end
+ * and shares its travel evenly across the gaps, and an *interior* one
+ * takes zero, so the chain travels rigidly. Anything else and dragging an
  * element would move the chain one way while resizing it moved the chain
  * another, for the same displacement of the same edge.
  *
@@ -1165,10 +1182,11 @@ const fitShiftProgression = (
   let slope: number;
   if (known.length > 1) {
     slope = (last.shift - first.shift) / (last.index - first.index);
-  } else if (first.index === 0) {
-    slope = -first.shift;
-  } else if (first.index === chainLength - 1) {
-    slope = first.shift;
+  } else if (first.index === 0 || first.index === chainLength - 1) {
+    // An end member: the *far* end holds still, so the run compresses
+    // between the two of them and every gap takes an equal share.
+    const farEnd = first.index === 0 ? chainLength - 1 : 0;
+    slope = -first.shift / (farEnd - first.index);
   } else {
     slope = 0;
   }
@@ -1225,6 +1243,10 @@ const correctGapAlignments = (
   originalElements: PointerDownState["originalElements"],
   dxById: Map<string, number>,
   dyById: Map<string, number>,
+  // Size changes the edge pass handed out, per axis. A partner that could
+  // not travel stretched instead, and a chain measures the gaps its far
+  // edge bounds — so the range has to grow with it, not just slide.
+  sizeById: { x: ReadonlyMap<string, number>; y: ReadonlyMap<string, number> },
   elementsMap: ElementsMap,
   edgePinned: { x: ReadonlySet<string>; y: ReadonlySet<string> },
 ) => {
@@ -1270,8 +1292,11 @@ const correctGapAlignments = (
    */
   const isMovable = (id: string, axis: Axis) =>
     !resizedIds.has(id) &&
-    !isAlignmentAnchor(elementsMap.get(id)) &&
-    !edgePinned[axis].has(id);
+    !edgePinned[axis].has(id) &&
+    // anchored itself, or edge-linked to something anchored: shifting it
+    // would break that alignment, since the edge pass has already run and
+    // the anchor cannot follow anyway
+    getTranslationBlockingAnchors(id, axis, elementsMap, resizedIds).size === 0;
 
   for (let pass = 0; pass < MAX_GAP_CORRECTION_PASSES; pass++) {
     let corrected = false;
@@ -1297,7 +1322,8 @@ const correctGapAlignments = (
           return null;
         }
         const delta = deltaById.get(id) ?? 0;
-        return [range[0] + delta, range[1] + delta] as const;
+        const grew = sizeById[axis].get(id) ?? 0;
+        return [range[0] + delta, range[1] + delta + grew] as const;
       });
       if (ranges.some((range) => range == null)) {
         continue;
@@ -1387,7 +1413,7 @@ export const propagateAlignmentsAfterResize = (
   scene: Scene,
 ) => {
   const elementsMap = scene.getNonDeletedElementsMap();
-  const { dxById, dyById } = buildResizeAlignmentDeltas(
+  const { dxById, dyById, dwById, dhById } = buildResizeAlignmentDeltas(
     originalElements,
     resizedIds,
     elementsMap,
@@ -1405,6 +1431,7 @@ export const propagateAlignmentsAfterResize = (
     originalElements,
     dxById,
     dyById,
+    { x: dwById, y: dhById },
     elementsMap,
     edgePinned,
   );
@@ -1418,9 +1445,20 @@ export const propagateAlignmentsAfterResize = (
   const groupMembers = getGroupMembers(elementsMap);
   const skip = (id: string) =>
     resizedIds.has(id) || isAlignmentAnchor(elementsMap.get(id));
+  // Positions only. A sibling of a member that *stretched* travels by
+  // that member's leading edge, which keeps the group's arrangement as
+  // nearly as anything can — the group's own extent changed, and there is
+  // no rigid answer to that.
   spreadAcrossGroups(dxById, groupMembers, skip);
   spreadAcrossGroups(dyById, groupMembers, skip);
-  applyAlignmentDeltas(originalElements, dxById, dyById, scene);
+  applyAlignmentDeltas(
+    originalElements,
+    dxById,
+    dyById,
+    dwById,
+    dhById,
+    scene,
+  );
 };
 
 /**
