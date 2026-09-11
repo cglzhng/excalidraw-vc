@@ -64,11 +64,10 @@ const BADGE_HOVER_HALO_OPACITY = 0.35;
  * touch, which are just as hard to aim between. */
 export const BADGE_CLUSTER_DISTANCE = 20;
 
-/** The ring a cluster's badges sit on once opened. Big enough that the
- * circumference seats them all without touching, and never so small that
- * the fan reads as one blob — {@link getBadgeFanRadius}. */
-const BADGE_FAN_MIN_RADIUS = 20;
-const BADGE_FAN_ARC_PER_BADGE = 2.4;
+/** How far apart consecutive badges sit when a cluster is opened, as a
+ * multiple of the badge radius. Comfortably over the 2 that would merely
+ * stop them touching, so the gaps read as deliberate. */
+const BADGE_FAN_SPACING = 2.6;
 
 /** The count on a collapsed cluster, as a fraction of the badge radius. */
 const BADGE_COUNT_FONT_RATIO = 1.25;
@@ -114,6 +113,14 @@ const EQUALS_GLYPH = {
   barGap: 0.26,
   /** bar weight — heavier than the rim, so the sign reads at badge size */
   barWidth: 0.2,
+} as const;
+
+/** The kept arm of a concentric pair's crosshair — a solid bar — in
+ * fractions of the badge radius. A free arm needs no constants: it is a
+ * hairline at the rim's weight, running rim to rim. */
+const CROSSHAIR_BAR = {
+  halfLength: 0.8,
+  width: 0.3,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -435,23 +442,112 @@ export const drawEqualsBadge = (
   context.restore();
 };
 
+/**
+ * The badge standing in for both centre alignments of a concentric pair:
+ * a crosshair whose arms are the two lines it replaces — the vertical arm
+ * is the shared vertical centre line (the alignment on x), the horizontal
+ * arm the horizontal one (on y).
+ *
+ * Each arm takes its own link's state, which is what lets one badge carry
+ * a pair that is only half kept — a common state, since an element held
+ * on one centre can be dragged onto the other. A free arm is a faded
+ * hairline running rim to rim, the guide line itself seen through the
+ * badge; a kept arm is a solid bar, the same mark whether its partner is
+ * kept or not. The disc fills only when every arm is kept, as a locked
+ * padlock's does, and the rim is faded only when nothing is kept at all.
+ *
+ * A lone centre alignment uses the same badge with just its own arm —
+ * pass `null` for the other — so a centre line reads the same whether or
+ * not the pair happens to be centred on the other axis too.
+ */
+export const drawCentredBadge = (
+  context: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  zoom: number,
+  color: string,
+  lockedX: boolean | null,
+  lockedY: boolean | null,
+  hovered = false,
+) => {
+  const r = INDICATOR_BADGE_RADIUS / zoom;
+  const arms = [
+    { locked: lockedX, vertical: true },
+    { locked: lockedY, vertical: false },
+  ].filter(
+    (arm): arm is { locked: boolean; vertical: boolean } => arm.locked !== null,
+  );
+  const allKept = arms.every((arm) => arm.locked);
+
+  if (hovered) {
+    drawBadgeHoverHalo(context, cx, cy, r, zoom, color);
+  }
+
+  context.save();
+  context.lineWidth = badgeLineWidth(r, zoom);
+
+  fillBadgeDisc(context, cx, cy, r, color, allKept, 1);
+
+  context.globalAlpha = arms.some((arm) => arm.locked)
+    ? 1
+    : INACTIVE_ICON_OPACITY;
+  context.strokeStyle = color;
+  context.stroke();
+
+  const glyph = badgeGlyphColor(color, allKept);
+
+  // Free arms first, so where the two cross the kept bar is on top.
+  context.globalAlpha = INACTIVE_ICON_OPACITY;
+  context.strokeStyle = glyph;
+  context.lineCap = "butt";
+  for (const { vertical } of arms.filter((arm) => !arm.locked)) {
+    context.beginPath();
+    context.moveTo(cx - (vertical ? 0 : r), cy - (vertical ? r : 0));
+    context.lineTo(cx + (vertical ? 0 : r), cy + (vertical ? r : 0));
+    context.stroke();
+  }
+
+  context.globalAlpha = 1;
+  context.fillStyle = glyph;
+  const long = r * CROSSHAIR_BAR.halfLength * 2;
+  const thick = Math.max(1 / zoom, r * CROSSHAIR_BAR.width);
+  for (const { vertical } of arms.filter((arm) => arm.locked)) {
+    const w = vertical ? thick : long;
+    const h = vertical ? long : thick;
+    context.fillRect(cx - w / 2, cy - h / 2, w, h);
+  }
+  context.restore();
+};
+
 // ---------------------------------------------------------------------------
 // Badge clusters
 // ---------------------------------------------------------------------------
 
 /**
- * How far from its anchor a cluster's badges sit once fanned out.
+ * Where the `index`th of `count` opened badges sits, as a signed distance
+ * from the cluster's centre **along that badge's own guide line**.
  *
- * Derived from the count rather than fixed, so the ring grows as it has
- * to: each badge needs a slice of arc a bit wider than itself, and
- * `2πr = n · arc` is what that costs in radius. The floor keeps a pair
- * from opening into a ring so tight it reads as the blob it replaced.
+ * Centred on zero, so a cluster opens symmetrically about the point it
+ * collapsed to rather than growing off in one direction. Every badge in a
+ * cluster takes a different index, which is what separates them: two on
+ * the same line end up a full spacing apart along it, and two on lines
+ * that cross end up displaced along different axes from nearly the same
+ * origin, which separates them just as well.
  */
-export const getBadgeFanRadius = (count: number, zoom: number): number =>
-  Math.max(
-    BADGE_FAN_MIN_RADIUS,
-    (count * INDICATOR_BADGE_RADIUS * BADGE_FAN_ARC_PER_BADGE) / (2 * Math.PI),
-  ) / zoom;
+export const getBadgeFanOffset = (
+  index: number,
+  count: number,
+  zoom: number,
+): number =>
+  ((index - (count - 1) / 2) * INDICATOR_BADGE_RADIUS * BADGE_FAN_SPACING) /
+  zoom;
+
+/** How far an opened cluster reaches from its centre — the outermost
+ * badge, its own radius, and the spread of the natural positions it was
+ * gathered from. What the pointer has to stay inside to keep it open. */
+export const getBadgeFanReach = (count: number, zoom: number): number =>
+  Math.abs(getBadgeFanOffset(0, count, zoom)) +
+  (INDICATOR_BADGE_RADIUS + BADGE_CLUSTER_DISTANCE) / zoom;
 
 /**
  * A cluster of badges too close to aim between, drawn as one badge

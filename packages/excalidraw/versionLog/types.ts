@@ -429,6 +429,55 @@ export const getOperationElementIds = (op: LogOperation): string[] => {
   }
 };
 
+/**
+ * Whether an `alignment` op is a centering — both centre alignments of a
+ * pair kept or released together, the concentric badge's gesture —
+ * rather than an ordinary edge link.
+ *
+ * The two are stored identically (a centering is just two centre links),
+ * so this is read off the links: every link the op changed is
+ * centre-to-centre, and the side of the op with more links holds centre
+ * links on *both* axes to each partner involved. That also covers
+ * locking the second half of a half-kept pair, which completes the
+ * centering just as surely as locking both at once.
+ */
+export const isCenteringAlignmentOp = (op: LogOperation): boolean => {
+  if (op.kind !== "alignment" || op.field !== "alignments") {
+    return false;
+  }
+  const key = (link: ElementAlignment) =>
+    `${link.elementId}:${link.axis}:${link.selfEdge}:${link.otherEdge}`;
+  const isCentre = (link: ElementAlignment) =>
+    link.selfEdge === "center" && link.otherEdge === "center";
+
+  let changedAny = false;
+  for (const id of op.elementIds) {
+    const before = op.before[id] ?? [];
+    const after = op.after[id] ?? [];
+    const beforeKeys = new Set(before.map(key));
+    const afterKeys = new Set(after.map(key));
+    const changed = [
+      ...before.filter((link) => !afterKeys.has(key(link))),
+      ...after.filter((link) => !beforeKeys.has(key(link))),
+    ];
+    const fuller = op.action === "lock" ? after : before;
+    for (const link of changed) {
+      const centredOn = (axis: ElementAlignment["axis"]) =>
+        fuller.some(
+          (other) =>
+            other.elementId === link.elementId &&
+            other.axis === axis &&
+            isCentre(other),
+        );
+      if (!isCentre(link) || !centredOn("x") || !centredOn("y")) {
+        return false;
+      }
+      changedAny = true;
+    }
+  }
+  return changedAny;
+};
+
 const consequentIds = (op: { consequentOps?: LogOperation[] }): string[] =>
   op.consequentOps?.flatMap((o) => getOperationElementIds(o)) ?? [];
 
