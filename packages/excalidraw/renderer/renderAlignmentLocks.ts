@@ -14,6 +14,7 @@ import {
   drawAlignmentPadlock,
   drawAnchorOverlayButton,
   drawAnchorOverlayWarning,
+  drawCentredBadge,
   drawEqualsBadge,
   drawGapEndCap,
   drawGapMidpointTicks,
@@ -21,14 +22,18 @@ import {
   drawIndicatorLineHalo,
   getAlignmentIndicatorColor,
   getAnchorIconSize,
-  getBadgeFanRadius,
+  getBadgeFanOffset,
   getIndicatorLineWidth,
   getNarrowIndicatorLineDash,
   getWideIndicatorLineDash,
 } from "./indicatorHelpers";
 
 import type { Bounds } from "@excalidraw/common";
-import type { AlignmentGuide, GapAlignmentGuide } from "@excalidraw/element";
+import type {
+  AlignmentGuide,
+  AlignmentMovers,
+  GapAlignmentGuide,
+} from "@excalidraw/element";
 import type {
   NonDeletedExcalidrawElement,
   NonDeletedSceneElementsMap,
@@ -97,12 +102,82 @@ export type AlignmentGuideLine = {
   /** inside a collapsed cluster — the line still draws, the badge does
    * not (see {@link layOutAlignmentBadges}) */
   badgeHidden?: boolean;
+  /** on the vertical line of a concentric pair — the centre alignment on
+   * x — the pair's other centre line. This line's badge is a crosshair
+   * standing for both (see {@link pairCentredGuides}). */
+  centredPartner?: AlignmentGuide;
+  /** on the other line of that pair: its badge *is* the crosshair, so it
+   * draws and hit-tests none of its own, and its `icon` tracks the
+   * crosshair's so that hovering it lights both lines */
+  badgeMerged?: boolean;
 };
+
+/**
+ * Fold the two centre alignments of a concentric pair into one badge.
+ *
+ * Two elements centred on each other share both centre lines, and both
+ * lines' midpoints are the shared centre — so their padlocks always land
+ * on one spot and always collapse into a "2". Centering is common enough
+ * to deserve better, so it gets a badge of its own: a crosshair, carried
+ * by the line on x and standing for both. The alignments themselves are
+ * untouched — still two ordinary links.
+ *
+ * Paired over the lines actually visible, so a drag that shows only one
+ * of the two draws that one's own padlock rather than half a crosshair.
+ */
+const pairCentredGuides = (
+  lines: AlignmentGuideLine[],
+): AlignmentGuideLine[] => {
+  const isCentred = (guide: AlignmentGuide) =>
+    guide.selfEdge === "center" && guide.otherEdge === "center";
+  const pairKey = (guide: AlignmentGuide) =>
+    [guide.selfId, guide.elementId].sort().join("|");
+
+  const onY = new Map<string, AlignmentGuideLine>();
+  for (const line of lines) {
+    if (line.guide.axis === "y" && isCentred(line.guide)) {
+      onY.set(pairKey(line.guide), line);
+    }
+  }
+  for (const line of lines) {
+    if (line.guide.axis !== "x" || !isCentred(line.guide)) {
+      continue;
+    }
+    const partner = onY.get(pairKey(line.guide));
+    if (partner) {
+      line.centredPartner = partner.guide;
+      partner.badgeMerged = true;
+      partner.icon = line.icon;
+    }
+  }
+  return lines;
+};
+
+/** How far a partner may overhang and still count as enclosed. Matches
+ * the tolerance alignment detection treats two edges as coincident at, so
+ * a partner flush with an edge — which is exactly the one that aligns —
+ * isn't let out by float noise. */
+const ENCLOSURE_EPSILON = 1;
+
+/** Whether `inner` lies wholly within `outer`. */
+const isEnclosedBy = (inner: Bounds, outer: Bounds): boolean =>
+  inner[0] >= outer[0] - ENCLOSURE_EPSILON &&
+  inner[1] >= outer[1] - ENCLOSURE_EPSILON &&
+  inner[2] <= outer[2] + ENCLOSURE_EPSILON &&
+  inner[3] <= outer[3] + ENCLOSURE_EPSILON;
 
 /**
  * The lines to draw for the current selection, with each line's padlock
  * position. Shared by the renderer and the pointer handler so a click
  * hit-tests exactly what is drawn.
+ *
+ * A soft guide to a partner the selected element wholly encloses is left
+ * out. Whatever sits inside a shape — its contents, a nested frame of
+ * boxes — lines up with the shape's edges and centre constantly, mostly
+ * by construction, and every one of those coincidences drawn would bury
+ * the alignments to the shape's actual neighbours. Hard ones stay: they
+ * are constraints the user chose, and the badge is the only way to
+ * release them.
  */
 export const getAlignmentGuideLines = (
   selectedElements: readonly NonDeletedExcalidrawElement[],
@@ -117,6 +192,9 @@ export const getAlignmentGuideLines = (
     }
     const boundsA = getElementBounds(self, elementsMap);
     const boundsB = getElementBounds(partner, elementsMap);
+    if (!guide.hard && isEnclosedBy(boundsB, boundsA)) {
+      continue;
+    }
 
     // The line spans the union of what each side reaches, and every point
     // either side puts on it is worth marking. Duplicates collapse (two
@@ -194,7 +272,7 @@ const isHoveredIcon = (
  * point, so three passes asking separately would be three sweeps a frame
  * for one answer that cannot have changed between them.
  */
-export type AlignmentDragMovers = { x: Set<string>; y: Set<string> };
+export type AlignmentDragMovers = AlignmentMovers;
 
 export const getAlignmentDragMovers = (
   elementsMap: NonDeletedSceneElementsMap,
@@ -210,7 +288,13 @@ export const getAlignmentDragMovers = (
 
   if (appState.isResizing) {
     const resize = appState.alignmentResizeMoverIds;
-    return { x: new Set(resize.x), y: new Set(resize.y) };
+    // a resize's anchors are published separately, by the handle-aware
+    // `maybeHandleResize`
+    return {
+      x: new Set(resize.x),
+      y: new Set(resize.y),
+      pinAnchors: { permitting: new Set(), refusing: new Set() },
+    };
   }
 
   return null;
@@ -274,17 +358,21 @@ export const getVisibleAlignmentGuideLines = (
   movers: AlignmentDragMovers | null,
 ): AlignmentGuideLine[] => {
   if (!movers) {
-    return getAlignmentGuideLines(selectedElements, elementsMap);
+    return pairCentredGuides(
+      getAlignmentGuideLines(selectedElements, elementsMap),
+    );
   }
 
-  return getAlignmentGuideLines(
-    getGuideSourceElements(elementsMap, selectedElements, movers),
-    elementsMap,
-  ).filter(
-    ({ guide }) =>
-      guide.hard &&
-      movers[guide.axis].has(guide.selfId) &&
-      movers[guide.axis].has(guide.elementId),
+  return pairCentredGuides(
+    getAlignmentGuideLines(
+      getGuideSourceElements(elementsMap, selectedElements, movers),
+      elementsMap,
+    ).filter(
+      ({ guide }) =>
+        guide.hard &&
+        movers[guide.axis].has(guide.selfId) &&
+        movers[guide.axis].has(guide.elementId),
+    ),
   );
 };
 
@@ -351,8 +439,35 @@ export const renderAlignmentLockIcons = (
   context.save();
   context.translate(appState.scrollX, appState.scrollY);
   context.setLineDash([]);
-  for (const { guide, icon, badgeHidden } of lines) {
-    if (badgeHidden) {
+  for (const { guide, icon, badgeHidden, badgeMerged, centredPartner } of lines) {
+    if (badgeHidden || badgeMerged) {
+      continue;
+    }
+    if (centredPartner) {
+      drawCentredBadge(
+        context,
+        icon[0],
+        icon[1],
+        zoom,
+        color,
+        guide.hard,
+        centredPartner.hard,
+        isHoveredIcon(appState, icon),
+      );
+      continue;
+    }
+    if (guide.selfEdge === "center" && guide.otherEdge === "center") {
+      // a lone centre alignment: the crosshair with only its own arm
+      drawCentredBadge(
+        context,
+        icon[0],
+        icon[1],
+        zoom,
+        color,
+        guide.axis === "x" ? guide.hard : null,
+        guide.axis === "y" ? guide.hard : null,
+        isHoveredIcon(appState, icon),
+      );
       continue;
     }
     drawAlignmentPadlock(
@@ -538,6 +653,10 @@ type BadgeSlot = {
   /** stable across frames, so an opened fan doesn't reshuffle */
   key: string;
   icon: [number, number];
+  /** which coordinate varies along this badge's own guide line — 0 for a
+   * line running horizontally, 1 for one running vertically. An opened
+   * badge only ever moves along this, so it never leaves its line. */
+  along: 0 | 1;
   place: (icon: [number, number] | null) => void;
 };
 
@@ -547,15 +666,26 @@ const badgeSlots = (
 ): BadgeSlot[] => {
   const slots: BadgeSlot[] = [];
   for (const line of edgeLines) {
+    if (line.badgeMerged) {
+      // placed with the crosshair it merged into, below
+      continue;
+    }
+    const merged = line.centredPartner
+      ? edgeLines.find((other) => other.guide === line.centredPartner)
+      : undefined;
     const { axis, selfId, selfEdge, elementId, otherEdge } = line.guide;
     slots.push({
       key: `e:${axis}:${selfId}:${selfEdge}:${elementId}:${otherEdge}`,
       icon: line.icon,
+      // an alignment *on* x is a line of constant x, so it runs vertically
+      along: axis === "x" ? 1 : 0,
       place: (icon) => {
-        if (icon) {
-          line.icon = icon;
-        } else {
-          line.badgeHidden = true;
+        for (const target of merged ? [line, merged] : [line]) {
+          if (icon) {
+            target.icon = icon;
+          } else {
+            target.badgeHidden = true;
+          }
         }
       },
     });
@@ -565,6 +695,10 @@ const badgeSlots = (
       slots.push({
         key: `g:${line.guide.axis}:${line.guide.ids.join(",")}:${index}`,
         icon: span.icon,
+        // a gap measured *along* x is a span running horizontally — the
+        // opposite of an edge guide on the same axis, which is what keeps
+        // the two kinds apart when they crowd together
+        along: line.guide.axis === "x" ? 0 : 1,
         place: (icon) => {
           if (icon) {
             span.icon = icon;
@@ -673,18 +807,29 @@ export const layOutAlignmentBadges = (
       continue;
     }
 
+    // Each badge slides along its *own* guide line, never off it, so what
+    // it belongs to stays readable without hovering it — which a ring
+    // around the cluster could not say, since every position on one is
+    // equally arbitrary. Two badges separate because their lines run in
+    // different directions, and two on the same line because they take
+    // different offsets along it.
+    //
+    // Measured from the cluster's centre rather than from each badge's
+    // own position: the members arrived within a badge's width of each
+    // other, so spacing them from where they happened to sit could leave
+    // a pair barely apart. Sorted by key, so an open fan keeps its
+    // arrangement as the pointer moves around it.
     const ordered = [...members].sort((a, b) =>
       slots[a].key < slots[b].key ? -1 : 1,
     );
-    const radius = getBadgeFanRadius(ordered.length, zoom);
     ordered.forEach((index, position) => {
-      // from straight up, clockwise — an arbitrary start, but a fixed one,
-      // so the same cluster always opens into the same arrangement
-      const angle = -Math.PI / 2 + (position * 2 * Math.PI) / ordered.length;
-      slots[index].place([
-        center[0] + Math.cos(angle) * radius,
-        center[1] + Math.sin(angle) * radius,
-      ]);
+      const slot = slots[index];
+      const offset = getBadgeFanOffset(position, ordered.length, zoom);
+      const icon: [number, number] = [slot.icon[0], slot.icon[1]];
+      // only the coordinate that varies along the line is rewritten; the
+      // other is the line's own, and holding it is what keeps the badge on it
+      icon[slot.along] = center[slot.along] + offset;
+      slot.place(icon);
     });
     clusters.push({ center, count: ordered.length, open: true });
   }
@@ -1062,6 +1207,10 @@ export const renderElementAlignmentLocks = (
  * held, which only `App.maybeHandleResize` knows, so it publishes the
  * answer as `alignmentResizeAnchorIds`.
  *
+ * A drag also names the anchors that pinned a gap chain in place of its
+ * default (`AlignmentMovers.pinAnchors`): outlined while the chain
+ * re-spaces around them, filled when two pins leave no solution.
+ *
  * Drawn as the *warning* anvil rather than the toggle's button form — see
  * {@link drawAnchorOverlayWarning} for why the two look different.
  */
@@ -1086,12 +1235,18 @@ export const renderAnchorLockOverlays = (
         }
       }
     }
+    movers.pinAnchors.refusing.forEach((id) => anchors.add(id));
   }
-  // An anchor that is only forcing a partner to stretch, not refusing —
-  // shown for the same reason, in the lighter form. If one is somehow
-  // both, refusing wins: that is the more urgent thing to say.
+  // An anchor that is only reshaping the gesture, not refusing it —
+  // forcing a partner to stretch during a resize, or a gap chain to
+  // re-space around it during a drag — shown for the same reason, in the
+  // lighter form. If one is somehow both, refusing wins: that is the more
+  // urgent thing to say.
   const stretchAnchors = new Set(
-    appState.alignmentResizeStretchAnchorIds.filter((id) => !anchors.has(id)),
+    [
+      ...appState.alignmentResizeStretchAnchorIds,
+      ...(movers?.pinAnchors.permitting ?? []),
+    ].filter((id) => !anchors.has(id)),
   );
   if (anchors.size === 0 && stretchAnchors.size === 0) {
     return;

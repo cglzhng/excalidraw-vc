@@ -15,7 +15,10 @@
 import React, { useMemo, useState } from "react";
 
 import { Dialog } from "./Dialog";
-import { getOperationElementIds } from "../versionLog/types";
+import {
+  getOperationElementIds,
+  isCenteringAlignmentOp,
+} from "../versionLog/types";
 
 import type {
   LogOperation,
@@ -222,7 +225,11 @@ const describeOp = (op: LogOperation): string => {
       return `Update ${ids} (raw)`;
     case "alignment":
       return `${op.action === "lock" ? "Lock" : "Unlock"} ${
-        op.field === "gapAlignments" ? "equal spacing" : "alignment"
+        op.field === "gapAlignments"
+          ? "equal spacing"
+          : isCenteringAlignmentOp(op)
+          ? "centering"
+          : "alignment"
       } (${op.elementIds.length})`;
     case "alignment-anchor":
       return `${op.anchored ? "Anchor" : "Un-Anchor"} ${ids}`;

@@ -3,6 +3,7 @@ import React, { useState } from "react";
 import {
   collectElementIdsFromGroupNode,
   getOperationElementIds,
+  isCenteringAlignmentOp,
   type LogEntry,
   type LogEntryType,
   type LogMoment,
@@ -374,7 +375,11 @@ export const renderOpContent = (op: LogOperation): React.ReactNode => {
         <>
           <strong>
             {op.action === "lock" ? "Locked" : "Unlocked"}{" "}
-            {op.field === "gapAlignments" ? "equal spacing" : "alignment"}
+            {op.field === "gapAlignments"
+              ? "equal spacing"
+              : isCenteringAlignmentOp(op)
+              ? "centering"
+              : "alignment"}
           </strong>{" "}
           of {op.elementIds.length} elements
         </>

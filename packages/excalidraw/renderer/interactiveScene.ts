@@ -2382,11 +2382,11 @@ const _renderInteractiveScene = ({
             activeEmbeddable:
               appState.activeEmbeddable?.element === element &&
               appState.activeEmbeddable.state === "active",
-            padding:
-              element.id === appState.croppingElementId ||
-              isImageElement(element)
-                ? 0
-                : undefined,
+            // On the element's own edge, not floated off it. Upstream
+            // holds it clear by `DEFAULT_TRANSFORM_HANDLE_SPACING * 2`
+            // and already drops that to nothing for images and while
+            // cropping; here every element is treated that way.
+            padding: 0,
           });
         }
       }

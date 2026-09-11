@@ -439,6 +439,36 @@ export const unlockAlignmentPair = (
 };
 
 /**
+ * Put several guides into one state in a single edit — the concentric
+ * badge's gesture, which keeps or releases both centre alignments of a
+ * pair at once. Each edit reads what the ones before it wrote: links
+ * between the same pair land on the same two elements, and the second
+ * would otherwise overwrite the first. Guides already in the requested
+ * state are left alone.
+ */
+export const setAlignmentPairsLocked = (
+  guides: readonly AlignmentGuide[],
+  lock: boolean,
+  elementsMap: ElementsMap,
+): Map<string, ExcalidrawElement> => {
+  const updated = new Map<string, ExcalidrawElement>();
+  const current: ElementsMap = new Map(elementsMap);
+  for (const guide of guides) {
+    if (guide.hard === lock) {
+      continue;
+    }
+    const edit = lock
+      ? lockAlignmentPair(guide, current)
+      : unlockAlignmentPair(guide, current);
+    for (const [id, element] of edit) {
+      current.set(id, element);
+      updated.set(id, element);
+    }
+  }
+  return updated;
+};
+
+/**
  * Whether an element holds still against alignment propagation.
  *
  * Two independent reasons, and either is sufficient:
@@ -622,19 +652,32 @@ const MAX_DRAG_FACTOR_PASSES = 8;
  * shared out across however many gaps there are, instead of each of them
  * absorbing the whole of it.
  *
+ * Both are defaults for a free `q`, and a member that cannot move takes
+ * precedence over either: an anchor, or a member edge-linked to one, is a
+ * second known factor of 0, so the chain compresses or stretches around
+ * it instead of refusing the drag. Two such members leave no line through
+ * the dragged one as well, and the drag is refused as before.
+ *
  * Edge alignments are the simple case throughout: a partner inherits its
  * neighbour's factor exactly, which is the rigid coupling they've always
  * had.
+ *
+ * Also returns the anchors behind any pin that changed the answer — ones
+ * the default would have moved — so the overlay can name what is
+ * reshaping the chain. An anchor the default already held still did
+ * nothing the user wouldn't have seen anyway — unless the chain's pins
+ * leave no solution, where every one of them is part of the reason.
  */
-export const getAlignmentDragFactors = (
+const solveAlignmentDragFactors = (
   seeds: Set<string>,
   axis: Axis,
   elementsMap: ElementsMap,
-): Map<string, number> => {
+): { factors: Map<string, number>; pinAnchors: Set<string> } => {
   const factors = new Map<string, number>();
   for (const id of seeds) {
     factors.set(id, 1);
   }
+  const pinAnchors = new Set<string>();
   const groupMembers = getGroupMembers(elementsMap);
 
   /** Edge links: a partner moves exactly as its neighbour does. */
@@ -653,6 +696,36 @@ export const getAlignmentDragFactors = (
       }
     }
     return changed;
+  };
+
+  /** What holds a member still: every anchor it can't be translated
+   * without, other than ones being dragged. Empty for a free member. */
+  const pinningAnchors = (id: string): string[] =>
+    [...getTranslationBlockingAnchors(id, axis, elementsMap)].filter(
+      (anchorId) => !seeds.has(anchorId),
+    );
+
+  /** The progression through `known` (sorted by index), with the default
+   * slope for a single known member. */
+  const fitProgression = (
+    known: readonly { index: number; factor: number }[],
+    chainLength: number,
+  ): ((index: number) => number) => {
+    const first = known[0];
+    const last = known[known.length - 1];
+    let slope: number;
+    if (known.length > 1) {
+      slope = (last.factor - first.factor) / (last.index - first.index);
+    } else if (first.index === 0 || first.index === chainLength - 1) {
+      // dragging an end: the far end holds still
+      const farEnd = first.index === 0 ? chainLength - 1 : 0;
+      slope = -first.factor / (farEnd - first.index);
+    } else {
+      // dragging from inside: the whole chain travels together
+      slope = 0;
+    }
+    const intercept = first.factor - slope * first.index;
+    return (index) => intercept + slope * index;
   };
 
   /** One pass of the progression fit over every gap chain on this axis. */
@@ -675,29 +748,50 @@ export const getAlignmentDragFactors = (
           continue;
         }
 
-        const first = known[0];
-        const last = known[known.length - 1];
-        let slope: number;
-        if (known.length > 1) {
-          slope = (last.factor - first.factor) / (last.index - first.index);
-        } else if (
-          first.index === 0 ||
-          first.index === link.ids.length - 1
-        ) {
-          // dragging an end: the far end holds still
-          const farEnd = first.index === 0 ? link.ids.length - 1 : 0;
-          slope = -first.factor / (farEnd - first.index);
-        } else {
-          // dragging from inside: the whole chain travels together
-          slope = 0;
-        }
-        const intercept = first.factor - slope * first.index;
+        // A member that can't move is a known factor of 0, so it takes
+        // over from the default pin. Written straight away: if the line
+        // through the knowns doesn't also pass through it (a second pinned
+        // member, say), the chain fails verification and the drag is
+        // refused, rather than this member being fitted somewhere it
+        // can't go.
+        const byDefault = fitProgression(known, link.ids.length);
+        const pins: { anchors: string[]; overridesDefault: boolean }[] = [];
+        link.ids.forEach((id, index) => {
+          if (factors.has(id)) {
+            return;
+          }
+          const anchors = pinningAnchors(id);
+          if (anchors.length === 0) {
+            return;
+          }
+          factors.set(id, 0);
+          known.push({ index, factor: 0 });
+          changed = true;
+          pins.push({
+            anchors,
+            overridesDefault: Math.abs(byDefault(index)) > FACTOR_EPSILON,
+          });
+        });
+        known.sort((a, b) => a.index - b.index);
 
+        const factorAt = fitProgression(known, link.ids.length);
+        // When the pins leave no solution, every one of them is part of
+        // why — including one the default would have held anyway, since
+        // without it the others could be satisfied.
+        const unsolvable = known.some(
+          ({ index, factor }) =>
+            Math.abs(factorAt(index) - factor) > FACTOR_EPSILON,
+        );
+        for (const pin of pins) {
+          if (unsolvable || pin.overridesDefault) {
+            pin.anchors.forEach((anchorId) => pinAnchors.add(anchorId));
+          }
+        }
         link.ids.forEach((id, index) => {
           if (!factors.has(id)) {
             // 0 is recorded rather than left absent, so a chain further
             // along can solve against a member that holds still
-            factors.set(id, intercept + slope * index);
+            factors.set(id, factorAt(index));
             changed = true;
           }
         });
@@ -718,8 +812,17 @@ export const getAlignmentDragFactors = (
     }
   }
 
-  return factors;
+  return { factors, pinAnchors };
 };
+
+/** How far each element travels on `axis`, as a multiple of the drag
+ * offset — see {@link solveAlignmentDragFactors}. */
+export const getAlignmentDragFactors = (
+  seeds: Set<string>,
+  axis: Axis,
+  elementsMap: ElementsMap,
+): Map<string, number> =>
+  solveAlignmentDragFactors(seeds, axis, elementsMap).factors;
 
 /**
  * Which elements move on each axis when `seeds` are dragged, following
@@ -731,25 +834,40 @@ export const getAlignmentDragFactors = (
  *
  * Membership, not distance: an element that follows at half the offset
  * has just as stale a snap point as one that follows at the full offset.
+ *
+ * Also carries the anchors that pinned a gap chain in place of its
+ * default, from the same solve: `permitting` where the drag goes through
+ * reshaped around them, `refusing` where the pins leave no solution.
  */
+export type AlignmentMovers = {
+  x: Set<string>;
+  y: Set<string>;
+  pinAnchors: { permitting: Set<string>; refusing: Set<string> };
+};
+
 export const getAlignmentMovers = (
   seeds: Set<string>,
   elementsMap: ElementsMap,
-): { x: Set<string>; y: Set<string> } => {
+): AlignmentMovers => {
+  const pinAnchors = {
+    permitting: new Set<string>(),
+    refusing: new Set<string>(),
+  };
   const moversOn = (axis: Axis) => {
+    const solved = solveAlignmentDragFactors(seeds, axis, elementsMap);
     const moving = new Set<string>();
-    for (const [id, factor] of getAlignmentDragFactors(
-      seeds,
-      axis,
-      elementsMap,
-    )) {
+    for (const [id, factor] of solved.factors) {
       if (factor !== 0) {
         moving.add(id);
       }
     }
+    const into = factorsSatisfyAlignments(solved.factors, axis, elementsMap)
+      ? pinAnchors.permitting
+      : pinAnchors.refusing;
+    solved.pinAnchors.forEach((id) => into.add(id));
     return moving;
   };
-  return { x: moversOn("x"), y: moversOn("y") };
+  return { x: moversOn("x"), y: moversOn("y"), pinAnchors };
 };
 
 /**

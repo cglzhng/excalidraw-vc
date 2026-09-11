@@ -118,6 +118,7 @@ import {
   getCommonBounds,
   getElementAbsoluteCoords,
   lockAlignmentPair,
+  setAlignmentPairsLocked,
   unlockAlignmentPair,
   getAlignmentResizeAnchorEffects,
   getGapAlignmentAnchoredResizeBlockers,
@@ -476,7 +477,7 @@ import {
   layOutAlignmentBadges,
 } from "../renderer/renderAlignmentLocks";
 import {
-  getBadgeFanRadius,
+  getBadgeFanReach,
   INDICATOR_BADGE_RADIUS,
 } from "../renderer/indicatorHelpers";
 import { MagicIcon, copyIcon, fullscreenIcon } from "./icons";
@@ -743,6 +744,10 @@ class App extends React.Component<AppProps, AppState> {
     | {
         target:
           | { kind: "guide"; guide: AlignmentGuide }
+          | {
+              kind: "centred";
+              guides: readonly [AlignmentGuide, AlignmentGuide];
+            }
           | { kind: "gap"; guide: GapAlignmentGuide }
           | { kind: "anchor"; elementId: string };
         center: [number, number];
@@ -9608,8 +9613,7 @@ class App extends React.Component<AppProps, AppState> {
     if (
       open &&
       distanceTo(open.center) <=
-        getBadgeFanRadius(open.count, this.state.zoom.value) +
-          this.alignmentIconHitRadius
+        getBadgeFanReach(open.count, this.state.zoom.value)
     ) {
       return current;
     }
@@ -9635,11 +9639,15 @@ class App extends React.Component<AppProps, AppState> {
     scenePointer: { x: number; y: number },
     layout = this.getAlignmentBadgeLayout(),
   ) {
-    const lines = (layout?.edgeLines ?? []).filter((line) => !line.badgeHidden);
+    // a merged line's badge is its partner's crosshair, hit-tested there
+    const lines = (layout?.edgeLines ?? []).filter(
+      (line) => !line.badgeHidden && !line.badgeMerged,
+    );
     const hitRadius = this.alignmentIconHitRadius;
 
     let closest: {
       guide: AlignmentGuide;
+      centredPartner?: AlignmentGuide;
       center: [number, number];
       hitRadius: number;
       dist: number;
@@ -9650,7 +9658,13 @@ class App extends React.Component<AppProps, AppState> {
         scenePointer.y - line.icon[1],
       );
       if (dist <= hitRadius && (!closest || dist < closest.dist)) {
-        closest = { guide: line.guide, center: line.icon, hitRadius, dist };
+        closest = {
+          guide: line.guide,
+          centredPartner: line.centredPartner,
+          center: line.icon,
+          hitRadius,
+          dist,
+        };
       }
     }
     return closest;
@@ -9696,7 +9710,9 @@ class App extends React.Component<AppProps, AppState> {
       return false;
     }
     this.pendingAlignmentIconPress = {
-      target: { kind: "guide", guide: hit.guide },
+      target: hit.centredPartner
+        ? { kind: "centred", guides: [hit.guide, hit.centredPartner] }
+        : { kind: "guide", guide: hit.guide },
       center: hit.center,
       hitRadius: hit.hitRadius,
     };
@@ -9714,6 +9730,32 @@ class App extends React.Component<AppProps, AppState> {
     const updated = guide.hard
       ? unlockAlignmentPair(guide, elementsMap)
       : lockAlignmentPair(guide, elementsMap);
+    if (updated.size === 0) {
+      return;
+    }
+    this.updateScene({
+      elements: this.scene
+        .getElementsIncludingDeleted()
+        .map((el) => updated.get(el.id) ?? el),
+      captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+    });
+  }
+
+  /**
+   * The concentric badge's toggle: both centre alignments of a pair at
+   * once. Fully kept, it releases both; otherwise it keeps whichever
+   * isn't yet — so on a half-kept pair a click completes the centering
+   * rather than undoing the half that was there. One capture, so one undo
+   * step / version-log moment, as `toggleAlignmentGuide` is.
+   */
+  private toggleCentredAlignment(
+    guides: readonly [AlignmentGuide, AlignmentGuide],
+  ) {
+    const updated = setAlignmentPairsLocked(
+      guides,
+      !guides.every((guide) => guide.hard),
+      this.scene.getNonDeletedElementsMap(),
+    );
     if (updated.size === 0) {
       return;
     }
@@ -9868,6 +9910,8 @@ class App extends React.Component<AppProps, AppState> {
     }
     if (press.target.kind === "guide") {
       this.toggleAlignmentGuide(press.target.guide);
+    } else if (press.target.kind === "centred") {
+      this.toggleCentredAlignment(press.target.guides);
     } else if (press.target.kind === "gap") {
       this.toggleGapAlignmentGuide(press.target.guide);
     } else {
