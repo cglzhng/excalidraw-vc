@@ -87,6 +87,7 @@ import type {
 
 import {
   getAlignmentDragMovers,
+  type AlignmentDragMovers,
   getVisibleAlignmentGuideLines,
   getVisibleGapGuideLines,
   layOutAlignmentBadges,
@@ -1437,6 +1438,11 @@ const getInFlightBinding = (
  * and selecting a shape surfaces the ends bound *to that shape* — not the
  * far ends, which belong to a relationship the user hasn't asked about.
  *
+ * Mid-gesture the same goes for every shape an alignment is *moving*:
+ * its bindings are about to drag their arrows along exactly as the
+ * selection's do, so they are marked too, and the whole set takes the
+ * active form for the length of the gesture.
+ *
  * This is the product-facing half of what Visual Debug shows as the ∞ on
  * a binding; the debug view draws both directions of the relationship
  * because it is checking them against each other, whereas here one badge
@@ -1447,6 +1453,7 @@ const renderBindingLocks = (
   appState: InteractiveCanvasAppState,
   selectedElements: readonly NonDeletedExcalidrawElement[],
   elementsMap: NonDeletedSceneElementsMap,
+  movers: AlignmentDragMovers | null,
 ) => {
   // (arrow, end) pairs to mark, deduped — a selected arrow bound to a
   // selected shape is reached from both sides. `onHandle` records whether
@@ -1494,17 +1501,8 @@ const renderBindingLocks = (
     });
   };
 
-  for (const element of selectedElements) {
-    if (element.locked) {
-      continue;
-    }
-
-    if (isArrowElement(element)) {
-      mark(element, "start", true);
-      mark(element, "end", true);
-    }
-
-    // arrows bound to this shape, via its own record of them
+  /** arrows bound to this shape, via its own record of them */
+  const markBoundArrows = (element: NonDeletedExcalidrawElement) => {
     for (const bound of element.boundElements ?? []) {
       if (bound.type !== "arrow") {
         continue;
@@ -1520,6 +1518,30 @@ const renderBindingLocks = (
         mark(arrow, "end", false);
       }
     }
+  };
+
+  for (const element of selectedElements) {
+    if (element.locked) {
+      continue;
+    }
+
+    if (isArrowElement(element)) {
+      mark(element, "start", true);
+      mark(element, "end", true);
+    }
+
+    markBoundArrows(element);
+  }
+
+  // Everything an alignment is carrying along with the selection. Only
+  // ever during a gesture: `movers` is null at rest, where an arrow bound
+  // to something the user hasn't selected is not their concern.
+  const selectedIds = new Set(selectedElements.map((element) => element.id));
+  for (const id of movers ? new Set([...movers.x, ...movers.y]) : []) {
+    const element = selectedIds.has(id) ? undefined : elementsMap.get(id);
+    if (element && !element.locked) {
+      markBoundArrows(element);
+    }
   }
 
   if (marks.size === 0) {
@@ -1530,7 +1552,15 @@ const renderBindingLocks = (
   context.translate(appState.scrollX, appState.scrollY);
   context.setLineDash([]);
 
+  // A drag or resize of the bound shape is what makes the binding *do*
+  // something — the arrow follows because of it — so the badge takes its
+  // active form for the gesture, as an alignment indicator does when the
+  // constraint it marks is the one moving things.
+  const gesturing =
+    appState.selectedElementsAreBeingDragged || appState.isResizing;
+
   for (const { arrow, type, onHandle } of marks.values()) {
+    const active = onHandle || gesturing;
     const point = LinearElementEditor.getPointAtIndexGlobalCoordinates(
       arrow,
       type === "start" ? 0 : arrow.points.length - 1,
@@ -1544,7 +1574,7 @@ const renderBindingLocks = (
       type,
       point,
       elementsMap,
-      onHandle,
+      active,
     );
 
     drawBindingPadlock(
@@ -1553,7 +1583,7 @@ const renderBindingLocks = (
       point[1],
       appState.zoom.value,
       LinearElementEditor.POINT_HANDLE_SIZE / 2,
-      onHandle,
+      active,
     );
   }
 
@@ -1608,7 +1638,7 @@ const renderMidpointBindingLeader = (
   type: "start" | "end",
   endpoint: GlobalPoint,
   elementsMap: NonDeletedSceneElementsMap,
-  onHandle: boolean,
+  active: boolean,
 ) => {
   if (isElbowArrow(arrow)) {
     return;
@@ -1637,7 +1667,7 @@ const renderMidpointBindingLeader = (
     return;
   }
 
-  drawBindingLeader(context, endpoint, port, zoom, onHandle);
+  drawBindingLeader(context, endpoint, port, zoom, active);
 };
 
 const renderFocusPointIndicator = ({
@@ -2284,6 +2314,17 @@ const _renderInteractiveScene = ({
     }
   }
 
+  // What the gesture is setting in motion, if anything — null at rest.
+  // Solved once and shared: the guides show the constraints doing the
+  // moving, the anvil overlays the anchors standing in the way, and the
+  // binding badges mark the arrows dragged along, which are three
+  // readings of the same answer.
+  const alignmentDragMovers = getAlignmentDragMovers(
+    allElementsMap,
+    selectedElements,
+    appState,
+  );
+
   // Paint selected elements
   if (
     !appState.multiElement &&
@@ -2316,7 +2357,13 @@ const _renderInteractiveScene = ({
     }
 
     // after the point handles, so a badge sits on top of the endpoint dot
-    renderBindingLocks(context, appState, selectedElements, allElementsMap);
+    renderBindingLocks(
+      context,
+      appState,
+      selectedElements,
+      allElementsMap,
+      alignmentDragMovers,
+    );
 
     const selectionColor = renderConfig.selectionColor || "#000";
 
@@ -2559,16 +2606,6 @@ const _renderInteractiveScene = ({
       context.restore();
     }
   });
-
-  // What a drag is setting in motion, if anything — null at rest. Solved
-  // once and shared: the guides show the constraints doing the moving,
-  // and the anvil overlays the anchors standing in the way, which are two
-  // readings of the same answer.
-  const alignmentDragMovers = getAlignmentDragMovers(
-    allElementsMap,
-    selectedElements,
-    appState,
-  );
 
   // The equal-gap guides are drawn below, but the snap renderer needs to
   // know which gaps they cover so it can drop its own duplicates of them.

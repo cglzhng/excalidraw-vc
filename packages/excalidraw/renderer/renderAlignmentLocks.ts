@@ -9,12 +9,11 @@ import {
 
 import {
   BADGE_CLUSTER_DISTANCE,
+  drawAlignmentBadge,
   drawAlignmentClusterBadge,
   drawAlignmentHighlight,
-  drawAlignmentPadlock,
   drawAnchorOverlayButton,
   drawAnchorOverlayWarning,
-  drawCentredBadge,
   drawEqualsBadge,
   drawGapEndCap,
   drawGapMidpointTicks,
@@ -444,7 +443,7 @@ export const renderAlignmentLockIcons = (
       continue;
     }
     if (centredPartner) {
-      drawCentredBadge(
+      drawAlignmentBadge(
         context,
         icon[0],
         icon[1],
@@ -456,27 +455,14 @@ export const renderAlignmentLockIcons = (
       );
       continue;
     }
-    if (guide.selfEdge === "center" && guide.otherEdge === "center") {
-      // a lone centre alignment: the crosshair with only its own arm
-      drawCentredBadge(
-        context,
-        icon[0],
-        icon[1],
-        zoom,
-        color,
-        guide.axis === "x" ? guide.hard : null,
-        guide.axis === "y" ? guide.hard : null,
-        isHoveredIcon(appState, icon),
-      );
-      continue;
-    }
-    drawAlignmentPadlock(
+    drawAlignmentBadge(
       context,
       icon[0],
       icon[1],
       zoom,
       color,
-      guide.hard,
+      guide.axis === "x" ? guide.hard : null,
+      guide.axis === "y" ? guide.hard : null,
       isHoveredIcon(appState, icon),
     );
   }
