@@ -43,7 +43,7 @@ export const getAlignmentIndicatorColor = (
 // ---------------------------------------------------------------------------
 
 // Radius of a round indicator badge. Exported for hit testing.
-export const INDICATOR_BADGE_RADIUS = 9;
+export const INDICATOR_BADGE_RADIUS = 8;
 
 /** The badge disc's own colour when it isn't filled with the badge's
  * colour. Also the colour a glyph inverts to. */
@@ -62,7 +62,7 @@ const BADGE_HOVER_HALO_OPACITY = 0.35;
  * is `2 * INDICATOR_BADGE_RADIUS` across, so anything under that is
  * already overlapping; a little more also catches the ones that merely
  * touch, which are just as hard to aim between. */
-export const BADGE_CLUSTER_DISTANCE = 20;
+export const BADGE_CLUSTER_DISTANCE = 18;
 
 /** How far apart consecutive badges sit when a cluster is opened, as a
  * multiple of the badge radius. Comfortably over the 2 that would merely
@@ -115,10 +115,10 @@ const EQUALS_GLYPH = {
   barWidth: 0.2,
 } as const;
 
-/** The kept arm of a concentric pair's crosshair — a solid bar — in
- * fractions of the badge radius. A free arm needs no constants: it is a
- * hairline at the rim's weight, running rim to rim. */
-const CROSSHAIR_BAR = {
+/** The kept arm of an alignment badge — a solid bar — in fractions of
+ * the badge radius. A free arm needs no constants: it is a hairline at
+ * the rim's weight, running rim to rim. */
+const ALIGNMENT_BAR = {
   halfLength: 0.8,
   width: 0.3,
 } as const;
@@ -200,6 +200,22 @@ const ANCHOR_LINE_RATIO_HOVER = 0.06;
  * to stay translucent enough to read as an annotation rather than as part
  * of the drawing. */
 const ANCHOR_OVERLAY_OPACITY = 0.6;
+
+/** The pale casing stroked under the anvil, the way a map label is cased
+ * against whatever terrain it falls on. The anvil is drawn over an
+ * element whose colour it can't know — the indicators live on their own
+ * canvas, so nothing here can sample what is underneath — and a purple
+ * silhouette on a dark fill disappears. A light edge just outside the
+ * outline is enough: on a dark element the casing is what reads, on a
+ * light one the anvil itself does.
+ *
+ * The spread is a fraction of the anvil's height, so it stays in
+ * proportion at any size, and its opacity rides on whatever the caller
+ * set — the casing is part of the mark, not a separate thing that could
+ * outlive its fade. */
+const ANCHOR_CASING_COLOR = "#ffffff";
+const ANCHOR_CASING_RATIO = 0.02;
+const ANCHOR_CASING_OPACITY = 0.6;
 
 /**
  * Anvil silhouette, as offsets from the icon's centre in units of its
@@ -359,49 +375,8 @@ const strokePadlockGlyph = (
 // ---------------------------------------------------------------------------
 
 /**
- * The padlock badge on an edge-alignment guide — the soft/hard toggle. It
- * fills when active: these are controls with two states, and a solid chip
- * says "on" without being examined.
- *
- * The other two marks in this vocabulary are deliberately different
- * shapes because they say different things: an anvil
- * ({@link drawAnchorOverlayButton}) is about one element's own weight, and
- * {@link drawEqualsBadge} is about two gaps being the same size.
- */
-export const drawAlignmentPadlock = (
-  context: CanvasRenderingContext2D,
-  cx: number,
-  cy: number,
-  zoom: number,
-  color: string,
-  locked: boolean,
-  hovered = false,
-) => {
-  const r = INDICATOR_BADGE_RADIUS / zoom;
-  const glyph = badgeGlyphColor(color, locked);
-
-  if (hovered) {
-    drawBadgeHoverHalo(context, cx, cy, r, zoom, color);
-  }
-
-  context.save();
-  context.lineWidth = badgeLineWidth(r, zoom);
-
-  fillBadgeDisc(context, cx, cy, r, color, locked, 1);
-
-  context.globalAlpha = locked ? 1 : INACTIVE_ICON_OPACITY;
-  context.strokeStyle = color;
-  context.stroke();
-
-  context.strokeStyle = glyph;
-  context.fillStyle = glyph;
-  strokePadlockGlyph(context, cx, cy, r, locked);
-  context.restore();
-};
-
-/**
  * An equals badge on a white disc — the equal-gap counterpart of
- * {@link drawAlignmentPadlock}, and its sibling in every other respect
+ * {@link drawAlignmentBadge}, and its sibling in every other respect
  * (same disc, same fill when active, same fade when not).
  */
 export const drawEqualsBadge = (
@@ -443,24 +418,29 @@ export const drawEqualsBadge = (
 };
 
 /**
- * The badge standing in for both centre alignments of a concentric pair:
- * a crosshair whose arms are the two lines it replaces — the vertical arm
- * is the shared vertical centre line (the alignment on x), the horizontal
- * arm the horizontal one (on y).
+ * The badge on an edge-alignment guide — the soft/hard toggle — drawn as
+ * the line it marks: a bar lying along the guide's own direction, so the
+ * badge says which way the alignment runs without being read. An
+ * alignment *on* x is a line of constant x, so it takes the vertical arm;
+ * one on y takes the horizontal.
  *
- * Each arm takes its own link's state, which is what lets one badge carry
- * a pair that is only half kept — a common state, since an element held
- * on one centre can be dragged onto the other. A free arm is a faded
- * hairline running rim to rim, the guide line itself seen through the
- * badge; a kept arm is a solid bar, the same mark whether its partner is
- * kept or not. The disc fills only when every arm is kept, as a locked
- * padlock's does, and the rim is faded only when nothing is kept at all.
+ * A free arm is a faded hairline running rim to rim, the guide line
+ * itself seen through the badge; a kept arm is a solid bar. The disc
+ * fills only when every arm is kept, and the rim is faded only when
+ * nothing is kept at all.
  *
- * A lone centre alignment uses the same badge with just its own arm —
- * pass `null` for the other — so a centre line reads the same whether or
- * not the pair happens to be centred on the other axis too.
+ * Usually one arm, with `null` for the other. Both are drawn for a
+ * **concentric pair**, whose two centre alignments would otherwise put
+ * two badges on the shared centre: the arms then cross, and each takes
+ * its own link's state, which is what lets one badge carry a pair that is
+ * only half kept.
+ *
+ * The other two marks in this vocabulary are deliberately different
+ * shapes because they say different things: an anvil
+ * ({@link drawAnchorOverlayButton}) is about one element's own weight,
+ * and {@link drawEqualsBadge} is about two gaps being the same size.
  */
-export const drawCentredBadge = (
+export const drawAlignmentBadge = (
   context: CanvasRenderingContext2D,
   cx: number,
   cy: number,
@@ -509,8 +489,8 @@ export const drawCentredBadge = (
 
   context.globalAlpha = 1;
   context.fillStyle = glyph;
-  const long = r * CROSSHAIR_BAR.halfLength * 2;
-  const thick = Math.max(1 / zoom, r * CROSSHAIR_BAR.width);
+  const long = r * ALIGNMENT_BAR.halfLength * 2;
+  const thick = Math.max(1 / zoom, r * ALIGNMENT_BAR.width);
   for (const { vertical } of arms.filter((arm) => arm.locked)) {
     const w = vertical ? thick : long;
     const h = vertical ? long : thick;
@@ -593,19 +573,21 @@ export const drawAlignmentClusterBadge = (
  *
  * `onHandle` is the whole difference between its two forms, and it is not
  * a style flag — it says whether the arrow itself is selected, i.e.
- * whether there is a point handle underneath. On a handle the badge is a
- * *control*: full-strength purple, a solid disc and a rim, sized to the
- * handle it covers so it reads as that control rather than as something
- * sitting over it. Looking pressable is honest there — the handle really
- * is draggable. Off a handle the same mark is pure *annotation*: the
- * washed-out purple, a translucent disc and no rim, because a stroked
+ * whether the binding is `active`. It is active when a point handle sits
+ * underneath — the arrow is selected — and also while the shape it binds
+ * is being dragged or resized, where the binding is the thing dragging
+ * the arrow along. Active, the badge is full-strength purple with a solid
+ * disc and a rim: on a handle that reads as the control it covers, and
+ * mid-gesture as a constraint doing work, which is how the alignment
+ * indicators behave too. Otherwise the same mark is pure *annotation*:
+ * the washed-out purple, a translucent disc and no rim, because a stroked
  * edge is the part of a badge that draws a border and invites a click
  * there is nothing to accept. The disc survives either way, since it is
  * what keeps the glyph readable where the arrow's own stroke runs
  * beneath.
  *
  * A binding is not an alignment, so this is deliberately not
- * {@link drawAlignmentPadlock}: purple rather than red, and it reports a
+ * {@link drawAlignmentBadge}: purple rather than red, and it reports a
  * fact rather than offering a toggle. `handleRadius` is the point
  * handle's own radius; the padding is added here.
  */
@@ -615,10 +597,10 @@ export const drawBindingPadlock = (
   cy: number,
   zoom: number,
   handleRadius: number,
-  onHandle: boolean,
+  active: boolean,
 ) => {
   const r = (handleRadius + BINDING_PADLOCK_HANDLE_PADDING) / zoom;
-  const color = onHandle ? BINDING_LOCK_COLOR : BINDING_LOCK_COLOR_PASSIVE;
+  const color = active ? BINDING_LOCK_COLOR : BINDING_LOCK_COLOR_PASSIVE;
 
   context.save();
   context.lineWidth = badgeLineWidth(r, zoom);
@@ -630,9 +612,9 @@ export const drawBindingPadlock = (
     r,
     color,
     false,
-    onHandle ? 1 : BINDING_LOCK_PASSIVE_BACKING,
+    active ? 1 : BINDING_LOCK_PASSIVE_BACKING,
   );
-  if (onHandle) {
+  if (active) {
     context.strokeStyle = color;
     context.stroke();
   }
@@ -647,16 +629,16 @@ export const drawBindingPadlock = (
  * A dashed leader from an arrow's endpoint to the edge midpoint it is
  * bound to, with a dot on the port end so it reads as pointing *at*
  * something. Coloured to match the padlock at the other end of it — same
- * `onHandle` question, same answer.
+ * `active` question, same answer.
  */
 export const drawBindingLeader = (
   context: CanvasRenderingContext2D,
   endpoint: readonly [number, number],
   port: readonly [number, number],
   zoom: number,
-  onHandle: boolean,
+  active: boolean,
 ) => {
-  const color = onHandle ? BINDING_LOCK_COLOR : BINDING_LOCK_COLOR_PASSIVE;
+  const color = active ? BINDING_LOCK_COLOR : BINDING_LOCK_COLOR_PASSIVE;
 
   context.save();
   context.strokeStyle = color;
@@ -885,6 +867,16 @@ const drawAnvil = (
     }
   });
   context.closePath();
+
+  // Cased first, so the anvil sits on top of its own outline rather than
+  // being ringed by it.
+  context.save();
+  context.globalAlpha *= ANCHOR_CASING_OPACITY;
+  context.strokeStyle = ANCHOR_CASING_COLOR;
+  context.lineWidth =
+    lineWidth + Math.max(size * ANCHOR_CASING_RATIO, 1) * 2;
+  context.stroke();
+  context.restore();
 
   if (filled) {
     context.fill();
