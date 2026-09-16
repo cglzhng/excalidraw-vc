@@ -143,6 +143,13 @@ type _ExcalidrawElementBase = Readonly<{
       reverse — test with `isAlignmentAnchor`, never this field alone.
       See `alignment.ts`. */
   alignmentLocked?: boolean;
+  /** Short, human-readable name for the element — `R3`, `A7` — assigned
+      by `shortId.ts` and shown on canvas and in the version log. Runs
+      *alongside* `id`, never instead of it: nothing keys off this, and
+      two scenes pasted together will hold the same short ids until the
+      allocator re-issues one of them. Optional because it is assigned
+      lazily, on the way into a scene. */
+  shortId?: string;
   /** epoch (ms) timestamp of last element update */
   updated: number;
   link: string | null;

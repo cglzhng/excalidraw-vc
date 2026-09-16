@@ -1,25 +1,21 @@
-import React, { useState } from "react";
+import React, { useCallback, useState } from "react";
 
 import {
   collectElementIdsFromGroupNode,
   getOperationElementIds,
-  isCenteringAlignmentOp,
+  summarizeAlignmentOp,
+  type ConsequenceReason,
+  type ConsequentOp,
   type LogEntry,
-  type LogEntryType,
   type LogMoment,
   type LogOperation,
 } from "../versionLog/types";
 
-// --------------------------- shared helpers --------------------------
+import { THEME } from "@excalidraw/common";
 
-// Colors resolve to `--vlog-*` custom properties defined in
-// `VersionLogPanel.scss` (scoped to `.VersionLogPanel`, which every
-// card renders inside). Edit the palette there, not here.
-const TYPE_COLOR: Record<LogEntryType, string> = {
-  create: "var(--vlog-type-create)",
-  update: "var(--vlog-type-update)",
-  delete: "var(--vlog-type-delete)",
-};
+import { useApp, useExcalidrawAppState } from "./App";
+
+// --------------------------- shared helpers --------------------------
 
 /**
  * Per-operation accent color, one `--vlog-op-*` variable per kind.
@@ -46,10 +42,33 @@ const OP_COLOR: Record<LogOperation["kind"], string> = {
   raw: "var(--vlog-op-raw)",
 };
 
-const formatTimestamp = (ms: number) => {
-  const d = new Date(ms);
-  return d.toLocaleTimeString();
+/**
+ * How long ago a moment was, rather than the wall-clock time it
+ * happened. A column of "6:50:19 p.m." says almost nothing — what the
+ * eye is after is how far back a change is and how much happened
+ * between one and the next, which elapsed time gives directly. The exact
+ * time stays in the tooltip.
+ *
+ * `now` is passed in so every card in a render agrees, and so the panel
+ * can refresh them together.
+ */
+const formatElapsed = (ms: number, now: number) => {
+  const seconds = Math.max(0, Math.round((now - ms) / 1000));
+  if (seconds < 10) {
+    return "just now";
+  }
+  if (seconds < 60) {
+    return `${seconds}s ago`;
+  }
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes}m ago`;
+  }
+  const hours = Math.round(minutes / 60);
+  return hours < 24 ? `${hours}h ago` : new Date(ms).toLocaleDateString();
 };
+
+const formatTimestamp = (ms: number) => new Date(ms).toLocaleString();
 
 const formatValue = (v: unknown): string => {
   if (v === undefined) {
@@ -75,10 +94,18 @@ const formatValue = (v: unknown): string => {
   }
 };
 
+/** Whole pixels, signed. Sub-pixel digits on a drag are noise: nobody
+ * placed a shape at 265.22, the pointer did. */
 const formatDelta = (n: number) => {
-  const rounded = Math.round(n * 100) / 100;
+  const rounded = Math.round(n);
   return rounded >= 0 ? `+${rounded}` : `${rounded}`;
 };
+
+/** A translation, always as the pair: every move reads the same way, so
+ * the eye can compare one row against the next without first working out
+ * which shape this one took. */
+const formatMove = (dx: number, dy: number): string =>
+  `(${formatDelta(dx)}, ${formatDelta(dy)})`;
 
 const radToDeg = (rad: number) => (rad * 180) / Math.PI;
 
@@ -90,14 +117,167 @@ const radToDeg = (rad: number) => (rad * 180) / Math.PI;
 const formatCenter = (center: readonly [number, number] | null): string =>
   center == null
     ? "—"
-    : `(${formatValue(center[0])}, ${formatValue(center[1])})`;
+    : `(${Math.round(center[0])}, ${Math.round(center[1])})`;
 
+/** An element's short id when it has one, else its type — "R3" rather
+ * than "rectangle". The prefix already says what it is, so naming the
+ * type as well would be saying it twice. */
 const formatElementLabel = (
   elementType: string | undefined,
-  count = 1,
-): string => {
-  const base = elementType ?? "element";
-  return count === 1 ? base : `${count} ${base}s`;
+  shortId?: string,
+): string => shortId ?? elementType ?? "element";
+
+/**
+ * Look an element's short id up by its real id, deleted ones included —
+ * a `delete` op names an element that is, by then, gone from the canvas
+ * but still in the scene.
+ */
+export const useShortIdOf = () => {
+  const app = useApp();
+  return useCallback(
+    (elementId: string): string | undefined =>
+      app.scene.getElementsMapIncludingDeleted().get(elementId)?.shortId,
+    [app],
+  );
+};
+
+/** "R1", "R1 and R2", "R1, R2 and R3". */
+const formatList = (items: readonly string[]): string =>
+  items.length <= 1
+    ? items[0] ?? ""
+    : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+
+/**
+ * What an alignment's edge is called on each axis.
+ *
+ * Named by edge rather than by axis: "left" says what the user did,
+ * where "horizontally" has to be decoded into which coordinate is being
+ * held equal — and the two readings of that word point opposite ways
+ * depending on whether you think about the shared line or the row the
+ * elements sit in. The middle words differ per axis for the same
+ * reason, so a centre alignment still says which one it is.
+ */
+const EDGE_WORDS: Record<"x" | "y", Record<"min" | "center" | "max", string>> = {
+  x: { min: "left", center: "center", max: "right" },
+  y: { min: "top", center: "middle", max: "bottom" },
+};
+
+// ---------------------- consequence reason marks ---------------------
+
+/**
+ * The mark on a consequent row, saying what carried the change to it.
+ *
+ * The same badges the canvas draws for these relationships, at panel
+ * size: the disc and rim, the alignment line lying along its guide's
+ * direction, the equal-gap equals sign, the binding padlock — in their
+ * own colours rather than the row's, so a badge means one thing wherever
+ * it is seen.
+ *
+ * Drawn in the canvas's *soft* form — pale disc, faded rim and glyph —
+ * even though a consequence only ever follows a hard relationship. The
+ * filled form reads as a control you could press, and nothing here is
+ * pressable: the row reports what happened rather than offering to
+ * change it.
+ *
+ * A group co-move has no canvas badge of its own — nothing on the canvas
+ * asserts it — so it takes the same disc with a dashed box, in the
+ * panel's own ink.
+ */
+/** The canvas fades an unkept badge's rim and glyph to 0.45; a little
+ * stronger here, where the badge is 13px rather than a screen-scaled
+ * one and has row text beside it to hold its own against. */
+const SOFT_BADGE_OPACITY = 0.6;
+
+const ConsequenceIcon: React.FC<{ reason: ConsequenceReason }> = ({
+  reason,
+}) => {
+  const { theme } = useExcalidrawAppState();
+  // the canvas indicator palette (`indicatorHelpers.ts`)
+  const alignment = theme === THEME.DARK ? "#ffa8a8" : "#e03131";
+  const binding = "#5e5ad8";
+  const disc = "#ffffff";
+
+  const svg = (children: React.ReactNode) => (
+    <svg width={13} height={13} viewBox="0 0 14 14" aria-hidden="true">
+      {children}
+    </svg>
+  );
+
+  switch (reason.kind) {
+    case "alignment":
+      return svg(
+        <>
+          <circle cx="7" cy="7" r="5.5" fill={disc} />
+          <g opacity={SOFT_BADGE_OPACITY} stroke={alignment} fill="none">
+            <circle cx="7" cy="7" r="5.5" />
+            {/* rim to rim, as a soft guide's line runs through its badge */}
+            <path d={reason.axis === "x" ? "M7 1.5v11" : "M1.5 7h11"} />
+          </g>
+        </>,
+      );
+    case "centering":
+      return svg(
+        <>
+          <circle cx="7" cy="7" r="5.5" fill={disc} />
+          <g opacity={SOFT_BADGE_OPACITY} stroke={alignment} fill="none">
+            <circle cx="7" cy="7" r="5.5" />
+            {/* both centre lines, crossing — the canvas badge for a
+                concentric pair */}
+            <path d="M7 1.5v11M1.5 7h11" />
+          </g>
+        </>,
+      );
+    case "gap-alignment":
+      return svg(
+        <>
+          <circle cx="7" cy="7" r="5.5" fill={disc} />
+          <g opacity={SOFT_BADGE_OPACITY} stroke={alignment} fill="none">
+            <circle cx="7" cy="7" r="5.5" />
+            <path d="M4.4 5.8h5.2M4.4 8.2h5.2" strokeWidth={1.2} />
+          </g>
+        </>,
+      );
+    case "binding":
+      return svg(
+        <>
+          <circle cx="7" cy="7" r="5.5" fill={disc} />
+          <g opacity={SOFT_BADGE_OPACITY}>
+            <circle cx="7" cy="7" r="5.5" fill="none" stroke={binding} />
+            <path
+              d="M5.3 6.6V5.5a1.7 1.7 0 0 1 3.4 0v1.1"
+              fill="none"
+              stroke={binding}
+            />
+            <rect
+              x="4.6"
+              y="6.5"
+              width="4.8"
+              height="4"
+              rx="0.6"
+              fill={binding}
+            />
+          </g>
+        </>,
+      );
+    case "group":
+      return svg(
+        <>
+          <circle cx="7" cy="7" r="5.5" fill={disc} />
+          <g opacity={SOFT_BADGE_OPACITY} stroke="currentColor" fill="none">
+            <circle cx="7" cy="7" r="5.5" />
+            <rect x="4" y="4" width="6" height="6" strokeDasharray="1.8 1.4" />
+          </g>
+        </>,
+      );
+  }
+};
+
+const CONSEQUENCE_TITLES: Record<ConsequenceReason["kind"], string> = {
+  centering: "followed a centering",
+  alignment: "followed a hard alignment",
+  "gap-alignment": "followed an equal-spacing chain",
+  binding: "followed the element it is bound to",
+  group: "moved with its group",
 };
 
 // ------------------------- raw-entry rendering ----------------------
@@ -178,38 +358,51 @@ const RawChangedProperties: React.FC<{ entry: LogEntry }> = ({ entry }) => {
  * Exported because the panel's filter banner reuses it to label the
  * click-to-filter focus op.
  */
-export const renderOpContent = (op: LogOperation): React.ReactNode => {
+export const renderOpContent = (
+  op: LogOperation,
+  shortIdOf?: (elementId: string) => string | undefined,
+): React.ReactNode => {
+  // The op's subject, wherever it keeps it — `raw` holds the id on its
+  // entry rather than on itself.
+  const subjectId =
+    "elementId" in op
+      ? op.elementId
+      : op.kind === "raw"
+      ? op.entry.elementId
+      : undefined;
+  const shortId = subjectId ? shortIdOf?.(subjectId) : undefined;
+
   switch (op.kind) {
     case "create":
       return (
         <>
-          <strong>Created</strong> {formatElementLabel(op.elementType)}
+          <strong>Created</strong> {formatElementLabel(op.elementType, shortId)}
         </>
       );
     case "delete":
       return (
         <>
-          <strong>Deleted</strong> {formatElementLabel(op.elementType)}
+          <strong>Deleted</strong> {formatElementLabel(op.elementType, shortId)}
         </>
       );
     case "move":
       return (
         <>
-          <strong>Moved</strong> {formatElementLabel(op.elementType)} by (
-          {formatDelta(op.dx)}, {formatDelta(op.dy)})
+          <strong>Moved</strong> {formatElementLabel(op.elementType, shortId)} by{" "}
+          {formatMove(op.dx, op.dy)}
         </>
       );
     case "move-group":
       return (
         <>
-          <strong>Moved group</strong> of {op.elementIds.length} by (
-          {formatDelta(op.dx)}, {formatDelta(op.dy)})
+          <strong>Moved group</strong> of {op.elementIds.length} by{" "}
+          {formatMove(op.dx, op.dy)}
         </>
       );
     case "resize":
       return (
         <>
-          <strong>Resized</strong> {formatElementLabel(op.elementType)}{" "}
+          <strong>Resized</strong> {formatElementLabel(op.elementType, shortId)}{" "}
           {Math.round(op.from.width)}×{Math.round(op.from.height)} →{" "}
           {Math.round(op.to.width)}×{Math.round(op.to.height)}
           <br />({formatValue(op.scaleX)}, {formatValue(op.scaleY)})
@@ -228,7 +421,7 @@ export const renderOpContent = (op: LogOperation): React.ReactNode => {
     case "rotate":
       return (
         <>
-          <strong>Rotated</strong> {formatElementLabel(op.elementType)}{" "}
+          <strong>Rotated</strong> {formatElementLabel(op.elementType, shortId)}{" "}
           {Math.round(radToDeg(op.from))}° → {Math.round(radToDeg(op.to))}°
           <br />
           Center: {formatCenter(op.center)}
@@ -246,7 +439,7 @@ export const renderOpContent = (op: LogOperation): React.ReactNode => {
     case "restyle":
       return (
         <>
-          <strong>Restyled</strong> {formatElementLabel(op.elementType)}{" "}
+          <strong>Restyled</strong> {formatElementLabel(op.elementType, shortId)}{" "}
           {op.property}: <code>{formatValue(op.from)}</code> →{" "}
           <code>{formatValue(op.to)}</code>
         </>
@@ -370,25 +563,57 @@ export const renderOpContent = (op: LogOperation): React.ReactNode => {
           {collectElementIdsFromGroupNode(op.group).length} elements
         </>
       );
-    case "alignment":
+    case "alignment": {
+      const summary = summarizeAlignmentOp(op);
+      const name = (id: string) => shortIdOf?.(id) ?? "an element";
+      const headline = (
+        <strong>
+          {op.action === "lock" ? "Locked" : "Unlocked"}{" "}
+          {op.field === "gapAlignments"
+            ? "equal spacing"
+            : summary?.kind === "centering"
+            ? "centering"
+            : "alignment"}
+        </strong>
+      );
+
+      if (!summary) {
+        // nothing in the diff to describe — an op recorded before this
+        // read the links, or one whose payload didn't survive a remap
+        return (
+          <>
+            {headline} of {op.elementIds.length} elements
+          </>
+        );
+      }
+      if (summary.kind === "gap") {
+        return (
+          <>
+            {headline} of {formatList(summary.ids.map(name))}{" "}
+            {summary.axis === "x" ? "horizontally" : "vertically"}
+          </>
+        );
+      }
+      if (summary.kind === "centering") {
+        return (
+          <>
+            {headline} of {name(summary.a)} and {name(summary.b)}
+          </>
+        );
+      }
       return (
         <>
-          <strong>
-            {op.action === "lock" ? "Locked" : "Unlocked"}{" "}
-            {op.field === "gapAlignments"
-              ? "equal spacing"
-              : isCenteringAlignmentOp(op)
-              ? "centering"
-              : "alignment"}
-          </strong>{" "}
-          of {op.elementIds.length} elements
+          {headline} of {name(summary.a)}{" "}
+          {EDGE_WORDS[summary.axis][summary.aEdge]} to {name(summary.b)}{" "}
+          {EDGE_WORDS[summary.axis][summary.bEdge]}
         </>
       );
+    }
     case "alignment-anchor":
       return (
         <>
           <strong>{op.anchored ? "Anchored" : "Un-Anchored"}</strong>{" "}
-          {op.elementType ?? "element"}
+          {formatElementLabel(op.elementType, shortId)}
         </>
       );
     case "raw":
@@ -401,13 +626,30 @@ export const renderOpContent = (op: LogOperation): React.ReactNode => {
               ? "Deleted"
               : "Changed"}
           </strong>{" "}
-          {formatElementLabel(op.entry.elementType)}
+          {formatElementLabel(op.entry.elementType, shortId)}
         </>
       );
   }
 };
 
 // ------------------------------ row ---------------------------------
+
+/** The per-row action, shown while the row is pointed at. Stops the
+ * click from reaching the row, whose own job is the hover preview. */
+const FilterButton: React.FC<{ onClick: () => void }> = ({ onClick }) => (
+  <button
+    type="button"
+    className="VersionLogPanel__filterButton"
+    title="Filter the log to this change and its dependencies"
+    onMouseDown={(e) => e.stopPropagation()}
+    onClick={(e) => {
+      e.stopPropagation();
+      onClick();
+    }}
+  >
+    Filter
+  </button>
+);
 
 const VersionLogOperationRow: React.FC<{
   op: LogOperation;
@@ -438,19 +680,12 @@ const VersionLogOperationRow: React.FC<{
   onHoverOperation,
   onFilterOperation,
 }) => {
-  const ids = getOperationElementIds(op);
   const color = OP_COLOR[op.kind];
-
-  // Consequence ops absorbed into this op at classification time (a bound
-  // arrow following a moved/resized/rotated element). Present only on the
-  // transform kinds; rendered as smaller, indented sub-rows so the moment
-  // still reads as "one action" while the follow-on stays visible.
-  const consequentOps: LogOperation[] =
-    (op as { consequentOps?: LogOperation[] }).consequentOps ?? [];
+  const shortIdOf = useShortIdOf();
+  // consequences are rendered by the card, in its collapsible body
 
   const handleMouseEnter = () => onHoverOperation?.(op);
   const handleMouseLeave = () => onHoverOperation?.(null);
-  const handleClick = () => onFilterOperation?.(op);
 
   // Background priority: filter focus (primary wash) > hard dep (red) >
   // soft dep (amber) > none. Hover-driven dep tints and the click-driven
@@ -464,30 +699,27 @@ const VersionLogOperationRow: React.FC<{
     : "var(--vlog-entry-bg)";
 
   return (
-    <li
+    <div
       className="VersionLogPanel__entry"
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
-      onClick={onFilterOperation ? handleClick : undefined}
-      title={
-        onFilterOperation
-          ? "Filter the log to this change and its dependencies"
-          : undefined
-      }
       style={{
-        borderLeft: `3px solid ${color}`,
-        padding: "6px 8px",
+        padding: "4px 6px",
         marginBottom: 4,
         fontSize: 12,
         fontFamily: "var(--vlog-font)",
         background,
-        cursor: onFilterOperation ? "pointer" : undefined,
         outline: isFilterFocus ? "1px solid var(--vlog-primary)" : undefined,
       }}
     >
       <div
         className="VersionLogPanel__entryHeader"
-        style={{ display: "flex", justifyContent: "space-between", gap: 8 }}
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          gap: 8,
+        }}
       >
         <span style={{ color }}>
           {isSkipped && (
@@ -503,73 +735,72 @@ const VersionLogOperationRow: React.FC<{
               ⚠
             </span>
           )}
-          {renderOpContent(op)}
+          {renderOpContent(op, shortIdOf)}
         </span>
-        <span
-          style={{ opacity: 0.5, fontFamily: "monospace", fontSize: 11 }}
-          title={ids.join(", ")}
-        >
-          {ids.length === 1 ? `${ids[0].slice(0, 8)}…` : `${ids.length} ids`}
-        </span>
+        {onFilterOperation && (
+          <FilterButton onClick={() => onFilterOperation(op)} />
+        )}
       </div>
       {op.kind === "raw" && <RawChangedProperties entry={op.entry} />}
-      {consequentOps.length > 0 && (
-        <ul
-          className="VersionLogPanel__consequents"
-          style={{ listStyle: "none", margin: "3px 0 0 0", padding: 0 }}
-        >
-          {consequentOps.map((cop, i) => (
-            <li
-              key={i}
-              className="VersionLogPanel__consequent"
-              style={{
-                display: "flex",
-                alignItems: "baseline",
-                gap: 4,
-                marginTop: 2,
-                marginLeft: 14,
-                paddingLeft: 6,
-                borderLeft: `2px solid ${OP_COLOR[cop.kind]}`,
-                fontSize: 10.5,
-                lineHeight: 1.3,
-                // Muted + smaller so it reads as a secondary detail of the
-                // parent op rather than a peer operation.
-                opacity: 0.7,
-                color: OP_COLOR[cop.kind],
-              }}
-            >
-              <span aria-hidden="true" style={{ opacity: 0.6 }}>
-                ↳
-              </span>
-              <span>{renderOpContent(cop)}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </li>
+    </div>
   );
 };
 
-// --------------------------- count chips ----------------------------
+/**
+ * One consequence, in the card's collapsible body: the badge for the
+ * relationship that carried the change, then what that change was.
+ *
+ * Clickable like any other row — a consequence is an op, and "show me
+ * everything around this" is as reasonable a question of a follower as
+ * of the thing that drove it.
+ */
+const VersionLogConsequentRow: React.FC<{
+  op: ConsequentOp;
+  onHoverOperation?: (op: LogOperation | null) => void;
+  onFilterOperation?: (op: LogOperation) => void;
+  isFilterFocus?: boolean;
+}> = ({ op, onHoverOperation, onFilterOperation, isFilterFocus }) => {
+  const shortIdOf = useShortIdOf();
+  const reason = op.consequenceReason;
 
-const CountChip: React.FC<{
-  n: number;
-  type: LogEntryType;
-  symbol: string;
-}> = ({ n, type, symbol }) => {
-  if (n === 0) {
-    return null;
-  }
   return (
-    <span
+    <div
+      className="VersionLogPanel__consequent"
+      onMouseEnter={() => onHoverOperation?.(op)}
+      onMouseLeave={() => onHoverOperation?.(null)}
+      title={reason ? CONSEQUENCE_TITLES[reason.kind] : undefined}
       style={{
-        color: TYPE_COLOR[type],
-        fontVariantNumeric: "tabular-nums",
+        display: "flex",
+        alignItems: "center",
+        gap: 5,
+        padding: "2px 4px",
+        fontSize: 10.5,
+        lineHeight: 1.3,
+        // Muted + smaller so it reads as a consequence of the card's op
+        // rather than a peer of it.
+        opacity: 0.75,
+        color: OP_COLOR[op.kind],
+        borderRadius: 3,
+        outline: isFilterFocus ? "1px solid var(--vlog-primary)" : undefined,
+        background: isFilterFocus ? "var(--vlog-focus-bg)" : undefined,
       }}
     >
-      {symbol}
-      {n}
-    </span>
+      <span style={{ flex: "0 0 auto", display: "inline-flex" }}>
+        {reason ? (
+          <ConsequenceIcon reason={reason} />
+        ) : (
+          // reason unknown — an op recorded before this was tracked, or
+          // one whose cause didn't survive a remap
+          <span aria-hidden="true">↳</span>
+        )}
+      </span>
+      <span style={{ flex: "1 1 auto", minWidth: 0 }}>
+        {renderOpContent(op, shortIdOf)}
+      </span>
+      {onFilterOperation && (
+        <FilterButton onClick={() => onFilterOperation(op)} />
+      )}
+    </div>
   );
 };
 
@@ -585,6 +816,9 @@ export const VersionLogMomentCard: React.FC<{
   isCurrent: boolean;
   /** True when this moment is selectively deactivated. */
   isInactive: boolean;
+  /** The panel's clock, so every card's elapsed time agrees and they
+   * can be refreshed together. */
+  now: number;
   /** Debug: ops that are HARD dependencies of the hovered op. */
   hardDeps?: Set<LogOperation>;
   /** Debug: ops that are SOFT dependencies of the hovered op. */
@@ -606,6 +840,7 @@ export const VersionLogMomentCard: React.FC<{
   moment,
   isCurrent,
   isInactive,
+  now,
   hardDeps,
   softDeps,
   skippedOps,
@@ -620,13 +855,32 @@ export const VersionLogMomentCard: React.FC<{
 
   const toggle = () => setIsExpanded((v) => !v);
 
+  const consequentsOf = (op: LogOperation): ConsequentOp[] =>
+    (op as { consequentOps?: ConsequentOp[] }).consequentOps ?? [];
+
   // When a filter is active, show only the matching ops and keep the
   // card open regardless of the local collapse state — the user is
-  // focused on this dependency neighbourhood.
+  // focused on this dependency neighbourhood. An op whose *consequence*
+  // matches is kept too, since that consequence is the thing to show.
   const visibleOps = filterOps
-    ? moment.operations.filter((op) => filterOps.has(op))
+    ? moment.operations.filter(
+        (op) =>
+          filterOps.has(op) ||
+          consequentsOf(op).some((cop) => filterOps.has(cop)),
+      )
     : moment.operations;
-  const showOps = isExpanded || filterOps != null;
+
+  // A moment is one user action, so its first op is what the card is
+  // about; anything else it holds, and every consequence of any of them,
+  // is detail about that action and lives in the body.
+  const [primaryOp, ...otherOps] = visibleOps;
+  const consequents = visibleOps.flatMap((op) =>
+    consequentsOf(op).filter(
+      (cop) => !filterOps || filterOps.has(cop) || filterOps.has(op),
+    ),
+  );
+  const hasBody = otherOps.length > 0 || consequents.length > 0;
+  const showBody = hasBody && (isExpanded || filterOps != null);
 
   const handleJump = (e: React.MouseEvent) => {
     // don't toggle the card when clicking the button
@@ -660,25 +914,13 @@ export const VersionLogMomentCard: React.FC<{
     >
       <div
         className="VersionLogPanel__incrementHeader"
-        aria-expanded={isExpanded}
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 8,
-          width: "100%",
-          marginBottom: isExpanded ? 6 : 0,
-          padding: "2px 4px",
-          fontSize: 11,
-          fontWeight: 600,
-          borderRadius: 4,
-          boxSizing: "border-box",
-        }}
+        style={{ display: "flex", alignItems: "flex-start", gap: 4 }}
       >
-        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        {hasBody && (
           <button
             type="button"
             aria-label="Toggle"
+            aria-expanded={isExpanded}
             onClick={toggle}
             style={{
               background: "none",
@@ -687,7 +929,9 @@ export const VersionLogMomentCard: React.FC<{
               alignItems: "center",
               justifyContent: "center",
               width: 10,
+              marginTop: 6,
               padding: 0,
+              flex: "0 0 auto",
               transition: "transform 120ms ease",
               transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
               opacity: 0.6,
@@ -709,9 +953,70 @@ export const VersionLogMomentCard: React.FC<{
               />
             </svg>
           </button>
-          <CountChip n={moment.counts.create} type="create" symbol="+" />
-          <CountChip n={moment.counts.update} type="update" symbol="~" />
-          <CountChip n={moment.counts.delete} type="delete" symbol="−" />
+        )}
+        <div style={{ flex: "1 1 auto", minWidth: 0 }}>
+          {primaryOp && (
+            <VersionLogOperationRow
+              op={primaryOp}
+              isHardDep={hardDeps?.has(primaryOp)}
+              isSoftDep={softDeps?.has(primaryOp)}
+              isSkipped={skippedOps?.has(primaryOp)}
+              isFilterFocus={focusOp === primaryOp}
+              onHoverOperation={onHoverOperation}
+              onFilterOperation={onFilterOperation}
+            />
+          )}
+        </div>
+      </div>
+      {showBody && (
+        <div
+          className="VersionLogPanel__consequents"
+          style={{ marginLeft: 14, marginTop: 2 }}
+        >
+          {otherOps.map((op, i) => (
+            <VersionLogOperationRow
+              key={`op-${i}`}
+              op={op}
+              isHardDep={hardDeps?.has(op)}
+              isSoftDep={softDeps?.has(op)}
+              isSkipped={skippedOps?.has(op)}
+              isFilterFocus={focusOp === op}
+              onHoverOperation={onHoverOperation}
+              onFilterOperation={onFilterOperation}
+            />
+          ))}
+          {consequents.map((cop, i) => (
+            <VersionLogConsequentRow
+              key={`consequent-${i}`}
+              op={cop}
+              isFilterFocus={focusOp === cop}
+              onHoverOperation={onHoverOperation}
+              onFilterOperation={onFilterOperation}
+            />
+          ))}
+        </div>
+      )}
+      <div
+        className="VersionLogPanel__incrementFooter"
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 8,
+          width: "100%",
+          marginTop: 4,
+          padding: "2px 4px",
+          fontSize: 11,
+          fontWeight: 600,
+          borderRadius: 4,
+          boxSizing: "border-box",
+        }}
+      >
+        <span
+          style={{ opacity: 0.6, fontWeight: 400 }}
+          title={formatTimestamp(moment.timestamp)}
+        >
+          {formatElapsed(moment.timestamp, now)}
         </span>
         <span
           style={{
@@ -722,10 +1027,12 @@ export const VersionLogMomentCard: React.FC<{
             fontWeight: 400,
           }}
         >
-          <span>{formatTimestamp(moment.timestamp)}</span>
           {onToggleActive && (
             <button
               type="button"
+              className={`VersionLogPanel__cardButton${
+                isInactive ? "" : " VersionLogPanel__cardButton--danger"
+              }`}
               onClick={handleToggleActive}
               title={
                 isInactive
@@ -733,18 +1040,6 @@ export const VersionLogMomentCard: React.FC<{
                   : "Skip this change during replay (selective undo)"
               }
               onMouseDown={(e) => e.stopPropagation()}
-              style={{
-                all: "unset",
-                cursor: "pointer",
-                padding: "2px 6px",
-                fontSize: 10,
-                fontWeight: 600,
-                color: isInactive ? "var(--vlog-primary)" : "var(--vlog-danger)",
-                border: `1px solid ${
-                  isInactive ? "var(--vlog-primary)" : "var(--vlog-danger)"
-                }`,
-                borderRadius: 4,
-              }}
             >
               {isInactive ? "Restore" : "Skip"}
             </button>
@@ -766,19 +1061,10 @@ export const VersionLogMomentCard: React.FC<{
             onJump && (
               <button
                 type="button"
+                className="VersionLogPanel__cardButton"
                 onClick={handleJump}
                 title="Jump the document to this point"
                 onMouseDown={(e) => e.stopPropagation()}
-                style={{
-                  all: "unset",
-                  cursor: "pointer",
-                  padding: "2px 6px",
-                  fontSize: 10,
-                  fontWeight: 600,
-                  color: "var(--vlog-primary)",
-                  border: "1px solid var(--vlog-primary)",
-                  borderRadius: 4,
-                }}
               >
                 Jump
               </button>
@@ -786,22 +1072,6 @@ export const VersionLogMomentCard: React.FC<{
           )}
         </span>
       </div>
-      {showOps && (
-        <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-          {visibleOps.map((op, i) => (
-            <VersionLogOperationRow
-              key={i}
-              op={op}
-              isHardDep={hardDeps?.has(op)}
-              isSoftDep={softDeps?.has(op)}
-              isSkipped={skippedOps?.has(op)}
-              isFilterFocus={focusOp === op}
-              onHoverOperation={onHoverOperation}
-              onFilterOperation={onFilterOperation}
-            />
-          ))}
-        </ul>
-      )}
     </li>
   );
 };

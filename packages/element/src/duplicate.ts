@@ -75,6 +75,12 @@ export const duplicateElement = <TElement extends ExcalidrawElement>(
 
   copy.id = randomId();
   copy.updated = getUpdatedTimestamp();
+  // A copy is a new element, not a new member of the original's
+  // constraints. Its links would name the original's partners, which hold
+  // no link back, leaving it one-sidedly locked to shapes it was never
+  // aligned with. The anchor flag is the element's own, so it stays.
+  delete copy.alignments;
+  delete copy.gapAlignments;
   if (randomizeSeed) {
     copy.seed = randomInteger();
     bumpVersion(copy);

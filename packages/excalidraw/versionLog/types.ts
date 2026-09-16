@@ -146,7 +146,7 @@ export type LogOperation =
        * the arrow's dependent geometry when applying this op forward
        * or backward. See `versionLog/consequences.ts`.
        */
-      consequentOps?: LogOperation[];
+      consequentOps?: ConsequentOp[];
     }
   | {
       kind: "move-group";
@@ -166,7 +166,7 @@ export type LogOperation =
       dx: number;
       dy: number;
       transform: TransformMatrix;
-      consequentOps?: LogOperation[];
+      consequentOps?: ConsequentOp[];
     }
   | {
       kind: "resize";
@@ -186,7 +186,7 @@ export type LogOperation =
        */
       center: readonly [number, number] | null;
       transform: TransformMatrix;
-      consequentOps?: LogOperation[];
+      consequentOps?: ConsequentOp[];
     }
   | {
       kind: "resize-group";
@@ -196,7 +196,7 @@ export type LogOperation =
       scaleY: number;
       center: readonly [number, number] | null;
       transform: TransformMatrix;
-      consequentOps?: LogOperation[];
+      consequentOps?: ConsequentOp[];
     }
   | {
       kind: "rotate";
@@ -214,7 +214,7 @@ export type LogOperation =
        */
       center: readonly [number, number] | null;
       transform: TransformMatrix;
-      consequentOps?: LogOperation[];
+      consequentOps?: ConsequentOp[];
     }
   | {
       kind: "rotate-group";
@@ -223,7 +223,7 @@ export type LogOperation =
       angle: number;
       center: readonly [number, number] | null;
       transform: TransformMatrix;
-      consequentOps?: LogOperation[];
+      consequentOps?: ConsequentOp[];
     }
   // Style -------------------------------------------------------------
   | {
@@ -399,6 +399,28 @@ export type LogOperation =
  * Return every element id touched by the operation. Used by the panel
  * for hover-highlight (so hovering a "moved group" outlines all members).
  */
+/**
+ * Why a consequent op happened — which relationship carried the change
+ * from the op that caused it to the element that followed.
+ *
+ * Recorded at classification time, where the graph that found the
+ * consequence still knows which kind of edge it travelled along; by the
+ * time the panel has the op, the elements' links may have changed or
+ * gone. The axis rides along so the panel can show the alignment the
+ * user would recognise rather than a generic one.
+ */
+export type ConsequenceReason =
+  | { kind: "binding" }
+  | { kind: "centering" }
+  | { kind: "alignment"; axis: "x" | "y" }
+  | { kind: "gap-alignment"; axis: "x" | "y" }
+  | { kind: "group" };
+
+/** An op absorbed into the one that caused it, with that cause named. */
+export type ConsequentOp = LogOperation & {
+  consequenceReason?: ConsequenceReason;
+};
+
 export const getOperationElementIds = (op: LogOperation): string[] => {
   switch (op.kind) {
     case "create":
@@ -478,7 +500,85 @@ export const isCenteringAlignmentOp = (op: LogOperation): boolean => {
   return changedAny;
 };
 
-const consequentIds = (op: { consequentOps?: LogOperation[] }): string[] =>
+/**
+ * What an `alignment` op actually did, read off the links it changed:
+ * which elements, on which axis, at which edges.
+ *
+ * The op itself carries only the before/after link arrays, since that is
+ * what replay needs — the *description* is a diff of them. Both partners
+ * record the change reciprocally, so the first owner with a changed link
+ * names the whole thing.
+ */
+export type AlignmentOpSummary =
+  | {
+      kind: "edge" | "centering";
+      a: string;
+      b: string;
+      axis: ElementAlignment["axis"];
+      aEdge: ElementAlignment["selfEdge"];
+      bEdge: ElementAlignment["otherEdge"];
+    }
+  | { kind: "gap"; ids: readonly string[]; axis: ElementGapAlignment["axis"] }
+  | null;
+
+export const summarizeAlignmentOp = (op: LogOperation): AlignmentOpSummary => {
+  if (op.kind !== "alignment") {
+    return null;
+  }
+
+  // The side with more links holds the one that changed: added by a
+  // lock, removed by an unlock. Written per branch rather than once
+  // above, so each sees the link type its own field carries.
+  if (op.field === "gapAlignments") {
+    const sides = (id: string) => {
+      const before = op.before[id] ?? [];
+      const after = op.after[id] ?? [];
+      return op.action === "lock"
+        ? { fuller: after, leaner: before }
+        : { fuller: before, leaner: after };
+    };
+    const key = (link: ElementGapAlignment) =>
+      `${link.axis}:${link.ids.join(",")}`;
+    for (const id of op.elementIds) {
+      const { fuller, leaner } = sides(id);
+      const seen = new Set(leaner.map(key));
+      const changed = fuller.find((link) => !seen.has(key(link)));
+      if (changed) {
+        return { kind: "gap", ids: changed.ids, axis: changed.axis };
+      }
+    }
+    return null;
+  }
+
+  const sides = (id: string) => {
+    const before = op.before[id] ?? [];
+    const after = op.after[id] ?? [];
+    return op.action === "lock"
+      ? { fuller: after, leaner: before }
+      : { fuller: before, leaner: after };
+  };
+  const key = (link: ElementAlignment) =>
+    `${link.elementId}:${link.axis}:${link.selfEdge}:${link.otherEdge}`;
+  const centering = isCenteringAlignmentOp(op);
+  for (const id of op.elementIds) {
+    const { fuller, leaner } = sides(id);
+    const seen = new Set(leaner.map(key));
+    const changed = fuller.find((link) => !seen.has(key(link)));
+    if (changed) {
+      return {
+        kind: centering ? "centering" : "edge",
+        a: id,
+        b: changed.elementId,
+        axis: changed.axis,
+        aEdge: changed.selfEdge,
+        bEdge: changed.otherEdge,
+      };
+    }
+  }
+  return null;
+};
+
+const consequentIds = (op: { consequentOps?: ConsequentOp[] }): string[] =>
   op.consequentOps?.flatMap((o) => getOperationElementIds(o)) ?? [];
 
 export interface LogMoment {

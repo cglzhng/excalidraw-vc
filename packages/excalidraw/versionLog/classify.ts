@@ -20,6 +20,8 @@ import { buildGroupNodeFromEntries, getParentGroupId } from "./groupTree";
 
 import type {
   ArrowBinding,
+  ConsequenceReason,
+  ConsequentOp,
   LogEntry,
   LogOperation,
   LogPropertyMap,
@@ -34,12 +36,23 @@ import type { TransformMatrix } from "./transform";
  * `boundElements` is included here because upstream's emit of this
  * field is unreliable. Instead, we use the `endBinding / startBinding` fields
  * from the arrow element itself to determine if it was changed.
+ *
+ * `shortId` is a name the scene hands the element on the way in (see
+ * `shortId.ts`), not something the user did — an increment carrying only
+ * that is not a moment.
+ *
+ * `moveMidPointsWithElement` isn't element data at all: it is an option
+ * to `LinearElementEditor.movePoints`, which `_updatePoints` spreads into
+ * the element along with the real updates, so it lands on every arrow
+ * whose points move. Nothing reads it back.
  */
 const TRACKING_PROPS = new Set([
   "version",
   "versionNonce",
   "index",
   "boundElements",
+  "shortId",
+  "moveMidPointsWithElement",
 ]);
 
 /**
@@ -95,12 +108,13 @@ export const classifyEntries = (
     Array.from(arrowConsequences.values()).flat(),
   );
 
-  const alignmentConsequences = findConsequentAlignmentChanges(
-    entries,
-    changedElements,
-    arrowConsumed,
-    selectedElementIds,
-  );
+  const { followers: alignmentConsequences, reasons: consequenceReasons } =
+    findConsequentAlignmentChanges(
+      entries,
+      changedElements,
+      arrowConsumed,
+      selectedElementIds,
+    );
 
   // An alignment follower can itself be the cause of an arrow change:
   // the user drags A, hard-aligned B follows, and an arrow bound to B
@@ -188,8 +202,18 @@ export const classifyEntries = (
     const existing = consequences.get(target) ?? [];
     existing.push(...list);
     consequences.set(target, existing);
+    // an arrow only ever follows because it is bound, whichever driver
+    // it ends up filed under
+    for (const entry of list) {
+      consequenceReasons.set(entry.elementId, { kind: "binding" });
+    }
   }
-  attachConsequences(finalOps, consequences, changedElements);
+  attachConsequences(
+    finalOps,
+    consequences,
+    changedElements,
+    consequenceReasons,
+  );
 
   // [version-log] debug: dump the classified operations so the shape of
   // each classification can be inspected alongside the raw delta log.
@@ -957,12 +981,29 @@ const groupOf = (
     ? element.groupIds[element.groupIds.length - 1]
     : undefined;
 
+/** Which relationship wins when a pair is coupled more than one way —
+ * two elements can be aligned *and* grouped, and the alignment is the
+ * more specific thing to say. */
+const REASON_RANK: Record<ConsequenceReason["kind"], number> = {
+  binding: 0,
+  // above a single-axis alignment: a concentric pair is held by both of
+  // its centre links, and naming one of them would be picking whichever
+  // happened to be stored first
+  centering: 1,
+  alignment: 2,
+  "gap-alignment": 3,
+  group: 4,
+};
+
 const findConsequentAlignmentChanges = (
   entries: readonly LogEntry[],
   changedElements: Record<string, OrderedExcalidrawElement>,
   excluded: Set<LogEntry>,
   selectedIds: ReadonlySet<string>,
-): Map<string, LogEntry[]> => {
+): {
+  followers: Map<string, LogEntry[]>;
+  reasons: Map<string, ConsequenceReason>;
+} => {
   const entryById = new Map<string, LogEntry>();
   const transformers = new Set<string>(); // resize / rotate → definite driver
   const translators = new Set<string>(); // pure x/y → follower or move-driver
@@ -1002,25 +1043,51 @@ const findConsequentAlignmentChanges = (
 
   const inPlay = new Set<string>([...transformers, ...translators]);
   if (inPlay.size < 2) {
-    return new Map();
+    return { followers: new Map(), reasons: new Map() };
   }
 
   // Undirected alignment adjacency, restricted to elements that changed
-  // geometrically this moment.
-  const adjacency = new Map<string, Set<string>>();
-  const addEdge = (a: string, b: string) => {
-    let set = adjacency.get(a);
-    if (!set) {
-      set = new Set();
-      adjacency.set(a, set);
+  // geometrically this moment. Each edge carries the relationship that
+  // made it, so a follower can say *why* it moved and not merely that it
+  // was connected to something that did.
+  const adjacency = new Map<string, Map<string, ConsequenceReason>>();
+  const addEdge = (a: string, b: string, reason: ConsequenceReason) => {
+    let edges = adjacency.get(a);
+    if (!edges) {
+      edges = new Map();
+      adjacency.set(a, edges);
     }
-    set.add(b);
+    const existing = edges.get(b);
+    if (!existing || REASON_RANK[reason.kind] < REASON_RANK[existing.kind]) {
+      edges.set(b, reason);
+    }
+  };
+  const addPair = (a: string, b: string, reason: ConsequenceReason) => {
+    addEdge(a, b, reason);
+    addEdge(b, a, reason);
   };
   for (const id of inPlay) {
+    // A partner centred on both axes is one relationship, not two — the
+    // pair the canvas draws as a crosshair — so it is reported as
+    // `centering` rather than as whichever of its two links is stored
+    // first.
+    const centredOn = new Map<string, Set<"x" | "y">>();
+    for (const link of changedElements[id]?.alignments ?? []) {
+      if (link.selfEdge === "center" && link.otherEdge === "center") {
+        const axes = centredOn.get(link.elementId) ?? new Set();
+        axes.add(link.axis);
+        centredOn.set(link.elementId, axes);
+      }
+    }
     for (const link of changedElements[id]?.alignments ?? []) {
       if (inPlay.has(link.elementId)) {
-        addEdge(id, link.elementId);
-        addEdge(link.elementId, id);
+        addPair(
+          id,
+          link.elementId,
+          centredOn.get(link.elementId)?.size === 2
+            ? { kind: "centering" }
+            : { kind: "alignment", axis: link.axis },
+        );
       }
     }
     // A gap chain couples every one of its members, so every pair of
@@ -1033,8 +1100,7 @@ const findConsequentAlignmentChanges = (
     for (const link of changedElements[id]?.gapAlignments ?? []) {
       for (const memberId of link.ids) {
         if (memberId !== id && inPlay.has(memberId)) {
-          addEdge(id, memberId);
-          addEdge(memberId, id);
+          addPair(id, memberId, { kind: "gap-alignment", axis: link.axis });
         }
       }
     }
@@ -1049,14 +1115,14 @@ const findConsequentAlignmentChanges = (
     if (groupId) {
       for (const memberId of inPlay) {
         if (memberId !== id && groupOf(changedElements[memberId]) === groupId) {
-          addEdge(id, memberId);
-          addEdge(memberId, id);
+          addPair(id, memberId, { kind: "group" });
         }
       }
     }
   }
 
   const consequences = new Map<string, LogEntry[]>();
+  const reasons = new Map<string, ConsequenceReason>();
   const seen = new Set<string>();
   for (const start of inPlay) {
     if (seen.has(start)) {
@@ -1069,7 +1135,7 @@ const findConsequentAlignmentChanges = (
     while (stack.length > 0) {
       const id = stack.pop()!;
       component.push(id);
-      for (const neighbor of adjacency.get(id) ?? []) {
+      for (const neighbor of adjacency.get(id)?.keys() ?? []) {
         if (!seen.has(neighbor)) {
           seen.add(neighbor);
           stack.push(neighbor);
@@ -1118,6 +1184,24 @@ const findConsequentAlignmentChanges = (
       continue;
     }
 
+    // Why each follower moved: the kind of edge it was first reached on
+    // walking out from the driver. Breadth-first, so that edge is the
+    // last link of a shortest chain from the driver — the relationship
+    // the follower itself is held by, rather than one further upstream.
+    const reasonOf = new Map<string, ConsequenceReason>();
+    const queue = [driverId];
+    const visited = new Set<string>([driverId]);
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      for (const [neighbor, reason] of adjacency.get(id) ?? []) {
+        if (!visited.has(neighbor)) {
+          visited.add(neighbor);
+          reasonOf.set(neighbor, reason);
+          queue.push(neighbor);
+        }
+      }
+    }
+
     for (const followerId of followers) {
       const entry = entryById.get(followerId);
       if (!entry) {
@@ -1126,10 +1210,14 @@ const findConsequentAlignmentChanges = (
       const list = consequences.get(driverId) ?? [];
       list.push(entry);
       consequences.set(driverId, list);
+      const reason = reasonOf.get(followerId);
+      if (reason) {
+        reasons.set(followerId, reason);
+      }
     }
   }
 
-  return consequences;
+  return { followers: consequences, reasons };
 };
 
 /**
@@ -1179,12 +1267,20 @@ const attachConsequences = (
   ops: LogOperation[],
   consequences: Map<string, LogEntry[]>,
   changedElements: Record<string, OrderedExcalidrawElement>,
+  reasons: Map<string, ConsequenceReason>,
 ): void => {
   if (consequences.size === 0) {
     return;
   }
-  const toOps = (entries: LogEntry[]): LogOperation[] =>
-    entries.map((e) => classifyEntry(e, changedElements));
+  const toOps = (entries: LogEntry[]): ConsequentOp[] =>
+    entries.map((e) => {
+      const op: ConsequentOp = classifyEntry(e, changedElements);
+      const reason = reasons.get(e.elementId);
+      if (reason) {
+        op.consequenceReason = reason;
+      }
+      return op;
+    });
 
   for (const op of ops) {
     switch (op.kind) {

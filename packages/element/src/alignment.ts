@@ -469,6 +469,67 @@ export const setAlignmentPairsLocked = (
 };
 
 /**
+ * The links `element` would keep if every partner that isn't live were
+ * released, or null if none of them name a partner that's gone.
+ *
+ * A gap chain with a missing member is dropped whole rather than
+ * shortened: lose a middle member and the gaps either side of it merge
+ * into one, so the spacing the chain asserted no longer exists anywhere.
+ */
+export const pruneAlignmentLinks = (
+  element: ExcalidrawElement,
+  isLive: (id: string) => boolean,
+): {
+  alignments?: ExcalidrawElement["alignments"];
+  gapAlignments?: ExcalidrawElement["gapAlignments"];
+} | null => {
+  const alignments = element.alignments?.filter((link) =>
+    isLive(link.elementId),
+  );
+  const gapAlignments = element.gapAlignments?.filter((link) =>
+    link.ids.every(isLive),
+  );
+  const changed =
+    (alignments?.length ?? 0) !== (element.alignments?.length ?? 0) ||
+    (gapAlignments?.length ?? 0) !== (element.gapAlignments?.length ?? 0);
+  return changed ? { alignments, gapAlignments } : null;
+};
+
+/**
+ * Release every alignment that names a deleted element — the alignment
+ * counterpart of `fixBindingsAfterDeletion`, called from the same places
+ * a deletion is made.
+ *
+ * Left alone, the link doesn't go away with its partner: it stays on the
+ * survivor, which then behaves as if still held by something no longer
+ * on the canvas. And it can't be released by hand, because a guide needs
+ * both ends to draw — no line, so no badge to click.
+ *
+ * `elements` must be the whole scene, deleted elements included, since
+ * anything not live in it counts as gone. Survivors that change come back
+ * through `newElementWith`, so the release lands in the same captured
+ * update as the deletion and one undo restores both. The deleted elements
+ * keep their own links for the same reason.
+ */
+export const releaseAlignmentsToDeleted = <T extends ExcalidrawElement>(
+  elements: readonly T[],
+): T[] => {
+  const live = new Set(
+    elements.filter((element) => !element.isDeleted).map((e) => e.id),
+  );
+  return elements.map((element) => {
+    if (element.isDeleted) {
+      return element;
+    }
+    const updates = pruneAlignmentLinks(element, (id) => live.has(id));
+    // the two link fields exist on every element type alike
+    return updates
+      ? (newElementWith(element as ExcalidrawElement, updates) as T)
+      : element;
+  });
+};
+
+/**
  * Whether an element holds still against alignment propagation.
  *
  * Two independent reasons, and either is sufficient:

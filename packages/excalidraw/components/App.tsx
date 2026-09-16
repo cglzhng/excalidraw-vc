@@ -118,6 +118,7 @@ import {
   getCommonBounds,
   getElementAbsoluteCoords,
   lockAlignmentPair,
+  releaseAlignmentsToDeleted,
   setAlignmentPairsLocked,
   unlockAlignmentPair,
   getAlignmentResizeAnchorEffects,
@@ -13282,7 +13283,7 @@ class App extends React.Component<AppProps, AppState> {
 
     if (didChange) {
       this.store.scheduleCapture();
-      this.scene.replaceAllElements(elements);
+      this.scene.replaceAllElements(releaseAlignmentsToDeleted(elements));
     }
   };
 

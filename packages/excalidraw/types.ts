@@ -238,6 +238,9 @@ export type InteractiveCanvasAppState = Readonly<
     elementsToHighlight: AppState["elementsToHighlight"];
     debugVersionLogHighlightedElementIds: AppState["debugVersionLogHighlightedElementIds"];
     versionLogHoverPreview: AppState["versionLogHoverPreview"];
+    /** which sidebar is open — the element-id labels are drawn only
+     * while the version log is, since that is what names them */
+    openSidebar: AppState["openSidebar"];
     // Collaborators
     collaborators: AppState["collaborators"];
     // SnapLines

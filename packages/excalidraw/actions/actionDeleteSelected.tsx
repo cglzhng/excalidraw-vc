@@ -5,7 +5,10 @@ import {
 } from "@excalidraw/common";
 
 import { getNonDeletedElements } from "@excalidraw/element";
-import { fixBindingsAfterDeletion } from "@excalidraw/element";
+import {
+  fixBindingsAfterDeletion,
+  releaseAlignmentsToDeleted,
+} from "@excalidraw/element";
 import { LinearElementEditor } from "@excalidraw/element";
 import { newElementWith } from "@excalidraw/element";
 import { getContainerElement } from "@excalidraw/element";
@@ -279,6 +282,7 @@ export const actionDeleteSelected = register({
       nextElements,
       nextElements.filter((el) => el.isDeleted),
     );
+    nextElements = releaseAlignmentsToDeleted(nextElements);
 
     nextAppState = handleGroupEditingState(nextAppState, nextElements);
 

@@ -33,6 +33,7 @@ import {
   isNonDeletedElement,
 } from "@excalidraw/element";
 import { normalizeFixedPoint } from "@excalidraw/element";
+import { pruneAlignmentLinks } from "@excalidraw/element";
 import {
   updateElbowArrowPoints,
   validateElbowPoints,
@@ -414,13 +415,18 @@ const restoreElementWithProperties = <
   T extends Required<
     Omit<
       ExcalidrawElement,
-      "customData" | "alignments" | "gapAlignments" | "alignmentLocked"
+      | "customData"
+      | "alignments"
+      | "gapAlignments"
+      | "alignmentLocked"
+      | "shortId"
     >
   > & {
     customData?: ExcalidrawElement["customData"];
     alignments?: ExcalidrawElement["alignments"];
     gapAlignments?: ExcalidrawElement["gapAlignments"];
     alignmentLocked?: ExcalidrawElement["alignmentLocked"];
+    shortId?: ExcalidrawElement["shortId"];
     /** @deprecated */
     boundElementIds?: readonly ExcalidrawElement["id"][];
     /** @deprecated */
@@ -497,6 +503,11 @@ const restoreElementWithProperties = <
   }
   if (element.alignmentLocked) {
     base.alignmentLocked = true;
+  }
+  // kept as-is; the scene's allocator re-issues it if it collides with
+  // one already in the document
+  if (element.shortId) {
+    base.shortId = element.shortId;
   }
 
   const ret = {
@@ -964,6 +975,18 @@ export const restoreElements = <T extends ExcalidrawElement>(
           restoredElementsMap,
         ),
       );
+    }
+
+    // Alignments to a partner that didn't make it into the scene — a file
+    // saved before deletion released them, or one assembled by hand. Only
+    // here, where the elements are the whole scene: restoring a partial
+    // set would read every partner outside it as gone.
+    const prunedLinks = pruneAlignmentLinks(element, (id) => {
+      const partner = restoredElementsMap.get(id);
+      return !!partner && !partner.isDeleted;
+    });
+    if (prunedLinks) {
+      Object.assign(element, prunedLinks);
     }
 
     if (isLinearElement(element)) {

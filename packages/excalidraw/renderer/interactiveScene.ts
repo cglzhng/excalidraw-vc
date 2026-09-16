@@ -13,12 +13,14 @@ import {
 import {
   arrayToMap,
   BIND_MODE_TIMEOUT,
+  DEFAULT_SIDEBAR,
   DEFAULT_TRANSFORM_HANDLE_SPACING,
   FRAME_STYLE,
   getFeatureFlag,
   invariant,
   shouldRotateWithDiscreteAngle,
   THEME,
+  VERSION_LOG_SIDEBAR_TAB,
 } from "@excalidraw/common";
 
 import {
@@ -123,6 +125,7 @@ import {
 import {
   drawBindingLeader,
   drawBindingPadlock,
+  drawElementIdLabel,
   getNarrowIndicatorLineDash,
   getWideIndicatorLineDash,
 } from "./indicatorHelpers";
@@ -2677,7 +2680,43 @@ const _renderInteractiveScene = ({
     alignmentDragMovers,
   );
 
-  context.restore();
+  // Short ids, drawn only while the version log is open: the log names
+  // elements by them, so the canvas has to answer "which one is R3?" at
+  // the same time — and outside that, they are furniture nobody asked
+  // for. Bound text is skipped; its label would land inside its own
+  // container, on top of the container's own.
+  if (
+    appState.openSidebar?.name === DEFAULT_SIDEBAR.name &&
+    appState.openSidebar.tab === VERSION_LOG_SIDEBAR_TAB
+  ) {
+    context.save();
+    context.translate(appState.scrollX, appState.scrollY);
+    for (const element of visibleElements) {
+      if (!element.shortId || (isTextElement(element) && element.containerId)) {
+        continue;
+      }
+      // A linear element's bounding box corner is a point on empty
+      // canvas, so its label goes over where the line starts instead.
+      const linear = isLinearElement(element);
+      const [x, y] = linear
+        ? LinearElementEditor.getPointAtIndexGlobalCoordinates(
+            element,
+            0,
+            elementsMap,
+          )
+        : getElementAbsoluteCoords(element, elementsMap);
+      drawElementIdLabel(
+        context,
+        x,
+        y,
+        element.shortId,
+        appState.zoom.value,
+        appState.theme,
+        linear ? "above" : "inside",
+      );
+    }
+    context.restore();
+  }
 
   renderRemoteCursors({
     context,
