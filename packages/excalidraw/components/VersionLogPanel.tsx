@@ -1,15 +1,21 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   findDependencies,
   findRelatedOps,
 } from "../versionLog/dependencyAnalysis";
 import { computeHoverPreview } from "../versionLog/hoverPreview";
+import { getOperationElementIds } from "../versionLog/types";
 
-import { useApp, useExcalidrawSetAppState } from "./App";
+import {
+  useApp,
+  useExcalidrawAppState,
+  useExcalidrawSetAppState,
+} from "./App";
 import {
   VersionLogMomentCard,
   renderOpContent,
+  useShortIdOf,
 } from "./VersionLogMomentCard";
 
 import type { LogMoment, LogOperation } from "../versionLog/types";
@@ -137,12 +143,89 @@ const useVersionLogFilter = (
   return filter;
 };
 
+/**
+ * The ops that touched any of `ids` — including ops that touched them as
+ * a *consequence*, since `getOperationElementIds` folds each op's
+ * `consequentOps` in. That is the whole point of filtering by an element:
+ * an arrow dragged along by its binding, or a partner an alignment moved,
+ * changed because of the op that caused it, and the causing op is where
+ * the log records that change. Looking only at the ops' own subjects
+ * would hide every change the element didn't initiate.
+ */
+const opsTouchingElements = (
+  moments: readonly LogMoment[],
+  ids: ReadonlySet<string>,
+): Set<LogOperation> => {
+  const ops = new Set<LogOperation>();
+  for (const moment of moments) {
+    for (const op of moment.operations) {
+      if (getOperationElementIds(op).some((id) => ids.has(id))) {
+        ops.add(op);
+      }
+    }
+  }
+  return ops;
+};
+
+/** The strip above the list saying what is narrowing it, and the way
+ * back out. */
+const FilterBanner: React.FC<{
+  onClear: () => void;
+  children: React.ReactNode;
+}> = ({ onClear, children }) => (
+  <div
+    className="VersionLogPanel__filterBanner"
+    style={{
+      flex: "0 0 auto",
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      gap: 8,
+      marginBottom: 8,
+      padding: "4px 8px",
+      fontSize: 11,
+      borderRadius: 4,
+    }}
+  >
+    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+      {children}
+    </span>
+    <button
+      type="button"
+      onClick={onClear}
+      style={{
+        all: "unset",
+        cursor: "pointer",
+        flex: "0 0 auto",
+        padding: "2px 6px",
+        fontSize: 10,
+        fontWeight: 600,
+        color: "var(--vlog-primary)",
+        border: "1px solid var(--vlog-primary)",
+        borderRadius: 4,
+      }}
+    >
+      Clear
+    </button>
+  </div>
+);
+
 // ----------------------------- panel --------------------------------
 
 export const VersionLogPanel: React.FC = () => {
   const app = useApp();
+  const appState = useExcalidrawAppState();
   const setAppState = useExcalidrawSetAppState();
   const log: VersionLog = app.versionLog;
+  const shortIdOf = useShortIdOf();
+
+  // One clock for every card's "3m ago", ticking slowly: the labels are
+  // coarse, so a faster refresh would re-render the list for nothing.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 15000);
+    return () => clearInterval(id);
+  }, []);
 
   /**
    * Hover: compute the ghost / bbox preview for this op and hand it to
@@ -181,9 +264,12 @@ export const VersionLogPanel: React.FC = () => {
         log.setFilter(null);
         return;
       }
+      // Only ever one filter: the selection's is dropped by dropping the
+      // selection itself, which is what it is made of.
+      setAppState({ selectedElementIds: {} });
       log.setFilter({ focus: op, ops: findRelatedOps(op, log) });
     },
-    [log],
+    [log, setAppState],
   );
 
   const onJump = app.jumpToVersionLogMoment;
@@ -196,11 +282,51 @@ export const VersionLogPanel: React.FC = () => {
   const skippedOps = useVersionLogSkipped(log);
   const filter = useVersionLogFilter(log);
 
-  // With a filter active, hide moments that contribute no ops to
-  // the neighbourhood; the surviving cards force-expand to reveal only
-  // their matching ops.
-  const visibleMoments = filter
-    ? moments.filter((m) => m.operations.some((op) => filter.ops.has(op)))
+  const selectedIds = useMemo(() => {
+    const ids = Object.keys(appState.selectedElementIds).filter(
+      (id) => appState.selectedElementIds[id],
+    );
+    return ids.length > 0 ? new Set(ids) : null;
+  }, [appState.selectedElementIds]);
+
+  // Selecting something on the canvas is itself a question — "what
+  // happened to this?" — so it narrows the log to the ops that touched
+  // it, without any panel-side gesture to learn.
+  const selectionOps = useMemo(
+    () => (selectedIds ? opsTouchingElements(moments, selectedIds) : null),
+    [moments, selectedIds],
+  );
+
+  // The other direction of the same rule: selecting something on the
+  // canvas replaces whatever op filter was up, rather than compounding
+  // with it.
+  useEffect(() => {
+    if (selectedIds && log.getFilter()) {
+      log.setFilter(null);
+    }
+  }, [selectedIds, log]);
+
+  const shownOps = filter?.ops ?? selectionOps;
+
+  // Named while the names still fit; past that a count says more than a
+  // list nobody can hold in their head.
+  const selectionLabel = useMemo(() => {
+    if (!selectedIds) {
+      return null;
+    }
+    const names = [...selectedIds].map((id) => shortIdOf(id) ?? "?");
+    if (names.length > 3) {
+      return `${names.length} selected elements`;
+    }
+    return names.length === 1
+      ? names[0]
+      : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  }, [selectedIds, shortIdOf]);
+
+  // Hide moments that contribute no ops to what's left; the surviving
+  // cards force-expand to reveal only their matching ops.
+  const visibleMoments = shownOps
+    ? moments.filter((m) => m.operations.some((op) => shownOps.has(op)))
     : moments;
 
   return (
@@ -231,57 +357,39 @@ export const VersionLogPanel: React.FC = () => {
       >
         <h3 style={{ margin: 0, fontSize: 13 }}>Version log</h3>
         <span style={{ fontSize: 11, opacity: 0.6 }}>
-          {filter
-            ? `${filter.ops.size} related`
+          {shownOps
+            ? `${shownOps.size} ${filter ? "related" : "matching"}`
             : `${moments.length} ${
                 moments.length === 1 ? "moment" : "moments"
               }`}
         </span>
       </div>
+      {selectedIds && (
+        // Clearing the selection is what clears this filter — the
+        // selection *is* the filter, so offering to drop one without the
+        // other would leave the panel contradicting the canvas.
+        <FilterBanner onClear={() => setAppState({ selectedElementIds: {} })}>
+          Filtering by <span style={{ opacity: 0.85 }}>{selectionLabel}</span>
+        </FilterBanner>
+      )}
       {filter && (
-        <div
-          className="VersionLogPanel__filterBanner"
-          style={{
-            flex: "0 0 auto",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: 8,
-            marginBottom: 8,
-            padding: "4px 8px",
-            fontSize: 11,
-            borderRadius: 4,
-          }}
-        >
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-            Filtering by{" "}
-            <span style={{ opacity: 0.85 }}>
-              {renderOpContent(filter.focus)}
-            </span>
+        <FilterBanner onClear={() => onFilterOperation(null)}>
+          Filtering by{" "}
+          <span style={{ opacity: 0.85 }}>
+            {renderOpContent(filter.focus, shortIdOf)}
           </span>
-          <button
-            type="button"
-            onClick={() => onFilterOperation(null)}
-            style={{
-              all: "unset",
-              cursor: "pointer",
-              flex: "0 0 auto",
-              padding: "2px 6px",
-              fontSize: 10,
-              fontWeight: 600,
-              color: "var(--vlog-primary)",
-              border: "1px solid var(--vlog-primary)",
-              borderRadius: 4,
-            }}
-          >
-            Clear
-          </button>
-        </div>
+        </FilterBanner>
       )}
       {moments.length === 0 ? (
         <p style={{ fontSize: 12, opacity: 0.6 }}>
           No moments recorded yet. Create, edit, or delete something on the
           canvas.
+        </p>
+      ) : visibleMoments.length === 0 ? (
+        <p style={{ fontSize: 12, opacity: 0.6 }}>
+          {selectedIds
+            ? "Nothing recorded here touches the selection."
+            : "Nothing matches this filter."}
         </p>
       ) : (
         <ul
@@ -309,10 +417,11 @@ export const VersionLogPanel: React.FC = () => {
                   : moment.id === cursorId
               }
               isInactive={inactiveIds.has(moment.id)}
+              now={now}
               hardDeps={depHighlight?.hard}
               softDeps={depHighlight?.soft}
               skippedOps={skippedOps}
-              filterOps={filter?.ops}
+              filterOps={shownOps ?? undefined}
               focusOp={filter?.focus ?? null}
               onJump={onJump}
               onToggleActive={onToggleActive}

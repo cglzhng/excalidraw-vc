@@ -124,6 +124,68 @@ const ALIGNMENT_BAR = {
 } as const;
 
 // ---------------------------------------------------------------------------
+// Element id labels
+// ---------------------------------------------------------------------------
+
+/** The short id drawn by an element while the version log is open (see
+ * `shortId.ts`). Its own colour, shared with nothing: the label names an
+ * element rather than reporting a constraint on it, so reusing the
+ * alignment red or the binding purple would claim a relationship that
+ * isn't there.
+ *
+ * Cased against the canvas like the anvil is, since a label lands
+ * wherever the element happens to be. */
+const ELEMENT_ID_FONT_SIZE = 10;
+const ELEMENT_ID_GAP = 3;
+const ELEMENT_ID_INSET = 3;
+const ELEMENT_ID_CASING_WIDTH = 2;
+const ELEMENT_ID_COLOR_LIGHT = "#1971c2";
+const ELEMENT_ID_COLOR_DARK = "#74c0fc";
+const ELEMENT_ID_CASING_LIGHT = "#ffffff";
+const ELEMENT_ID_CASING_DARK = "#121212";
+
+/**
+ * One element's short id, in one of two places.
+ *
+ * `inside` tucks it into the element's top-left corner, `(x, y)` being
+ * that corner: the label belongs to the shape it sits in, and always
+ * taking the same corner makes a crowded canvas read as a column of
+ * labels rather than a scatter.
+ *
+ * `above` centres it over `(x, y)` instead, for an element with no
+ * interior to sit in — an arrow's top-left corner is a point on empty
+ * canvas, often nowhere near the line, so the label goes over the
+ * arrow's first point, where the thing it names actually starts.
+ */
+export const drawElementIdLabel = (
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  text: string,
+  zoom: number,
+  theme: AppState["theme"],
+  placement: "inside" | "above",
+) => {
+  const light = theme === THEME.LIGHT;
+  const inside = placement === "inside";
+  const at: [number, number] = inside
+    ? [x + ELEMENT_ID_INSET / zoom, y + ELEMENT_ID_INSET / zoom]
+    : [x, y - ELEMENT_ID_GAP / zoom];
+
+  context.save();
+  context.font = `600 ${ELEMENT_ID_FONT_SIZE / zoom}px sans-serif`;
+  context.textAlign = inside ? "left" : "center";
+  context.textBaseline = inside ? "top" : "bottom";
+  context.lineJoin = "round";
+  context.lineWidth = (ELEMENT_ID_CASING_WIDTH * 2) / zoom;
+  context.strokeStyle = light ? ELEMENT_ID_CASING_LIGHT : ELEMENT_ID_CASING_DARK;
+  context.strokeText(text, at[0], at[1]);
+  context.fillStyle = light ? ELEMENT_ID_COLOR_LIGHT : ELEMENT_ID_COLOR_DARK;
+  context.fillText(text, at[0], at[1]);
+  context.restore();
+};
+
+// ---------------------------------------------------------------------------
 // Anchor crosses
 // ---------------------------------------------------------------------------
 

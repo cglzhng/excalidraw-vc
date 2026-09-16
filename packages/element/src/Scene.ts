@@ -22,6 +22,8 @@ import { getSelectedElements } from "@excalidraw/element";
 
 import { mutateElement, type ElementUpdate } from "@excalidraw/element";
 
+import { assignShortIds } from "./shortId";
+
 import type {
   ExcalidrawElement,
   NonDeletedExcalidrawElement,
@@ -283,6 +285,11 @@ export class Scene {
     }
 
     this.elements = syncInvalidIndices(_nextElements);
+    // Every way an element reaches a scene — drawn, pasted, imported,
+    // replayed — comes through here, so this is the one place that has
+    // to name them. It also sees the whole scene, which is what makes
+    // the duplicate check possible.
+    assignShortIds(this.elements);
     this.elementsMap.clear();
     this.elements.forEach((element) => {
       if (isFrameLikeElement(element)) {

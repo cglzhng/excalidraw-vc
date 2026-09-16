@@ -42,6 +42,67 @@
   --vlog-op-raw: #868e96;
 
   // --- row highlight washes ---
+  // A card's own actions sit quiet until pointed at: they are always
+  // available on every card, so drawn as buttons they out-shout the
+  // content they belong to. The outline is the hover affordance.
+  .VersionLogPanel__cardButton {
+    all: unset;
+    cursor: pointer;
+    padding: 2px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: inherit;
+    opacity: 0.75;
+
+    &:hover,
+    &:focus-visible {
+      opacity: 1;
+      color: var(--vlog-primary);
+      border-color: var(--vlog-primary);
+    }
+
+    &--danger:hover,
+    &--danger:focus-visible {
+      color: var(--vlog-danger);
+      border-color: var(--vlog-danger);
+    }
+  }
+
+  // Per-row action, revealed by pointing at the row. Every row has one,
+  // so shown always they would out-number the content; hidden until
+  // hover, the row stays a sentence and the action is where the pointer
+  // already is. `focus-within` keeps it reachable from the keyboard.
+  .VersionLogPanel__filterButton {
+    all: unset;
+    cursor: pointer;
+    flex: 0 0 auto;
+    padding: 1px 5px;
+    font-size: 9.5px;
+    font-weight: 600;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    opacity: 0;
+    transition: opacity 90ms ease;
+
+    &:hover,
+    &:focus-visible {
+      color: var(--vlog-primary);
+      border-color: var(--vlog-primary);
+    }
+  }
+
+  .VersionLogPanel__entry,
+  .VersionLogPanel__consequent {
+    &:hover,
+    &:focus-within {
+      .VersionLogPanel__filterButton {
+        opacity: 0.85;
+      }
+    }
+  }
+
   --vlog-focus-bg: rgba(91, 87, 209, 0.18); // click-to-filter anchor
   --vlog-hard-dep-bg: rgba(217, 72, 15, 0.18); // hard dependency
   --vlog-soft-dep-bg: rgba(245, 159, 0, 0.16); // soft dependency

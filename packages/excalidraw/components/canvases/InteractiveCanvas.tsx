@@ -290,6 +290,7 @@ const getRelevantAppStateProps = (
   debugVersionLogHighlightedElementIds:
     appState.debugVersionLogHighlightedElementIds,
   versionLogHoverPreview: appState.versionLogHoverPreview,
+  openSidebar: appState.openSidebar,
   frameRendering: appState.frameRendering,
   shouldCacheIgnoreZoom: appState.shouldCacheIgnoreZoom,
   exportScale: appState.exportScale,

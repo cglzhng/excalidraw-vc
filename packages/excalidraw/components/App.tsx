@@ -98,6 +98,7 @@ import {
   getObservedAppState,
   getCommonBounds,
   lockAlignmentPair,
+  releaseAlignmentsToDeleted,
   setAlignmentPairsLocked,
   unlockAlignmentPair,
   lockGapAlignment,
@@ -11158,7 +11159,7 @@ class App extends React.Component<AppProps, AppState> {
 
     if (didChange) {
       this.store.scheduleCapture();
-      this.scene.replaceAllElements(elements);
+      this.scene.replaceAllElements(releaseAlignmentsToDeleted(elements));
     }
   };
 
