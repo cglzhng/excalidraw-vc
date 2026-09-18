@@ -22,14 +22,10 @@ import type { PointerDownState } from "@excalidraw/excalidraw/types";
 import type { Mutable } from "@excalidraw/common/utility-types";
 
 import {
-  getAlignmentAnchoredResizeBlockers,
-  getAlignmentResizeLockedAxes,
-} from "./alignment";
-import {
-  clampSizeToGapAlignments,
-  getGapAlignmentAnchoredResizeBlockers,
+  getAlignmentResizeEffects,
   propagateAlignmentsAfterResize,
-} from "./gapAlignment";
+} from "./alignment";
+import { clampSizeToAlignments } from "./gapAlignment";
 import {
   getArrowLocalFixedPoints,
   unbindBindingElement,
@@ -95,26 +91,6 @@ import type {
 import type { ElementUpdate } from "./mutateElement";
 
 // Returns true when transform (resizing/rotation) happened
-/**
- * Hold a proposed size at its original value on any dimension the
- * alignments forbid changing. Two things freeze one:
- *
- * - the constraints there are over-determined (see
- *   `getAlignmentResizeLockedAxes`) — locking a pair at two places on one
- *   axis pins that dimension;
- * - preserving an alignment would mean pushing an anchored element (see
- *   `getAlignmentAnchoredResizeAxes`), which is what anchoring forbids.
- *
- * Either way the resize is refused on that dimension rather than
- * silently breaking an alignment — the same move anchors already make for
- * drags.
- *
- * A width maps to the x axis and a height to y only while the element is
- * unrotated: once rotated, either dimension moves both bounds, so a
- * freeze on either axis has to freeze both dimensions. Same for a
- * maintained aspect ratio, where changing one dimension changes the
- * other.
- */
 /**
  * The smallest extent a resize may leave an element with.
  *
@@ -231,6 +207,21 @@ const clampMultiElementResize = (
   };
 };
 
+/**
+ * Hold a proposed size at its original value on any dimension the alignments
+ * cannot accommodate at all — one where no displacement of anything satisfies
+ * the constraints, which is now the only reason a resize is refused.
+ *
+ * Far fewer dimensions than before the engine could answer with a size change.
+ * A pair locked at two places on one axis used to pin that axis outright,
+ * because a partner could only ever be translated and one translation cannot
+ * meet two demands; the partner now changes size to meet both.
+ *
+ * A width maps to the x axis and a height to y only while the element is
+ * unrotated: once rotated, either dimension moves both bounds, so a freeze on
+ * either axis has to freeze both dimensions. Same for a maintained aspect
+ * ratio, where changing one dimension changes the other.
+ */
 const clampSizeToFrozenAlignmentAxes = (
   size: { nextWidth: number; nextHeight: number },
   original: { width: number; height: number },
@@ -246,26 +237,11 @@ const clampSizeToFrozenAlignmentAxes = (
     boxScaled: boolean;
   },
 ): { nextWidth: number; nextHeight: number } => {
-  const overConstrained = getAlignmentResizeLockedAxes(resizedIds, elementsMap);
-  const edgeOpts = {
+  const { frozen } = getAlignmentResizeEffects(resizedIds, elementsMap, {
     handle: opts.handle,
     shouldResizeFromCenter: opts.shouldResizeFromCenter,
     allEdgesMove: opts.rotated || opts.boxScaled,
-  };
-  const anchored = getAlignmentAnchoredResizeBlockers(
-    resizedIds,
-    elementsMap,
-    edgeOpts,
-  );
-  const gapAnchored = getGapAlignmentAnchoredResizeBlockers(
-    resizedIds,
-    elementsMap,
-    edgeOpts,
-  );
-  const frozen = {
-    x: overConstrained.x || anchored.x.size > 0 || gapAnchored.x.size > 0,
-    y: overConstrained.y || anchored.y.size > 0 || gapAnchored.y.size > 0,
-  };
+  });
   if (!frozen.x && !frozen.y) {
     return size;
   }
@@ -312,7 +288,7 @@ export const transformElements = (
       const origElement = originalElements.get(elementId);
 
       if (latestElement && origElement) {
-        const { nextWidth, nextHeight } = clampSizeToGapAlignments(
+        const { nextWidth, nextHeight } = clampSizeToAlignments(
           clampSizeToFrozenAlignmentAxes(
             // first, so nothing downstream has to reason about an
             // element whose edges have crossed over

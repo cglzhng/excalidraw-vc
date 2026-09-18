@@ -121,11 +121,7 @@ import {
   releaseAlignmentsToDeleted,
   setAlignmentPairsLocked,
   unlockAlignmentPair,
-  getAlignmentResizeAnchorEffects,
-  getGapAlignmentAnchoredResizeBlockers,
-  getAlignmentResizeLockedAxes,
-  getAlignmentResizeMovers,
-  getGapAlignmentResizeMovers,
+  getAlignmentResizeEffects,
   lockGapAlignment,
   unlockGapAlignment,
   type AlignmentGuide,
@@ -14223,52 +14219,20 @@ class App extends React.Component<AppProps, AppState> {
           selectedElements.length > 1 ||
           selectedElements.some((element) => element.angle !== 0),
       };
-      const edge = getAlignmentResizeAnchorEffects(
+      // One solve answers all three: what refuses the resize, what forces
+      // something to change size instead of moving, and what it sets moving.
+      // A frozen axis already reports no movers, so there is nothing to
+      // reconcile between them.
+      const effects = getAlignmentResizeEffects(
         resizedIds,
         elementsMap,
         edgeOpts,
       );
-      const gap = getGapAlignmentAnchoredResizeBlockers(
-        resizedIds,
-        elementsMap,
-        edgeOpts,
-      );
-      blockers = {
-        x: new Set([...edge.blockers.x, ...gap.x]),
-        y: new Set([...edge.blockers.y, ...gap.y]),
-      };
+      blockers = effects.blockers;
+      movers = effects.movers;
       // Not per axis: the overlay marks the element, and an anchor that
       // forces a stretch on either axis is equally the reason for it.
-      stretchCauses = new Set([...edge.causes.x, ...edge.causes.y]);
-
-      // An axis is frozen when an anchor refuses it or the constraints
-      // there are over-determined — the same union `resizeElements.ts`
-      // clamps on. Nothing moves on a frozen axis, so nothing there is
-      // being enforced and no guide should claim otherwise.
-      const overConstrained = getAlignmentResizeLockedAxes(
-        resizedIds,
-        elementsMap,
-      );
-      const frozen = {
-        x: blockers.x.size > 0 || overConstrained.x,
-        y: blockers.y.size > 0 || overConstrained.y,
-      };
-      const edgeMovers = getAlignmentResizeMovers(
-        resizedIds,
-        elementsMap,
-        edgeOpts,
-        frozen,
-      );
-      const gapMovers = getGapAlignmentResizeMovers(
-        resizedIds,
-        elementsMap,
-        edgeOpts,
-        frozen,
-      );
-      movers = {
-        x: new Set([...edgeMovers.x, ...gapMovers.x]),
-        y: new Set([...edgeMovers.y, ...gapMovers.y]),
-      };
+      stretchCauses = new Set([...effects.causes.x, ...effects.causes.y]);
     }
 
     const nextAnchors = [...new Set([...blockers.x, ...blockers.y])];

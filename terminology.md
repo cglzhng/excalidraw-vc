@@ -266,24 +266,27 @@ reported *maximal* — four evenly spaced elements are one chain, not the
 two triples inside it — and locking a chain that continues an existing
 one merges the two rather than storing both.
 
-### Drag factor
-What each element's share of a drag is, on one axis, as a multiple of
-the drag offset — the dragged elements are 1, anything absent doesn't
-move. Edge alignments always pass 1 along, so everything they reach
-moves rigidly. Gap alignments make the factors an **arithmetic
-progression** along the chain instead (holding each gap equal to the next
-forces constant differences): dragging an end member holds its immediate
-neighbour still and steps the move along the rest, so every gap closes
-while the element being measured against stays put; dragging an interior
-member carries the whole chain rigidly. Computed by
-`getAlignmentDragFactors`, and the same map answers "which elements move
-at all" for anchors and for snapping.
+### Edge delta / response
+How far each of an element's two edges travels on one axis
+(`EdgeDelta {min, max}`): equal is a translation, different is a
+stretch. The solver's answer to a gesture is a **response** — one edge
+delta per element per degree of freedom of the gesture (the offset for a
+drag; the driver's two edges for a resize), linear in it, so it is solved
+once and evaluated per frame. The old *drag factor* was the special case
+of one number per element, which could only ever describe a translation.
+Edge alignments pass the gesture along unchanged; gap alignments make the
+travel an **arithmetic progression** along the chain, and the feel rules
+pick its slope — dragging an end member holds the *far* end still,
+dragging an interior member carries the whole chain rigidly. Computed by
+`solveAlignmentResponse`.
 
 ### Driver / partner
-In a resize, the element the user is resizing is the driver; anything
-translated to preserve an alignment with it is a partner. Partners are
-**translated, never resized** — the rule that makes over-constrained
-configurations possible, and why they're refused rather than fudged.
+The element the user is dragging or resizing is the driver; anything
+moved or resized to preserve an alignment with it is a partner. A partner
+**moves if it can and stretches only if it must** — when an anchor
+somewhere in its rigid component forbids travelling. Only an anchor
+refuses; a gesture is refused when no displacement of any partner
+satisfies the constraints.
 
 ### Anchor
 An element alignment must never move (`alignmentLocked`, the anvil

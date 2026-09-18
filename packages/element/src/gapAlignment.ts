@@ -6,30 +6,19 @@ import {
 } from "@excalidraw/math";
 
 import { getElementBounds } from "./bounds";
+import { MIN_ALIGNED_SIZE, isAlignable } from "./alignment";
 import {
-  applyAlignmentDeltas,
-  buildResizeAlignmentDeltas,
-  floodAlignmentAxis,
-  getAlignmentDragFactors,
-  getGroupMembers,
-  getTranslationBlockingAnchors,
-  isAlignable,
-  isAlignmentAnchor,
-  resizeMovesEdge,
-  spreadAcrossGroups,
-} from "./alignment";
+  alignmentDragDriver,
+  alignmentResizeDriver,
+  applyAlignmentResponse,
+  solveAlignmentResponse,
+} from "./alignmentSolve";
 import { newElementWith } from "./mutateElement";
-
-import type { ResizeEdgeOpts } from "./alignment";
 
 import type { Bounds } from "@excalidraw/common";
 import type { InclusiveRange } from "@excalidraw/math";
 
-import type { PointerDownState } from "@excalidraw/excalidraw/types";
-
-import type { Scene } from "./Scene";
 import type {
-  AlignmentEdge,
   ElementGapAlignment,
   ElementsMap,
   ExcalidrawElement,
@@ -618,30 +607,39 @@ export const unlockGapAlignment = (
 };
 
 /**
- * Limit a drag offset so no hard gap alignment is pushed through zero.
+ * Limit a drag offset so that nothing it moves closes past zero: no hard gap
+ * alignment pushed through contact, and no element squashed away.
  *
- * Past zero the triple's members swap places, and the constraint stops
- * describing anything the user can see: the equation is still satisfied
- * — measured in the stored order the gaps are equal and negative — but
- * the *visible* spacing in the new order is
- * `−gap − w(outer) − w(middle)` on each side, which is only equal again
- * when the two outer elements happen to be the same width. So for most
- * triples, crossing silently turns "equally spaced" into a relationship
+ * Past zero a chain's members swap places, and the constraint stops describing
+ * anything the user can see: the equation is still satisfied — measured in the
+ * stored order the gaps are equal and negative — but the *visible* spacing in
+ * the new order is `−gap − w(outer) − w(middle)` on each side, which is only
+ * equal again when the two outer elements happen to be the same width. So for
+ * most chains, crossing silently turns "equally spaced" into a relationship
  * that no longer looks like one, and cannot be restored by dragging back
  * without a jump.
  *
- * Stopping at contact avoids the whole problem, and gives the drag an
- * honest feel: the arrangement closes up, then holds.
+ * An element's own extent is now bounded for the same reason and in the same
+ * pass. A drag can change a partner's size — that is the whole point of
+ * solving rather than propagating — and a partner squeezed through zero width
+ * has its edges the wrong way round, so every link naming one of them starts
+ * reading the other.
  *
- * Each gap is affine in the drag offset `t`, since every element moves
- * by its own multiple of it (`getAlignmentDragFactors`):
+ * Stopping at contact avoids both, and gives the drag an honest feel: the
+ * arrangement closes up, then holds. Clamping rather than refusing is the
+ * deliberate choice — the user gets as much of the gesture as is possible
+ * instead of none of it.
  *
- *     gap(t) = gap(0) + (f_far − f_near)·t
+ * Every quantity here is affine in the drag offset `t`, because the response
+ * is linear in it:
  *
- * so each gap contributes one bound on `t`, and the answer is the
- * tightest interval around 0. A gap that is *already* negative — from a
- * scene built before this rule, say — contributes nothing, so an
- * existing crossing is left alone rather than trapping the drag.
+ *     gap(t)    = gap(0)    + (δmin(far) − δmax(near))·t
+ *     extent(t) = extent(0) + (δmax − δmin)·t
+ *
+ * so each contributes one bound on `t` and the answer is the tightest interval
+ * around 0. Anything *already* past zero — from a scene built before these
+ * rules, say — contributes nothing, so an existing crossing is left alone
+ * rather than trapping the drag.
  */
 export const clampDragToGapAlignments = (
   directlyMovedIds: Set<string>,
@@ -653,9 +651,30 @@ export const clampDragToGapAlignments = (
     if (t === 0) {
       return t;
     }
-    const factors = getAlignmentDragFactors(directlyMovedIds, axis, elementsMap);
+    const response = solveAlignmentResponse(
+      alignmentDragDriver(directlyMovedIds),
+      axis,
+      elementsMap,
+    );
     let lo = -Infinity;
     let hi = Infinity;
+
+    /** Hold `value(t) = value + slope·t` at or above zero. */
+    const keepNonNegative = (value: number, slope: number) => {
+      if (slope === 0 || value < 0) {
+        return;
+      }
+      const contact = -value / slope;
+      if (slope < 0) {
+        hi = Math.min(hi, contact);
+      } else {
+        lo = Math.max(lo, contact);
+      }
+    };
+
+    const NO_MOVEMENT = { min: 0, max: 0 };
+    const deltaOf = (id: string) =>
+      response.byElement.get(id)?.[0] ?? NO_MOVEMENT;
 
     const rangeOf = (id: string): InclusiveRange | null => {
       const element = originalElements.get(id) ?? elementsMap.get(id);
@@ -673,21 +692,27 @@ export const clampDragToGapAlignments = (
         continue;
       }
       const spans = ranges as InclusiveRange[];
-      const factorOf = link.ids.map((id) => factors.get(id) ?? 0);
 
-      // one bound per gap, over every adjacent pair in the chain
+      // one bound per gap, over every adjacent pair in the chain. The gap runs
+      // from one element's far edge to the next one's near edge, so those are
+      // the two edges whose travel decides it — not the elements' positions,
+      // which are the same number only while nothing changes size.
       for (let i = 0; i < spans.length - 1; i++) {
-        const gap = spans[i + 1][0] - spans[i][1];
-        const slope = factorOf[i + 1] - factorOf[i];
-        if (slope === 0 || gap < 0) {
-          continue;
-        }
-        const bound = -gap / slope;
-        if (slope < 0) {
-          hi = Math.min(hi, bound);
-        } else {
-          lo = Math.max(lo, bound);
-        }
+        keepNonNegative(
+          spans[i + 1][0] - spans[i][1],
+          deltaOf(link.ids[i + 1]).min - deltaOf(link.ids[i]).max,
+        );
+      }
+    }
+
+    for (const [id, perDof] of response.byElement) {
+      const { min, max } = perDof[0];
+      if (min === max) {
+        continue;
+      }
+      const range = rangeOf(id);
+      if (range) {
+        keepNonNegative(range[1] - range[0] - MIN_ALIGNED_SIZE, max - min);
       }
     }
 
@@ -698,38 +723,35 @@ export const clampDragToGapAlignments = (
 };
 
 /**
- * Cap a proposed size so no hard gap alignment closes past zero — the
- * resize counterpart of {@link clampDragToGapAlignments}, and refused
- * for the same reason: past contact the triple reorders and "equally
- * spaced" stops meaning what it looks like.
+ * Cap a proposed size at the point something it moves would close past zero:
+ * a hard gap alignment pushed through contact, or a partner squashed away.
  *
- * Both ways a resize reaches a chain are capped, and each is capped in
- * the terms its own correction works in.
+ * The resize counterpart of {@link clampDragToGapAlignments}, refused for the
+ * same reasons and now computed the same way. Past contact a chain's members
+ * reorder and "equally spaced" stops meaning what it looks like; past zero
+ * width a partner's edges are the wrong way round, so every link naming one of
+ * them starts reading the other.
  *
- * When the driver is a chain *member*, the correction equalises the gaps
- * to their mean — the middle element absorbs the difference, and moving
- * it trades one gap against the other one-for-one — so the tightest
- * final gap is non-negative exactly when `g1 + g2 >= 0`.
+ * The response is linear in the driver's two edges, and the driver's two edges
+ * are affine in the proposed length — the handle says which side is held, and
+ * resizing from centre holds neither — so every quantity here is affine in the
+ * length, and two samples pin each line exactly. At the original length nothing
+ * has moved, which makes that sample simply the original gaps and extents.
  *
- * When the driver only reaches the chain through *edge* links, nothing
- * in the chain changes width and the correction translates it by an
- * arithmetic progression ({@link translateChain}). Every gap then moves
- * by the progression's slope, so the tightest final gap is the smallest
- * starting gap plus that slope. Predicting it needs the shift the edge
- * pass would hand each member at a hypothetical driver size, which is
- * what `edgeShiftsAt` reproduces.
+ * What this replaced is worth naming, because the shape of the bug it could
+ * have was specific: the cap used to *reconstruct* the propagation, reproducing
+ * the edge pass and then the equal-gap correction at a hypothetical size, and
+ * so had to be kept in step with a solve it did not share any code with. It now
+ * asks the solve itself, and cannot predict something other than what will
+ * happen.
  *
- * Either quantity is affine in the size, so both are sampled at the
- * proposed size and the original one and solved directly — no search,
- * and exact for the linear system each describes.
- *
- * Scope, deliberately: the single-element resize path on an unrotated
- * driver, and, for a member-driven chain, one whose middle is free to
- * absorb. A rotated element's bounds don't move with its size in a way
- * this prediction models, and if the middle is pinned the correction
- * lands elsewhere; both fall through uncapped rather than capped wrongly.
+ * Scope, deliberately: single-element resizes of an unrotated driver. A rotated
+ * element's axis-aligned box moves on *both* axes as either dimension changes,
+ * which breaks the per-axis independence the rest of this assumes; it falls
+ * through uncapped rather than capped wrongly. Multi-element resizes derive
+ * each member's bounds from a common box scale and are likewise uncapped.
  */
-export const clampSizeToGapAlignments = (
+export const clampSizeToAlignments = (
   size: { nextWidth: number; nextHeight: number },
   driver: ExcalidrawElement,
   originalElements: ReadonlyMap<string, ExcalidrawElement>,
@@ -742,167 +764,107 @@ export const clampSizeToGapAlignments = (
   }
 
   const chains = collectHardChains(elementsMap);
-  if (chains.length === 0) {
-    return size;
-  }
+  const resizeDriver = alignmentResizeDriver([driver.id]);
 
-  /** The driver's extent on `axis` if it were `length` long: the handle
-   * says which side is held, and resizing from centre holds neither. */
-  const projected = (axis: Axis, length: number): InclusiveRange => {
-    const bounds = getElementBounds(driver, elementsMap);
-    const [min, max] = axisRange(bounds, axis);
-    // "nw" / "w" hold the right edge and move the left, and so on
-    const movesMin = handle.includes(axis === "x" ? "w" : "n");
-    if (opts.shouldResizeFromCenter) {
-      const centre = (min + max) / 2;
-      return rangeInclusive(centre - length / 2, centre + length / 2);
+  const origRangeOf = (id: string, axis: Axis): InclusiveRange | null => {
+    const element = originalElements.get(id) ?? elementsMap.get(id);
+    return element
+      ? axisRange(getElementBounds(element, elementsMap), axis)
+      : null;
+  };
+
+  const clampAxis = (axis: Axis, length: number): number => {
+    const response = solveAlignmentResponse(resizeDriver, axis, elementsMap);
+    const origDriver = origRangeOf(driver.id, axis);
+    if (!response.feasible || !origDriver) {
+      return length;
     }
-    return movesMin
-      ? rangeInclusive(max - length, max)
-      : rangeInclusive(min, min + length);
-  };
-
-  /** Where the driver's `edge` sits at a proposed length. */
-  const driverEdgeAt = (
-    axis: Axis,
-    edge: AlignmentEdge,
-    length: number,
-  ): number => {
-    const [min, max] = projected(axis, length);
-    return edge === "min" ? min : edge === "max" ? max : (min + max) / 2;
-  };
-
-  /**
-   * The shift the *edge* pass would hand each element, if the driver were
-   * `length` long — the same seed-and-flood `buildResizeAlignmentDeltas`
-   * performs, sampled at a hypothetical size instead of the live one.
-   *
-   * This is what carries a resize into a chain the driver isn't a member
-   * of, and so what the cap for those chains has to be written in terms
-   * of.
-   */
-  const edgeShiftsAt = (axis: Axis, length: number): Map<string, number> => {
-    const shifts = new Map<string, number>();
-    const origDriver = originalElements.get(driver.id) ?? driver;
-    const origRange = axisRange(getElementBounds(origDriver, elementsMap), axis);
-
-    for (const link of driver.alignments ?? []) {
-      if (
-        link.axis !== axis ||
-        link.elementId === driver.id ||
-        isAlignmentAnchor(elementsMap.get(link.elementId)) ||
-        shifts.has(link.elementId)
-      ) {
-        continue;
-      }
-      const origin =
-        link.selfEdge === "min"
-          ? origRange[0]
-          : link.selfEdge === "max"
-          ? origRange[1]
-          : (origRange[0] + origRange[1]) / 2;
-      shifts.set(
-        link.elementId,
-        driverEdgeAt(axis, link.selfEdge, length) - origin,
-      );
+    const originalLength = origDriver[1] - origDriver[0];
+    if (length === originalLength) {
+      return length;
     }
-    floodAlignmentAxis(shifts, axis, new Set([driver.id]), elementsMap);
-    return shifts;
-  };
 
-  const clampAxis = (axis: Axis, length: number, current: number): number => {
-    const rangeOf = (id: string, driverLength: number): InclusiveRange | null => {
-      if (id === driver.id) {
-        return projected(axis, driverLength);
+    /** How far the driver's two edges have travelled at a proposed length. */
+    const driverEdgesAt = (at: number): number[] => {
+      if (opts.shouldResizeFromCenter) {
+        // both bounds grow outward, the centre stays put
+        const grew = (at - originalLength) / 2;
+        return [-grew, grew];
       }
-      const element = originalElements.get(id) ?? elementsMap.get(id);
-      return element
-        ? axisRange(getElementBounds(element, elementsMap), axis)
-        : null;
+      // "nw" / "w" hold the right edge and move the left, and so on
+      return handle.includes(axis === "x" ? "w" : "n")
+        ? [originalLength - at, 0]
+        : [0, at - originalLength];
     };
 
-    const shiftsProposed = edgeShiftsAt(axis, length);
-    const shiftsCurrent = edgeShiftsAt(axis, current);
+    const NO_MOVEMENT = { min: 0, max: 0 };
 
     /**
-     * The tightest gap the chain is left with, once the correction has
-     * run, if the driver were `driverLength` long.
-     *
-     * Two chains, two rules, matching `correctGapAlignments`. When the
-     * driver is a *member*, the mean rule lands both gaps on the mean, so
-     * the sum standing in for the tightest one is exact — and that is the
-     * quantity the original cap was written around. When the driver only
-     * reaches the chain through edge links, the chain is translated by an
-     * arithmetic progression, every gap moves by the same slope, and the
-     * tightest gap is the smallest starting gap plus it.
+     * Every quantity that has to stay at or above zero, in a fixed order so
+     * the two samples can be matched term by term. `Infinity` stands for one
+     * that can't be measured — it never binds, and it is the same at both
+     * samples, since what it depends on doesn't vary with the length.
      */
-    const marginAt = (
-      link: ElementGapAlignment,
-      driverLength: number,
-      shifts: Map<string, number>,
-    ): number | null => {
-      const ranges = link.ids.map((id) => rangeOf(id, driverLength));
-      if (ranges.some((range) => range == null)) {
-        return null;
-      }
-      const spans = ranges as InclusiveRange[];
-      const gaps: number[] = [];
-      for (let i = 0; i < spans.length - 1; i++) {
-        gaps.push(spans[i + 1][0] - spans[i][1]);
-      }
+    const marginsAt = (at: number): number[] => {
+      const deltas = applyAlignmentResponse(response, driverEdgesAt(at));
+      const deltaOf = (id: string) => deltas.get(id) ?? NO_MOVEMENT;
+      const margins: number[] = [];
 
-      if (link.ids.includes(driver.id)) {
-        return gaps.reduce((total, gap) => total + gap, 0);
-      }
-
-      const known: { index: number; shift: number }[] = [];
-      link.ids.forEach((id, index) => {
-        if (isAlignmentAnchor(elementsMap.get(id))) {
-          known.push({ index, shift: 0 });
-        } else if (shifts.has(id)) {
-          known.push({ index, shift: shifts.get(id)! });
+      for (const link of chains) {
+        if (link.axis !== axis) {
+          continue;
         }
-      });
-      const shiftAt = fitShiftProgression(known, link.ids.length);
-      if (!shiftAt) {
-        // nothing reaches this chain, or it can't be satisfied at all —
-        // either way this resize is not what closes it
-        return null;
+        for (let i = 0; i < link.ids.length - 1; i++) {
+          const before = origRangeOf(link.ids[i], axis);
+          const after = origRangeOf(link.ids[i + 1], axis);
+          margins.push(
+            before && after
+              ? after[0] +
+                  deltaOf(link.ids[i + 1]).min -
+                  (before[1] + deltaOf(link.ids[i]).max)
+              : Infinity,
+          );
+        }
       }
-      const slope = shiftAt(1) - shiftAt(0);
-      return Math.min(...gaps) + slope;
+
+      // Only the elements the solve changes the size of: everything else
+      // keeps the extent it had, and the driver's own is floored by
+      // `clampSizeToMinimumExtent` before this ever sees it.
+      for (const id of response.stretchers) {
+        const range = origRangeOf(id, axis);
+        const delta = deltaOf(id);
+        margins.push(
+          range
+            ? range[1] - range[0] + delta.max - delta.min - MIN_ALIGNED_SIZE
+            : Infinity,
+        );
+      }
+      return margins;
     };
 
-    // Which way the margin runs with the size depends on how the resize
-    // reaches the chain, so the contact point can bound the length from
-    // either side. Growing a chain member closes the gaps beside it, and
-    // the cap is a maximum; shrinking an element the chain's end is
-    // aligned to drags that end inward, and the cap is a minimum.
+    // Which way a margin runs with the size depends on how the resize reaches
+    // it, so the contact point can bound the length from either side. Growing
+    // a chain member closes the gaps beside it, and the cap is a maximum;
+    // shrinking an element the chain's end is aligned to drags that end
+    // inward, and the cap is a minimum.
+    const atOriginal = marginsAt(originalLength);
+    const atProposed = marginsAt(length);
     let lo = -Infinity;
     let hi = Infinity;
 
-    for (const link of chains) {
-      // A chain the resize neither belongs to nor reaches by an edge link
-      // is not going anywhere, whatever else is true of it
-      if (
-        link.axis !== axis ||
-        (!link.ids.includes(driver.id) &&
-          !link.ids.some((id) => shiftsProposed.has(id)))
-      ) {
+    for (let i = 0; i < atOriginal.length; i++) {
+      const start = atOriginal[i];
+      const proposed = atProposed[i];
+      if (start < 0 || proposed >= 0) {
+        // already past zero before the gesture began, or not crossing now
         continue;
       }
-      const margin = marginAt(link, length, shiftsProposed);
-      const margin0 = marginAt(link, current, shiftsCurrent);
-      if (margin == null || margin0 == null || margin >= 0 || margin0 < 0) {
-        // already fine, or already crossed before this resize began
-        continue;
-      }
-      const slope = (margin - margin0) / (length - current);
+      const slope = (proposed - start) / (length - originalLength);
       if (slope === 0) {
         continue;
       }
-      // the length at which the tightest gap reaches exactly zero
-      const contact = current - margin0 / slope;
+      // the length at which this margin reaches exactly zero
+      const contact = originalLength - start / slope;
       if (slope < 0) {
         hi = Math.min(hi, contact);
       } else {
@@ -912,30 +874,11 @@ export const clampSizeToGapAlignments = (
     return clamp(length, lo, hi);
   };
 
-  const bounds = getElementBounds(driver, elementsMap);
   return {
-    nextWidth: clampAxis("x", size.nextWidth, bounds[2] - bounds[0]),
-    nextHeight: clampAxis("y", size.nextHeight, bounds[3] - bounds[1]),
+    nextWidth: clampAxis("x", size.nextWidth),
+    nextHeight: clampAxis("y", size.nextHeight),
   };
 };
-
-/**
- * How close two gaps must be before the correction pass calls it done.
- * Looser than {@link GAP_EPSILON} would be pointless and tighter would
- * chase floating-point noise across passes.
- */
-const GAP_CORRECTION_EPSILON = 0.01;
-
-/**
- * Ceiling on correction passes. One pass settles a single triple
- * exactly; a longer chain, or two chains sharing a member, need the
- * correction to propagate from triple to triple, which converges
- * geometrically. The cap is generous enough that a chain of a dozen
- * settles well inside it. This is not a general constraint solver — an
- * adversarial graph of chains can leave a small residual error rather
- * than diverging — and that is a deliberate limit for now.
- */
-const MAX_GAP_CORRECTION_PASSES = 16;
 
 /** Every distinct hard chain in the scene, deduped across the copies it
  * is stored under (one per member). */
@@ -988,477 +931,6 @@ export const hasHardGapAlignmentAmong = (
     }
   }
   return false;
-};
-
-/**
- * The anchors that block a resize because they sit in a hard equal-gap
- * chain the resize would disturb — the equal-gap counterpart of
- * `getAlignmentAnchoredResizeBlockers`, and reported the same way so the
- * clamp and the anvil overlay can treat the two alike.
- *
- * A chain holds its gaps equal by translating its members, so changing
- * any one gap asks every member to shift. An anchor in the chain forbids
- * that, and unlike the edge case there is no partial answer: the
- * correction holds one member still, and a second immovable member
- * leaves it unsatisfiable. So the resize is refused rather than allowed
- * to break the chain.
- *
- * "Would disturb" is per *edge*, which is what leaves the useful gesture
- * alone: a member's leading edge bounds the gap before it and its
- * trailing edge the gap after, so an element at either end of a chain can
- * still be resized outward — that edge bounds no gap.
- */
-export const getGapAlignmentAnchoredResizeBlockers = (
-  resizedIds: Set<string>,
-  elementsMap: ElementsMap,
-  opts: ResizeEdgeOpts,
-): { x: Set<string>; y: Set<string> } => {
-  const blockersOn = (axis: Axis): Set<string> => {
-    const blockers = new Set<string>();
-    for (const link of collectHardChains(elementsMap)) {
-      if (link.axis !== axis) {
-        continue;
-      }
-      // A member is immovable if it is anchored *or* if translating it
-      // would have to move an anchor it is edge-linked to. The correction
-      // only ever translates members, and it runs after the edge pass, so
-      // a member shifted here never gets the chance to carry its own edge
-      // partners along — the alignment to the anchor would simply break.
-      const anchors = new Set<string>();
-      for (const id of link.ids) {
-        if (resizedIds.has(id)) {
-          continue;
-        }
-        for (const anchorId of getTranslationBlockingAnchors(
-          id,
-          axis,
-          elementsMap,
-          resizedIds,
-        )) {
-          anchors.add(anchorId);
-        }
-      }
-      if (anchors.size === 0) {
-        continue;
-      }
-      const disturbs = link.ids.some(
-        (id, index) =>
-          resizedIds.has(id) &&
-          ((index > 0 && resizeMovesEdge(axis, "min", opts)) ||
-            (index < link.ids.length - 1 &&
-              resizeMovesEdge(axis, "max", opts))),
-      );
-      if (disturbs) {
-        for (const id of anchors) {
-          blockers.add(id);
-        }
-      }
-    }
-    return blockers;
-  };
-
-  return { x: blockersOn("x"), y: blockersOn("y") };
-};
-
-/**
- * The members of every hard chain a resize sets moving, per axis — the
- * equal-gap half of {@link getAlignmentResizeMovers}, and asked the same
- * "does this edge actually move" question as the blockers above.
- *
- * Reported as the whole chain rather than the members that shift, because
- * a chain is corrected as a unit: the solve sends every gap to the mean
- * and holds one member still, so a member that doesn't move is holding
- * the chain in place rather than sitting outside it.
- */
-export const getGapAlignmentResizeMovers = (
-  resizedIds: Set<string>,
-  elementsMap: ElementsMap,
-  opts: ResizeEdgeOpts,
-  frozen: { x: boolean; y: boolean },
-): { x: Set<string>; y: Set<string> } => {
-  const moversOn = (axis: Axis): Set<string> => {
-    const movers = new Set<string>();
-    if (frozen[axis]) {
-      return movers;
-    }
-    for (const link of collectHardChains(elementsMap)) {
-      if (link.axis !== axis) {
-        continue;
-      }
-      const disturbs = link.ids.some(
-        (id, index) =>
-          resizedIds.has(id) &&
-          ((index > 0 && resizeMovesEdge(axis, "min", opts)) ||
-            (index < link.ids.length - 1 &&
-              resizeMovesEdge(axis, "max", opts))),
-      );
-      if (disturbs) {
-        for (const id of link.ids) {
-          movers.add(id);
-        }
-      }
-    }
-    return movers;
-  };
-
-  return { x: moversOn("x"), y: moversOn("y") };
-};
-
-/**
- * Extend a resize's translation maps so every hard equal-gap triple
- * survives it.
- *
- * A resize moves one element's edges without moving anything else, which
- * is exactly what breaks an equal gap — so unlike a drag this genuinely
- * has to be solved. The correction is expressed as more entries in the
- * same `dxById` / `dyById` maps the edge-alignment pass builds, so both
- * kinds of alignment are resolved before a single element is written to
- * the scene, and everything stays measured from the resize-start
- * snapshot (no drift across pointermove events).
- *
- * Each chain is solved outright rather than relaxed triple by triple.
- * Sweeping the triples looks tempting — every adjacent pair is the
- * three-element problem — but it doesn't converge: a triple that fully
- * zeroes its own error undoes the correction its neighbour just made to
- * the member they share, and a chain whose middle is the resized element
- * settles into a two-cycle that never touches one side.
- *
- * The solution is: send every gap to the mean of the current gaps, which
- * leaves the chain's overall extent alone (the members redistribute
- * inside the same span), and hold one member still to fix the position —
- * the immovable one if there is one, otherwise the average, so nothing
- * drifts. For three elements this is exactly what the old
- * middle-takes-half rule produced, whichever member was being resized.
- *
- * All of which is for a chain the resize reaches from *inside*. A chain
- * that merely hangs off the resize by an edge link never has a member
- * change width, so its gaps stay equal under a plain translation and it
- * takes {@link translateChain} instead — the drag's rule, so the same
- * displacement produces the same motion whichever gesture caused it.
- *
- * A *second* immovable member would have to move too, which anchoring
- * forbids — so that resize is refused before it happens (see
- * `getGapAlignmentAnchoredResizeBlockers`) and the chain here never has
- * to satisfy two fixed points at once.
- *
- * Each correction is flooded along *edge* links so a member drags its
- * own aligned partners with it. A member that is both gap-constrained
- * and edge-constrained to the resize holds the position the edge pass
- * gave it, and the chain redistributes around it — see `isMovable`.
- */
-/**
- * Re-space a chain that is only being *translated*, by the same rule a
- * drag uses — see `getAlignmentDragFactors`.
- *
- * Nothing in the chain changes width here, so the gaps stay equal exactly
- * when the members' shifts form an arithmetic progression: gap `i` moves
- * by `t(i+1) - t(i)`, and a constant difference moves every gap by the
- * same amount. Two degrees of freedom however long the chain is, so the
- * members whose shift is already decided determine it.
- *
- * Which is why the choice of slope for a single known member is the same
- * choice the drag makes, and has to be: an *end* member pins the far end
- * and shares its travel evenly across the gaps, and an *interior* one
- * takes zero, so the chain travels rigidly. Anything else and dragging an
- * element would move the chain one way while resizing it moved the chain
- * another, for the same displacement of the same edge.
- *
- * Returns whether it wrote anything. The shifts are absolute totals
- * measured from the resize-start snapshot, and every known is fixed for
- * the duration, so a second pass over the same chain computes the same
- * answer and reports no change.
- */
-const fitShiftProgression = (
-  known: readonly { index: number; shift: number }[],
-  chainLength: number,
-): ((index: number) => number) | null => {
-  if (known.length === 0) {
-    // nothing is driving this chain, so there is nothing to solve from
-    return null;
-  }
-
-  const first = known[0];
-  const last = known[known.length - 1];
-  let slope: number;
-  if (known.length > 1) {
-    slope = (last.shift - first.shift) / (last.index - first.index);
-  } else if (first.index === 0 || first.index === chainLength - 1) {
-    // An end member: the *far* end holds still, so the run compresses
-    // between the two of them and every gap takes an equal share.
-    const farEnd = first.index === 0 ? chainLength - 1 : 0;
-    slope = -first.shift / (farEnd - first.index);
-  } else {
-    slope = 0;
-  }
-  const intercept = first.shift - slope * first.index;
-  const shiftAt = (index: number) => intercept + slope * index;
-
-  // Every known has to lie on the line the outer two define. One that
-  // doesn't — a third driver, or an anchor the progression would have to
-  // move — makes the chain unsatisfiable, and it is left out of true
-  // rather than dragged somewhere that doesn't fix it.
-  return known.some(
-    ({ index, shift }) =>
-      Math.abs(shiftAt(index) - shift) > GAP_CORRECTION_EPSILON,
-  )
-    ? null
-    : shiftAt;
-};
-
-const translateChain = (
-  ids: readonly string[],
-  axis: Axis,
-  deltaById: Map<string, number>,
-  isMovable: (id: string, axis: Axis) => boolean,
-): boolean => {
-  const known: { index: number; shift: number }[] = [];
-  ids.forEach((id, index) => {
-    if (!isMovable(id, axis)) {
-      known.push({ index, shift: deltaById.get(id) ?? 0 });
-    }
-  });
-
-  const shiftAt = fitShiftProgression(known, ids.length);
-  if (!shiftAt) {
-    return false;
-  }
-
-  let wrote = false;
-  ids.forEach((id, index) => {
-    if (!isMovable(id, axis)) {
-      return;
-    }
-    const shift = shiftAt(index);
-    const current = deltaById.get(id) ?? 0;
-    if (Math.abs(shift - current) > GAP_CORRECTION_EPSILON) {
-      deltaById.set(id, shift);
-      wrote = true;
-    }
-  });
-  return wrote;
-};
-
-const correctGapAlignments = (
-  resizedIds: Set<string>,
-  originalElements: PointerDownState["originalElements"],
-  dxById: Map<string, number>,
-  dyById: Map<string, number>,
-  // Size changes the edge pass handed out, per axis. A partner that could
-  // not travel stretched instead, and a chain measures the gaps its far
-  // edge bounds — so the range has to grow with it, not just slide.
-  sizeById: { x: ReadonlyMap<string, number>; y: ReadonlyMap<string, number> },
-  elementsMap: ElementsMap,
-  edgePinned: { x: ReadonlySet<string>; y: ReadonlySet<string> },
-) => {
-  const chains = collectHardChains(elementsMap);
-  if (chains.length === 0) {
-    return;
-  }
-
-  // Base geometry: the drivers as they are now (they moved under the
-  // pointer), everything else as it was when the resize began. Bounds
-  // translate exactly with x/y, so a pending delta can be added to the
-  // measured range instead of re-deriving it from a moved clone.
-  const baseRange = new Map<string, InclusiveRange | null>();
-  const rangeOf = (id: string, axis: Axis): InclusiveRange | null => {
-    const key = `${id}:${axis}`;
-    if (!baseRange.has(key)) {
-      const element = resizedIds.has(id)
-        ? elementsMap.get(id)
-        : originalElements.get(id) ?? elementsMap.get(id);
-      baseRange.set(
-        key,
-        element ? axisRange(getElementBounds(element, elementsMap), axis) : null,
-      );
-    }
-    return baseRange.get(key)!;
-  };
-
-  /**
-   * A member the correction may reposition.
-   *
-   * Three kinds may not. The resized element moved under the pointer and
-   * an anchor refuses to move at all — and a member whose delta came out
-   * of the *edge* pass is pinned just as firmly, because that delta is
-   * what keeps a hard edge alignment to the resize intact. Treating one
-   * as movable is how the chain used to drift away from the element it
-   * was aligned to: the edge pass would place it, and the mean solve
-   * would then shift it somewhere else to even out the gaps.
-   *
-   * Per axis, since a member can be edge-pinned on one and free on the
-   * other. The pinned sets are a snapshot taken before this runs, so the
-   * deltas the correction itself writes don't pin anything on a later
-   * pass.
-   */
-  const isMovable = (id: string, axis: Axis) =>
-    !resizedIds.has(id) &&
-    !edgePinned[axis].has(id) &&
-    // anchored itself, or edge-linked to something anchored: shifting it
-    // would break that alignment, since the edge pass has already run and
-    // the anchor cannot follow anyway
-    getTranslationBlockingAnchors(id, axis, elementsMap, resizedIds).size === 0;
-
-  for (let pass = 0; pass < MAX_GAP_CORRECTION_PASSES; pass++) {
-    let corrected = false;
-
-    for (const { axis, ids } of chains) {
-      const deltaById = axis === "x" ? dxById : dyById;
-
-      // A chain no resized element belongs to is only ever *translated*
-      // — every member keeps its width, and the drivers reach it through
-      // edge links. That is the drag problem exactly, so it takes the
-      // drag's answer rather than the mean rule below, which exists for
-      // the case a member's own width changed under the pointer.
-      if (!ids.some((id) => resizedIds.has(id))) {
-        if (translateChain(ids, axis, deltaById, isMovable)) {
-          corrected = true;
-        }
-        continue;
-      }
-
-      const ranges = ids.map((id) => {
-        const range = rangeOf(id, axis);
-        if (!range) {
-          return null;
-        }
-        const delta = deltaById.get(id) ?? 0;
-        const grew = sizeById[axis].get(id) ?? 0;
-        return [range[0] + delta, range[1] + delta + grew] as const;
-      });
-      if (ranges.some((range) => range == null)) {
-        continue;
-      }
-      const spans = ranges as (readonly [number, number])[];
-
-      const gaps: number[] = [];
-      for (let i = 0; i < spans.length - 1; i++) {
-        gaps.push(spans[i + 1][0] - spans[i][1]);
-      }
-
-      // Every gap goes to their mean. That is the correction that leaves
-      // the chain's overall extent alone — the members redistribute
-      // inside the same span — and for three elements it is exactly what
-      // the old middle-takes-half rule produced.
-      const target =
-        gaps.reduce((total, gap) => total + gap, 0) / gaps.length;
-      if (
-        gaps.every((gap) => Math.abs(gap - target) <= GAP_CORRECTION_EPSILON)
-      ) {
-        continue;
-      }
-
-      // Where each member's leading edge would sit if every gap were
-      // `target`, measured from an origin still to be chosen.
-      const layout = [0];
-      for (let i = 1; i < spans.length; i++) {
-        layout.push(
-          layout[i - 1] + (spans[i - 1][1] - spans[i - 1][0]) + target,
-        );
-      }
-      // The origin each member would pick if it were the one to hold
-      // still. An immovable member decides it; with none, the average
-      // keeps the movement even.
-      const origins = spans.map((span, i) => span[0] - layout[i]);
-      const held = ids.findIndex((id) => !isMovable(id, axis));
-      const origin =
-        held >= 0
-          ? origins[held]
-          : origins.reduce((total, value) => total + value, 0) / origins.length;
-
-      const shifts = spans.map((span, i) => origin + layout[i] - span[0]);
-
-      // A second immovable member that would also have to move makes the
-      // chain unsatisfiable. Leave it out of true rather than dragging
-      // the movable members somewhere that doesn't fix it — and, since
-      // the correction is recomputed every pass, rather than drifting.
-      // The resize that would have caused it is refused up front by
-      // `getGapAlignmentAnchoredResizeBlockers`, so this is a backstop.
-      if (
-        ids.some(
-          (id, i) =>
-            !isMovable(id, axis) &&
-            Math.abs(shifts[i]) > GAP_CORRECTION_EPSILON,
-        )
-      ) {
-        continue;
-      }
-
-      ids.forEach((id, i) => {
-        if (isMovable(id, axis) && shifts[i] !== 0) {
-          deltaById.set(id, (deltaById.get(id) ?? 0) + shifts[i]);
-          corrected = true;
-        }
-      });
-    }
-
-    if (!corrected) {
-      break;
-    }
-    floodAlignmentAxis(dxById, "x", resizedIds, elementsMap);
-    floodAlignmentAxis(dyById, "y", resizedIds, elementsMap);
-  }
-};
-
-/**
- * The whole alignment response to a resize: hard edge links first, then
- * the equal-gap correction on top, then one write to the scene.
- *
- * Both passes have to agree before anything moves — a member of a triple
- * may also be an edge partner — which is why this is one entry point
- * rather than two propagators called in sequence.
- */
-export const propagateAlignmentsAfterResize = (
-  originalElements: PointerDownState["originalElements"],
-  resizedIds: Set<string>,
-  scene: Scene,
-) => {
-  const elementsMap = scene.getNonDeletedElementsMap();
-  const { dxById, dyById, dwById, dhById } = buildResizeAlignmentDeltas(
-    originalElements,
-    resizedIds,
-    elementsMap,
-  );
-  // Everything the edge pass placed, captured before the gap correction
-  // adds entries of its own. These positions are not up for negotiation:
-  // each is what holds a hard edge alignment to the resize together, so
-  // a chain running through one has to redistribute around it.
-  const edgePinned = {
-    x: new Set(dxById.keys()),
-    y: new Set(dyById.keys()),
-  };
-  correctGapAlignments(
-    resizedIds,
-    originalElements,
-    dxById,
-    dyById,
-    { x: dwById, y: dhById },
-    elementsMap,
-    edgePinned,
-  );
-  // Groups last, over whatever both passes placed: a member either pass
-  // moved carries its siblings, so the arrangement the user grouped
-  // survives the constraint that moved it. It runs after rather than
-  // inside the chain solve because a group is rigid and a chain is not —
-  // where the two disagree about one element, the group wins and the
-  // chain absorbs it, which is the same order of authority the drag path
-  // takes.
-  const groupMembers = getGroupMembers(elementsMap);
-  const skip = (id: string) =>
-    resizedIds.has(id) || isAlignmentAnchor(elementsMap.get(id));
-  // Positions only. A sibling of a member that *stretched* travels by
-  // that member's leading edge, which keeps the group's arrangement as
-  // nearly as anything can — the group's own extent changed, and there is
-  // no rigid answer to that.
-  spreadAcrossGroups(dxById, groupMembers, skip);
-  spreadAcrossGroups(dyById, groupMembers, skip);
-  applyAlignmentDeltas(
-    originalElements,
-    dxById,
-    dyById,
-    dwById,
-    dhById,
-    scene,
-  );
 };
 
 /**

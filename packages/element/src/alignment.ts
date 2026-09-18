@@ -1,5 +1,14 @@
 import type { Bounds } from "@excalidraw/common";
 
+import {
+  alignmentAnchorsInPlay,
+  alignmentDragDriver,
+  alignmentDriverFromEdgeDeltas,
+  applyAlignmentResponse,
+  getGroupMembers,
+  isAlignmentAnchor,
+  solveAlignmentResponse,
+} from "./alignmentSolve";
 import { updateBoundElements } from "./binding";
 import { getElementBounds } from "./bounds";
 import { newElementWith } from "./mutateElement";
@@ -8,6 +17,7 @@ import { isBoundToContainer, isLinearElement } from "./typeChecks";
 
 import type { PointerDownState } from "@excalidraw/excalidraw/types";
 
+import type { AlignmentResponse, EdgeDelta } from "./alignmentSolve";
 import type { Scene } from "./Scene";
 import type {
   AlignmentEdge,
@@ -16,6 +26,11 @@ import type {
   ExcalidrawElement,
   NonDeletedExcalidrawElement,
 } from "./types";
+
+// `isAlignmentAnchor` and `getGroupMembers` live in `alignmentSolve.ts`, which
+// this file will come to depend on and so must not depend on it. Re-exported
+// here because everything else reaches them through this module.
+export { getGroupMembers, isAlignmentAnchor };
 
 /**
  * VERSION-LOG: New feature hard alignment ("alignment lock")
@@ -530,55 +545,6 @@ export const releaseAlignmentsToDeleted = <T extends ExcalidrawElement>(
 };
 
 /**
- * Whether an element holds still against alignment propagation.
- *
- * Two independent reasons, and either is sufficient:
- *   - `alignmentLocked`, our anvil badge — "keep this one put while its
- *     partners move";
- *   - `locked`, upstream's element lock — the user can't edit it at all,
- *     so alignment must not move it either. Without this an aligned
- *     partner could shove a locked element around, which is exactly what
- *     the lock is supposed to forbid.
- */
-export const isAlignmentAnchor = (
-  element: ExcalidrawElement | undefined,
-): boolean => !!element && (!!element.alignmentLocked || element.locked);
-
-/**
- * The group an element moves with, or null if it is in none.
- *
- * The **outermost** group, because that is the unit a click selects and
- * so the unit the user is positioning. Inner groups are only addressable
- * after entering one, which is editor state the alignment engine has no
- * access to and no notion of.
- */
-const outermostGroupId = (element: ExcalidrawElement): string | null =>
-  element.groupIds.length > 0
-    ? element.groupIds[element.groupIds.length - 1]
-    : null;
-
-/** Outermost group id → its member ids, in one sweep, so a propagator
- * can ask "what else moves with this" without rescanning per element. */
-export const getGroupMembers = (
-  elementsMap: ElementsMap,
-): Map<string, string[]> => {
-  const byGroup = new Map<string, string[]>();
-  for (const element of elementsMap.values()) {
-    const groupId = outermostGroupId(element);
-    if (!groupId) {
-      continue;
-    }
-    const members = byGroup.get(groupId);
-    if (members) {
-      members.push(element.id);
-    } else {
-      byGroup.set(groupId, [element.id]);
-    }
-  }
-  return byGroup;
-};
-
-/**
  * Spread a per-element quantity across group membership: a group keeps
  * its layout, so a member with no value of its own takes a sibling's.
  *
@@ -673,232 +639,65 @@ export const getTranslationBlockingAnchors = (
   return anchors;
 };
 
-/** Bound on the propagation passes below. A chain settles in a pass or
- * two; the cap is only there so a cyclic link graph can't spin. */
-const MAX_DRAG_FACTOR_PASSES = 8;
-
-/**
- * How far each element travels on one axis when `seeds` are dragged, as
- * a multiple of the drag offset. The seeds themselves are 1; an element
- * absent from the map doesn't move. Includes the seeds.
- *
- * A multiple rather than a set, because gap alignment doesn't move
- * everything by the same amount. Holding one gap equal to the next says
- *
- *     d(i+1) − d(i) = d(i+2) − d(i+1)
- *
- * so along a chain the factors are an **arithmetic progression**,
- * `d(i) = p + q·i`, however long the chain is. Two degrees of freedom,
- * so two known members determine the rest and the passes below fit the
- * line through them. (A third known member that disagrees is left alone
- * — the chain is then over-constrained, and first-wins is the same
- * backstop the edge propagator uses.)
- *
- * One known member leaves `q` free, and the choice there is what gives
- * gap dragging its feel:
- *
- *   - an **interior** member is the known one: `q = 0`, so the chain
- *     travels rigidly. Translating everything preserves every gap
- *     whatever their sizes, and this is the case when the user drags a
- *     member with neighbours on both sides.
- *   - an **end** member is the known one: the *far* end is held at 0,
- *     so `q = ∓d / (n - 1)`. Dragging the first element toward the chain
- *     by `d` compresses the run by `d` in total, every gap giving up an
- *     equal share of it, and the last element does not move at all.
- *
- * Holding the far end is what makes the gesture legible: the chain is one
- * arrangement with two ends, and pulling one of them toward the other is
- * a squeeze of the whole thing rather than a shove that walks its far
- * side backwards. It also keeps the gesture proportional — the drag is
- * shared out across however many gaps there are, instead of each of them
- * absorbing the whole of it.
- *
- * Both are defaults for a free `q`, and a member that cannot move takes
- * precedence over either: an anchor, or a member edge-linked to one, is a
- * second known factor of 0, so the chain compresses or stretches around
- * it instead of refusing the drag. Two such members leave no line through
- * the dragged one as well, and the drag is refused as before.
- *
- * Edge alignments are the simple case throughout: a partner inherits its
- * neighbour's factor exactly, which is the rigid coupling they've always
- * had.
- *
- * Also returns the anchors behind any pin that changed the answer — ones
- * the default would have moved — so the overlay can name what is
- * reshaping the chain. An anchor the default already held still did
- * nothing the user wouldn't have seen anyway — unless the chain's pins
- * leave no solution, where every one of them is part of the reason.
- */
-const solveAlignmentDragFactors = (
-  seeds: Set<string>,
-  axis: Axis,
-  elementsMap: ElementsMap,
-): { factors: Map<string, number>; pinAnchors: Set<string> } => {
-  const factors = new Map<string, number>();
-  for (const id of seeds) {
-    factors.set(id, 1);
-  }
-  const pinAnchors = new Set<string>();
-  const groupMembers = getGroupMembers(elementsMap);
-
-  /** Edge links: a partner moves exactly as its neighbour does. */
-  const spreadEdgeLinks = (): boolean => {
-    let changed = false;
-    const queue = [...factors.keys()];
-    while (queue.length > 0) {
-      const id = queue.pop()!;
-      const factor = factors.get(id)!;
-      for (const link of elementsMap.get(id)?.alignments ?? []) {
-        if (link.axis === axis && !factors.has(link.elementId)) {
-          factors.set(link.elementId, factor);
-          queue.push(link.elementId);
-          changed = true;
-        }
-      }
-    }
-    return changed;
-  };
-
-  /** What holds a member still: every anchor it can't be translated
-   * without, other than ones being dragged. Empty for a free member. */
-  const pinningAnchors = (id: string): string[] =>
-    [...getTranslationBlockingAnchors(id, axis, elementsMap)].filter(
-      (anchorId) => !seeds.has(anchorId),
-    );
-
-  /** The progression through `known` (sorted by index), with the default
-   * slope for a single known member. */
-  const fitProgression = (
-    known: readonly { index: number; factor: number }[],
-    chainLength: number,
-  ): ((index: number) => number) => {
-    const first = known[0];
-    const last = known[known.length - 1];
-    let slope: number;
-    if (known.length > 1) {
-      slope = (last.factor - first.factor) / (last.index - first.index);
-    } else if (first.index === 0 || first.index === chainLength - 1) {
-      // dragging an end: the far end holds still
-      const farEnd = first.index === 0 ? chainLength - 1 : 0;
-      slope = -first.factor / (farEnd - first.index);
-    } else {
-      // dragging from inside: the whole chain travels together
-      slope = 0;
-    }
-    const intercept = first.factor - slope * first.index;
-    return (index) => intercept + slope * index;
-  };
-
-  /** One pass of the progression fit over every gap chain on this axis. */
-  const solveChains = (): boolean => {
-    let changed = false;
-    for (const el of elementsMap.values()) {
-      for (const link of el.gapAlignments ?? []) {
-        if (link.axis !== axis || link.ids.length < 3) {
-          continue;
-        }
-        const known: { index: number; factor: number }[] = [];
-        link.ids.forEach((id, index) => {
-          const factor = factors.get(id);
-          if (factor !== undefined) {
-            known.push({ index, factor });
-          }
-        });
-        if (known.length === 0 || known.length === link.ids.length) {
-          // nothing to solve from, or nothing left to solve
-          continue;
-        }
-
-        // A member that can't move is a known factor of 0, so it takes
-        // over from the default pin. Written straight away: if the line
-        // through the knowns doesn't also pass through it (a second pinned
-        // member, say), the chain fails verification and the drag is
-        // refused, rather than this member being fitted somewhere it
-        // can't go.
-        const byDefault = fitProgression(known, link.ids.length);
-        const pins: { anchors: string[]; overridesDefault: boolean }[] = [];
-        link.ids.forEach((id, index) => {
-          if (factors.has(id)) {
-            return;
-          }
-          const anchors = pinningAnchors(id);
-          if (anchors.length === 0) {
-            return;
-          }
-          factors.set(id, 0);
-          known.push({ index, factor: 0 });
-          changed = true;
-          pins.push({
-            anchors,
-            overridesDefault: Math.abs(byDefault(index)) > FACTOR_EPSILON,
-          });
-        });
-        known.sort((a, b) => a.index - b.index);
-
-        const factorAt = fitProgression(known, link.ids.length);
-        // When the pins leave no solution, every one of them is part of
-        // why — including one the default would have held anyway, since
-        // without it the others could be satisfied.
-        const unsolvable = known.some(
-          ({ index, factor }) =>
-            Math.abs(factorAt(index) - factor) > FACTOR_EPSILON,
-        );
-        for (const pin of pins) {
-          if (unsolvable || pin.overridesDefault) {
-            pin.anchors.forEach((anchorId) => pinAnchors.add(anchorId));
-          }
-        }
-        link.ids.forEach((id, index) => {
-          if (!factors.has(id)) {
-            // 0 is recorded rather than left absent, so a chain further
-            // along can solve against a member that holds still
-            factors.set(id, factorAt(index));
-            changed = true;
-          }
-        });
-      }
-    }
-    return changed;
-  };
-
-  // Groups are spread before the chains solve, so a chain solving against
-  // a grouped member sees the factor the group actually gives it rather
-  // than pinning it and having the group contradict that afterwards.
-  for (let pass = 0; pass < MAX_DRAG_FACTOR_PASSES; pass++) {
-    const spread = spreadEdgeLinks();
-    const grouped = spreadAcrossGroups(factors, groupMembers);
-    const solved = solveChains();
-    if (!spread && !grouped && !solved) {
-      break;
-    }
-  }
-
-  return { factors, pinAnchors };
+/** What the scene does per unit of drag offset, on each axis. */
+export type AlignmentDragResponse = {
+  x: AlignmentResponse;
+  y: AlignmentResponse;
 };
 
-/** How far each element travels on `axis`, as a multiple of the drag
- * offset — see {@link solveAlignmentDragFactors}. */
-export const getAlignmentDragFactors = (
+export const getAlignmentDragResponse = (
+  draggedIds: Set<string>,
+  elementsMap: ElementsMap,
+): AlignmentDragResponse => {
+  const driver = alignmentDragDriver(draggedIds);
+  return {
+    x: solveAlignmentResponse(driver, "x", elementsMap),
+    y: solveAlignmentResponse(driver, "y", elementsMap),
+  };
+};
+
+/**
+ * How far each of an element's two edges travels on `axis`, as a multiple of
+ * the drag offset.
+ *
+ * Both edges, not one displacement per element, because a drag can now change
+ * a partner's size: the edge the drag pulls moves while the edge an anchor
+ * holds does not. Anything anchored to a *particular* edge — a snap point on a
+ * corner, the side of a gap — has to ask about that edge rather than about the
+ * element.
+ *
+ * Empty on an axis the drag is refused on, where nothing moves at all.
+ */
+export const getAlignmentDragEdgeFactors = (
   seeds: Set<string>,
   axis: Axis,
   elementsMap: ElementsMap,
-): Map<string, number> =>
-  solveAlignmentDragFactors(seeds, axis, elementsMap).factors;
+): Map<string, EdgeDelta> => {
+  const response = solveAlignmentResponse(
+    alignmentDragDriver(seeds),
+    axis,
+    elementsMap,
+  );
+  const factors = new Map<string, EdgeDelta>();
+  for (const [id, perDof] of response.byElement) {
+    factors.set(id, perDof[0]);
+  }
+  return factors;
+};
 
 /**
- * Which elements move on each axis when `seeds` are dragged, following
- * hard-alignment links transitively. An element hard-aligned to a seed
- * on the x axis shifts horizontally with it (and likewise for y); the
- * two axes are independent, so an element may comove on one, both, or
- * neither. Includes the seeds themselves. Used by the snapping system to
- * drop a comoving partner's stale snap points on the axis it tracks.
+ * Which elements move on each axis when `seeds` are dragged. The two axes are
+ * independent, so an element may comove on one, both or neither. Includes the
+ * seeds. Used by the snapping system to drop a comoving partner's stale snap
+ * points on the axis it tracks.
  *
- * Membership, not distance: an element that follows at half the offset
- * has just as stale a snap point as one that follows at the full offset.
+ * Membership, not distance: an element that follows at half the offset has
+ * just as stale a snap point as one that follows at the full offset — and one
+ * that only *stretches* has a stale far edge, so it counts too.
  *
- * Also carries the anchors that pinned a gap chain in place of its
- * default, from the same solve: `permitting` where the drag goes through
- * reshaped around them, `refusing` where the pins leave no solution.
+ * Also carries the anchors the overlay should name: `refusing` where the drag
+ * is impossible and they are why, `permitting` where it goes through but they
+ * shaped where things landed.
  */
 export type AlignmentMovers = {
   x: Set<string>;
@@ -910,195 +709,49 @@ export const getAlignmentMovers = (
   seeds: Set<string>,
   elementsMap: ElementsMap,
 ): AlignmentMovers => {
+  const driver = alignmentDragDriver(seeds);
   const pinAnchors = {
     permitting: new Set<string>(),
     refusing: new Set<string>(),
   };
   const moversOn = (axis: Axis) => {
-    const solved = solveAlignmentDragFactors(seeds, axis, elementsMap);
+    const response = solveAlignmentResponse(driver, axis, elementsMap);
     const moving = new Set<string>();
-    for (const [id, factor] of solved.factors) {
-      if (factor !== 0) {
+    if (!response.feasible) {
+      response.blockers.forEach((id) => pinAnchors.refusing.add(id));
+      return moving;
+    }
+    alignmentAnchorsInPlay(driver, axis, elementsMap).forEach((id) =>
+      pinAnchors.permitting.add(id),
+    );
+    for (const [id, perDof] of response.byElement) {
+      if (perDof[0].min !== 0 || perDof[0].max !== 0) {
         moving.add(id);
       }
     }
-    const into = factorsSatisfyAlignments(solved.factors, axis, elementsMap)
-      ? pinAnchors.permitting
-      : pinAnchors.refusing;
-    solved.pinAnchors.forEach((id) => into.add(id));
     return moving;
   };
   return { x: moversOn("x"), y: moversOn("y"), pinAnchors };
 };
 
 /**
- * Which axes a drag of `directlyMovedIds` is frozen on by an alignment
- * anchor. If preserving the alignments on an axis would require moving
- * an anchored element that isn't itself being dragged, that element
- * can't be pushed — and since the rest is rigidly tied to it, nothing on
- * that axis can move, so the offset is zeroed there. An anchor that *is*
- * being dragged is the direct target and doesn't freeze itself.
+ * Which axes a drag of `directlyMovedIds` is refused on.
  *
- * Only elements that would actually have to move count. An anchor on the
- * far side of a gap triple keeps its factor of 0 when an outer is
- * dragged, so it no longer freezes a drag it was never in the way of.
+ * Far fewer than before the engine could answer with a size change. An anchor
+ * in the way used to freeze the axis outright, because everything the drag
+ * reached could only be translated and a translation carries a whole rigid
+ * component with it. A partner between the drag and the anchor now stretches
+ * instead, and the drag goes through. What is left is the genuinely
+ * impossible: an arrangement where no displacement of anything satisfies the
+ * constraints — the driver linked directly to an anchor on the edge it is
+ * pulling, say.
  */
-const FACTOR_EPSILON = 1e-6;
-
-/**
- * Whether the factors a drag came out with actually satisfy every hard
- * alignment on the axis.
- *
- * `getAlignmentDragFactors` fills in members that have no factor yet and
- * leaves the rest alone, so an over-determined graph settles on
- * first-wins rather than reporting a contradiction. That is a fine
- * backstop for a single link, but two chains wired together by edge links
- * can determine every member of one of them by other routes — and when
- * those values don't form a progression, the chain's own solve has
- * nothing left to fill and simply passes over it. The constraint is then
- * broken silently, and stays broken, which is what makes such an
- * arrangement fall apart on the first drag.
- *
- * So the answer is checked rather than trusted. An edge link demands its
- * two ends travel identically; a chain demands its members' factors form
- * an arithmetic progression, since gap `i` moves by `t(i+1) − t(i)` and
- * equal gaps stay equal exactly when that difference is constant. An
- * element with no factor didn't move, which is a factor of zero.
- */
-const factorsSatisfyAlignments = (
-  factors: ReadonlyMap<string, number>,
-  axis: Axis,
-  elementsMap: ElementsMap,
-): boolean => {
-  const factorOf = (id: string) => factors.get(id) ?? 0;
-
-  for (const element of elementsMap.values()) {
-    for (const link of element.alignments ?? []) {
-      if (
-        link.axis === axis &&
-        Math.abs(factorOf(element.id) - factorOf(link.elementId)) >
-          FACTOR_EPSILON
-      ) {
-        return false;
-      }
-    }
-    for (const link of element.gapAlignments ?? []) {
-      if (link.axis !== axis || link.ids.length < 3) {
-        continue;
-      }
-      const step = factorOf(link.ids[1]) - factorOf(link.ids[0]);
-      for (let i = 1; i < link.ids.length - 1; i++) {
-        const next = factorOf(link.ids[i + 1]) - factorOf(link.ids[i]);
-        if (Math.abs(next - step) > FACTOR_EPSILON) {
-          return false;
-        }
-      }
-    }
-  }
-  return true;
-};
-
 export const getAlignmentLockedAxes = (
   directlyMovedIds: Set<string>,
   elementsMap: ElementsMap,
 ): { x: boolean; y: boolean } => {
-  const frozenOn = (axis: Axis): boolean => {
-    const factors = getAlignmentDragFactors(
-      directlyMovedIds,
-      axis,
-      elementsMap,
-    );
-    for (const [id, factor] of factors) {
-      if (
-        factor !== 0 &&
-        !directlyMovedIds.has(id) &&
-        isAlignmentAnchor(elementsMap.get(id))
-      ) {
-        return true;
-      }
-    }
-    // An arrangement no set of factors can satisfy is refused whole,
-    // rather than moved into a state that breaks one of its alignments.
-    return !factorsSatisfyAlignments(factors, axis, elementsMap);
-  };
-  return { x: frozenOn("x"), y: frozenOn("y") };
-};
-
-/**
- * Which axes a resize of `resizedIds` is frozen on because the alignment
- * constraints there are over-determined.
- *
- * Partners are translated, never resized, so every alignment a partner
- * holds with a resized element demands one translation of it. Locking A
- * and B on x at *both* their left and right edges says "A and B span the
- * same x range", which pins A's width to B's: widening A moves its right
- * edge but not its left, so B is asked to shift by two different amounts
- * at once. No translation satisfies both, and rather than silently
- * dropping one alignment we refuse the size change on that axis — the
- * same move alignment anchors make for drags.
- *
- * Detection needs no geometry: it's enough that a rigid partner
- * component receives demands from two distinct `(driver, selfEdge)`
- * sources, since two different driver edges never move together under a
- * resize. Demands from two *different* drivers are treated as conflicting
- * too — they can move independently, and we can't prove otherwise
- * up front.
- */
-export const getAlignmentResizeLockedAxes = (
-  resizedIds: Set<string>,
-  elementsMap: ElementsMap,
-): { x: boolean; y: boolean } => {
-  const overConstrainedOn = (axis: Axis): boolean => {
-    // The links the resize itself imposes: partner id -> demand source.
-    // Mirrors the seeding in `resizeAlignedElements`, including its two
-    // exclusions (a resized element moved under the pointer, an anchored
-    // one is never pushed).
-    const isDrivable = (id: string) =>
-      !resizedIds.has(id) && !isAlignmentAnchor(elementsMap.get(id));
-
-    const seeds = new Map<string, string>();
-    for (const driverId of resizedIds) {
-      for (const link of elementsMap.get(driverId)?.alignments ?? []) {
-        if (link.axis !== axis || !isDrivable(link.elementId)) {
-          continue;
-        }
-        const source = `${driverId}:${link.selfEdge}`;
-        const existing = seeds.get(link.elementId);
-        if (existing !== undefined && existing !== source) {
-          return true;
-        }
-        seeds.set(link.elementId, source);
-      }
-    }
-
-    // A demand doesn't stop at the direct partner: it floods through
-    // same-axis links (as `floodAxis` does), and everything it reaches
-    // moves rigidly with it. So two seeds meeting in one component
-    // conflict just as surely as two demands on one element.
-    const sourceOf = new Map<string, string>();
-    for (const [seedId, source] of seeds) {
-      const queue = [seedId];
-      while (queue.length > 0) {
-        const id = queue.pop()!;
-        const seen = sourceOf.get(id);
-        if (seen !== undefined) {
-          if (seen !== source) {
-            return true;
-          }
-          continue;
-        }
-        sourceOf.set(id, source);
-        for (const link of elementsMap.get(id)?.alignments ?? []) {
-          if (link.axis === axis && isDrivable(link.elementId)) {
-            queue.push(link.elementId);
-          }
-        }
-      }
-    }
-    return false;
-  };
-
-  return { x: overConstrainedOn("x"), y: overConstrainedOn("y") };
+  const response = getAlignmentDragResponse(directlyMovedIds, elementsMap);
+  return { x: !response.x.feasible, y: !response.y.feasible };
 };
 
 /**
@@ -1164,141 +817,125 @@ export const resizeMovesEdge = (
   return edge === "center" || (edge === "min" ? movesMin : movesMax);
 };
 
-/**
- * What the anchors do to a resize of `resizedIds`, per axis: the ones
- * that **refuse** it, and the ones that permit it but **force a partner
- * to stretch**. Both are worth showing and they mean different things —
- * one says the gesture is going nowhere, the other explains why something
- * changed size instead of moving.
- *
- * The same propagation that will move things, asked in the abstract: an
- * edge the handle moves is seeded with 1, one it holds with 0, and every
- * "is this non-zero" test downstream then reads as "does this edge move
- * at all". So these are exactly the anchors the real solve will find,
- * without needing any geometry.
- */
-export const getAlignmentResizeAnchorEffects = (
+/** The seeds that stand for "which of the driver's edges does this handle
+ * move" — 1 for one it moves, 0 for one it holds. Every "is this non-zero"
+ * test on the response then reads as "does this move at all", so the anchors
+ * the real solve will find are found without any geometry. */
+const symbolicResizeSeeds = (
+  axis: Axis,
   resizedIds: Set<string>,
   elementsMap: ElementsMap,
   opts: ResizeEdgeOpts,
-): {
-  blockers: { x: Set<string>; y: Set<string> };
-  causes: { x: Set<string>; y: Set<string> };
-} => {
-  const onAxis = (axis: Axis) => {
-    const seeds = new Map<string, EdgeDelta>();
-    for (const driverId of resizedIds) {
-      if (!elementsMap.get(driverId)?.alignments?.length) {
-        continue;
-      }
-      seeds.set(driverId, {
-        min: resizeMovesEdge(axis, "min", opts) ? 1 : 0,
-        max: resizeMovesEdge(axis, "max", opts) ? 1 : 0,
-      });
+): Map<string, EdgeDelta> => {
+  const seeds = new Map<string, EdgeDelta>();
+  for (const driverId of resizedIds) {
+    const driver = elementsMap.get(driverId);
+    if (!driver?.alignments?.length && !driver?.gapAlignments?.length) {
+      continue;
     }
-    return propagateResizeOnAxis(axis, seeds, resizedIds, elementsMap);
+    seeds.set(driverId, {
+      min: resizeMovesEdge(axis, "min", opts) ? 1 : 0,
+      max: resizeMovesEdge(axis, "max", opts) ? 1 : 0,
+    });
+  }
+  return seeds;
+};
+
+/**
+ * Everything the UI needs to know about a resize before it happens: which
+ * axes it is refused on and by which anchors, which anchors are forcing
+ * something to change size rather than move, and what it sets moving.
+ *
+ * One question, so one solve. These used to be four functions over three
+ * different propagations — an over-determination check, an edge-link anchor
+ * pass, an equal-gap anchor pass, and two movers passes — and keeping their
+ * notions of "refused" in step with each other, and with what the resize then
+ * actually did, was a standing hazard. Now the prediction *is* the solve, run
+ * against symbolic seeds instead of measured ones.
+ *
+ * `frozen` is its own answer rather than `blockers.size > 0`: a system can be
+ * contradictory with no anchor involved at all — two drivers pulling one
+ * partner in different directions, say — and the axis is refused just the
+ * same, with nothing to point at.
+ */
+export type ResizeAlignmentEffects = {
+  frozen: { x: boolean; y: boolean };
+  /** anchors that refuse the resize outright */
+  blockers: { x: Set<string>; y: Set<string> };
+  /** anchors that permit it but force a partner to change size — the reason
+   * an element stretched instead of travelling */
+  causes: { x: Set<string>; y: Set<string> };
+  /** everything the resize sets moving, drivers included */
+  movers: { x: Set<string>; y: Set<string> };
+};
+
+export const getAlignmentResizeEffects = (
+  resizedIds: Set<string>,
+  elementsMap: ElementsMap,
+  opts: ResizeEdgeOpts,
+): ResizeAlignmentEffects => {
+  const onAxis = (axis: Axis) => {
+    const seeds = symbolicResizeSeeds(axis, resizedIds, elementsMap, opts);
+    const response = solveAlignmentResponse(
+      alignmentDriverFromEdgeDeltas(seeds),
+      axis,
+      elementsMap,
+    );
+
+    if (!response.feasible) {
+      return {
+        frozen: true,
+        blockers: new Set(response.blockers),
+        causes: new Set<string>(),
+        movers: new Set<string>(),
+      };
+    }
+
+    const movers = new Set<string>();
+    for (const [id, perDof] of response.byElement) {
+      if (perDof[0].min !== 0 || perDof[0].max !== 0) {
+        movers.add(id);
+      }
+    }
+
+    // An element only stretched because it could not travel, and what stops
+    // it travelling is an anchor somewhere in its rigid component. Those are
+    // the anchors worth naming, even though they refuse nothing.
+    const causes = new Set<string>();
+    for (const id of response.stretchers) {
+      for (const anchorId of getTranslationBlockingAnchors(
+        id,
+        axis,
+        elementsMap,
+        resizedIds,
+      )) {
+        causes.add(anchorId);
+      }
+    }
+
+    return { frozen: false, blockers: new Set<string>(), causes, movers };
   };
 
   const x = onAxis("x");
   const y = onAxis("y");
   return {
+    frozen: { x: x.frozen, y: y.frozen },
     blockers: { x: x.blockers, y: y.blockers },
     causes: { x: x.causes, y: y.causes },
+    movers: { x: x.movers, y: y.movers },
   };
 };
 
-/** Just the refusals — what `resizeElements.ts` gates on. Far fewer than
- * before this file learned to stretch a partner, since an anchor that
- * merely blocks travel is now a cause rather than a blocker. */
-export const getAlignmentAnchoredResizeBlockers = (
-  resizedIds: Set<string>,
-  elementsMap: ElementsMap,
-  opts: ResizeEdgeOpts,
-): { x: Set<string>; y: Set<string> } =>
-  getAlignmentResizeAnchorEffects(resizedIds, elementsMap, opts).blockers;
-
 /**
- * Which elements a resize of `resizedIds` sets moving, per axis — the
- * resize counterpart of {@link getAlignmentMovers}.
+ * After the directly-dragged elements have been moved by `offset`, move and
+ * resize their hard-aligned partners to preserve the alignment.
  *
- * A resize propagates differently from a drag, and the difference is the
- * edge: a drag moves an element whole, so every link it holds transmits,
- * whereas a resize moves only the edges its handle controls. A link
- * anchored to an edge that stays put demands nothing, so it moves nothing
- * — which is why this asks {@link resizeMovesEdge} per link rather than
- * flooding from the resized element outright.
- *
- * A resized element is itself reported as moving on an axis when at least
- * one of its links there is transmitting. That makes the answer usable as
- * a plain "does this element move on this axis" test, including for the
- * driver, while still leaving out a driver whose links all hang off
- * stationary edges.
- *
- * The flood stops at anchors, and it never starts on an axis the resize
- * is frozen on: an anchor in the way refuses the size change entirely
- * (`clampSizeToFrozenAlignmentAxes`), so nothing on that axis moves at
- * all — including the partners that would otherwise have followed.
- */
-export const getAlignmentResizeMovers = (
-  resizedIds: Set<string>,
-  elementsMap: ElementsMap,
-  opts: ResizeEdgeOpts,
-  frozen: { x: boolean; y: boolean },
-): { x: Set<string>; y: Set<string> } => {
-  const moversOn = (axis: Axis): Set<string> => {
-    const movers = new Set<string>();
-    if (frozen[axis]) {
-      return movers;
-    }
-
-    /** Everything the demand on `startId` carries to, anchors excluded —
-     * an anchor holds still, so nothing past it is reached either. */
-    const flood = (startId: string) => {
-      const queue = [startId];
-      while (queue.length > 0) {
-        const id = queue.pop()!;
-        if (movers.has(id) || resizedIds.has(id)) {
-          continue;
-        }
-        if (isAlignmentAnchor(elementsMap.get(id))) {
-          continue;
-        }
-        movers.add(id);
-        for (const link of elementsMap.get(id)?.alignments ?? []) {
-          if (link.axis === axis) {
-            queue.push(link.elementId);
-          }
-        }
-      }
-    };
-
-    for (const driverId of resizedIds) {
-      for (const link of elementsMap.get(driverId)?.alignments ?? []) {
-        if (
-          link.axis === axis &&
-          !resizedIds.has(link.elementId) &&
-          resizeMovesEdge(axis, link.selfEdge, opts)
-        ) {
-          movers.add(driverId);
-          flood(link.elementId);
-        }
-      }
-    }
-    return movers;
-  };
-
-  return { x: moversOn("x"), y: moversOn("y") };
-};
-
-/**
- * After the directly-dragged elements have been moved by `offset`, drag
- * their hard-aligned partners to preserve the alignment.
- *
- * Handled per-axis and per-element: `getAlignmentDragFactors` says what
- * multiple of `offset` each partner takes on each axis, which is 1 for
- * everything an edge alignment reaches and may be a fraction across a
- * gap triple. An element may be pulled on one axis, both, or neither.
- * Partner positions are computed from their drag-start snapshot
+ * Handled per-axis and per-edge: the drag response says how far each of a
+ * partner's two edges travels per unit of `offset`, which is 1 on both for
+ * everything an edge alignment carries rigidly, may be a fraction across a
+ * gap chain, and differs between the two edges for a partner that has to
+ * stretch because an anchor stops it travelling. Partner positions are
+ * computed from their drag-start snapshot
  * (`originalElements`, which holds every element), so repeated
  * pointermove events don't accumulate drift.
  *
@@ -1313,312 +950,44 @@ export const dragAlignedElements = (
   scene: Scene,
 ) => {
   const elementsMap = scene.getNonDeletedElementsMap();
+  const response = getAlignmentDragResponse(directlyMovedIds, elementsMap);
 
-  const xFactors = getAlignmentDragFactors(directlyMovedIds, "x", elementsMap);
-  const yFactors = getAlignmentDragFactors(directlyMovedIds, "y", elementsMap);
+  const dxById = new Map<string, number>();
+  const dyById = new Map<string, number>();
+  const dwById = new Map<string, number>();
+  const dhById = new Map<string, number>();
 
-  const partners = new Set<string>();
-  for (const id of [...xFactors.keys(), ...yFactors.keys()]) {
-    // a factor of 0 is a real answer — "this one holds still" — so it is
-    // in the map but has nothing to write
-    if (
-      !directlyMovedIds.has(id) &&
-      ((xFactors.get(id) ?? 0) !== 0 || (yFactors.get(id) ?? 0) !== 0)
-    ) {
-      partners.add(id);
-    }
-  }
-
-  for (const id of partners) {
-    const element = elementsMap.get(id);
-    if (!element) {
-      continue;
-    }
-    const dx = offset.x * (xFactors.get(id) ?? 0);
-    const dy = offset.y * (yFactors.get(id) ?? 0);
-
-    const translate = (target: ExcalidrawElement) => {
-      const original = originalElements.get(target.id) ?? target;
-      scene.mutateElement(target, {
-        x: original.x + dx,
-        y: original.y + dy,
-      });
-    };
-
-    translate(element);
-    // A container's label is positioned absolutely rather than relative
-    // to its container, so it has to be carried by hand — exactly as the
-    // direct drag does in `dragElements.ts`. That code also skips arrow
-    // labels (their position is recomputed at render time); no check is
-    // needed here, since `isAlignable` keeps arrows out of alignment
-    // altogether.
-    const boundText = getBoundTextElement(element, elementsMap);
-    if (boundText) {
-      translate(boundText);
-    }
-    updateBoundElements(element, scene);
-  }
-};
-
-/**
- * Flood a per-axis translation outward through same-axis alignment
- * links. `deltaById` starts seeded with the elements whose translation
- * is already known (the resized elements' direct partners); every
- * further element reachable by same-axis links inherits its neighbour's
- * delta, so a chain A—B—C all shifts together.
- *
- * Already-seeded entries are authoritative (never overwritten), and
- * `barriers` (the resized elements themselves) are never entered — they
- * moved under the pointer, not by a uniform translation.
- */
-export const floodAlignmentAxis = (
-  deltaById: Map<string, number>,
-  axis: Axis,
-  barriers: Set<string>,
-  elementsMap: ElementsMap,
-) => {
-  const flood = (): boolean => {
-    let changed = false;
-    const queue = [...deltaById.keys()];
-    while (queue.length > 0) {
-      const id = queue.pop()!;
-      const delta = deltaById.get(id)!;
-      const links = elementsMap.get(id)?.alignments;
-      if (!links) {
+  for (const axis of ["x", "y"] as const) {
+    const deltas = applyAlignmentResponse(response[axis], [offset[axis]]);
+    const positionById = axis === "x" ? dxById : dyById;
+    const sizeById = axis === "x" ? dwById : dhById;
+    for (const [id, delta] of deltas) {
+      // A delta of zero is a real answer — "this one holds still" — and the
+      // directly dragged elements were already placed by the caller, with
+      // snapping and the grid applied.
+      if (directlyMovedIds.has(id) || (delta.min === 0 && delta.max === 0)) {
         continue;
       }
-      for (const link of links) {
-        if (
-          link.axis === axis &&
-          !barriers.has(link.elementId) &&
-          !deltaById.has(link.elementId) &&
-          // an anchor stops propagation — the chain doesn't move past it
-          !isAlignmentAnchor(elementsMap.get(link.elementId))
-        ) {
-          deltaById.set(link.elementId, delta);
-          queue.push(link.elementId);
-          changed = true;
-        }
+      positionById.set(id, delta.min);
+      if (delta.max !== delta.min) {
+        sizeById.set(id, delta.max - delta.min);
       }
     }
-    return changed;
-  };
+  }
 
-  // A group translates as one, so a member the flood reaches carries its
-  // siblings — and those siblings have links of their own to flood on
-  // from, hence the alternation rather than a single pass at the end.
-  // Both steps only add entries, so this settles.
+  // Groups are a post-pass over what the solve placed rather than constraints
+  // in it, so a member it moved carries its siblings here.
   const groupMembers = getGroupMembers(elementsMap);
   const skip = (id: string) =>
-    // the resized elements moved under the pointer, not by a translation,
-    // and an anchor must not move at all
-    barriers.has(id) || isAlignmentAnchor(elementsMap.get(id));
+    directlyMovedIds.has(id) || isAlignmentAnchor(elementsMap.get(id));
+  spreadAcrossGroups(dxById, groupMembers, skip);
+  spreadAcrossGroups(dyById, groupMembers, skip);
 
-  for (;;) {
-    const flooded = flood();
-    const grouped = spreadAcrossGroups(deltaById, groupMembers, skip);
-    if (!flooded && !grouped) {
-      break;
-    }
-  }
-};
-
-/**
- * The per-axis translation each element needs after a resize so that
- * every hard *edge* alignment survives it.
- *
- * Split out from the application step so an equal-gap correction pass
- * can extend the same maps before anything is written to the scene (see
- * `propagateAlignmentsAfterResize` in `gapAlignment.ts`). Working in
- * deltas off the resize-start snapshot — rather than nudging live
- * positions — is also what keeps repeated pointermove events from
- * accumulating drift.
- *
- * Unlike a drag, a resize moves each edge by a different amount, so a
- * direct partner is translated by the change in the *specific* shared
- * coordinate recorded on the link (`edge`): if a partner is left-aligned
- * (x/min) with a resized element whose left edge moved by `d`, it shifts
- * by `d` on x. Partners are translated, never resized — matching the
- * drag behavior.
- *
- * The translation then ripples transitively: a partner's own partners
- * (and theirs, …) inherit the same per-axis shift, so a whole aligned
- * chain moves as one. Positions are computed from the resize-start
- * snapshot to avoid drift across pointermove events. Resized elements
- * are barriers — they moved under the pointer and are never dragged by
- * this pass.
- */
-/**
- * How far each of an element's two edges travels on one axis. Equal
- * values are a translation; different ones are a resize.
- *
- * This pair is the whole of the change from "alignment only ever moves
- * things". One number per element per axis could only ever say *the
- * element* moves, which made a demand on either edge a demand on both —
- * and that is why an anchor two links away could refuse a resize of an
- * edge nowhere near it.
- */
-type EdgeDelta = { min: number; max: number };
-
-/** What a link reads off an element: its `min` or `max` edge directly,
- * or the centre, which is the mean of the two. */
-const deltaAtEdge = (delta: EdgeDelta, edge: Edge): number =>
-  edge === "min"
-    ? delta.min
-    : edge === "max"
-    ? delta.max
-    : (delta.min + delta.max) / 2;
-
-const EDGE_DELTA_EPSILON = 0.01;
-
-/**
- * How a resize propagates outward along one axis: what every element it
- * reaches must do, and the anchors that refuse outright.
- *
- * Each partner is asked to **move first, and stretch only if it can't**.
- * Moving is the better answer whenever it is available — the element
- * keeps its size, which is what the user drew — so it is tried first; a
- * partner that cannot move is asked to give up only the one edge the
- * demand landed on, which is the least it can concede and still hold the
- * alignment.
- *
- * A translation is what makes the difference decidable cheaply: it passes
- * through every link unchanged, so translating an element forces its
- * whole link component to travel with it. An anchor anywhere in that
- * component means no translation is possible, and the element stretches
- * instead — pinning the rest of the component exactly where it was, which
- * is what stops the change reaching the anchor at all.
- *
- * Runs on symbolic deltas as readily as real ones: seed it with 1 for
- * "this edge moves" and 0 for "it doesn't" and the same traversal answers
- * which anchors would block, before any geometry has changed. That is how
- * {@link getAlignmentAnchoredResizeBlockers} stays in step with what will
- * actually happen — the two cannot drift, because they are one function.
- */
-const propagateResizeOnAxis = (
-  axis: Axis,
-  seeds: ReadonlyMap<string, EdgeDelta>,
-  resizedIds: Set<string>,
-  elementsMap: ElementsMap,
-): {
-  deltas: Map<string, EdgeDelta>;
-  /** anchors that refuse the resize outright */
-  blockers: Set<string>;
-  /** anchors that permit it but force a partner to stretch — the reason
-   * an element changed size instead of travelling */
-  causes: Set<string>;
-} => {
-  const deltas = new Map<string, EdgeDelta>(seeds);
-  const blockers = new Set<string>();
-  const causes = new Set<string>();
-
-  // Anchors in an element's link component, cached: the answer is a
-  // property of the component, so every member shares it.
-  const anchorsInComponent = new Map<string, Set<string>>();
-  const componentAnchors = (startId: string): Set<string> => {
-    const cached = anchorsInComponent.get(startId);
-    if (cached) {
-      return cached;
-    }
-    const anchors = new Set<string>();
-    const seen = new Set<string>([startId]);
-    const stack = [startId];
-    while (stack.length > 0) {
-      const id = stack.pop()!;
-      if (isAlignmentAnchor(elementsMap.get(id))) {
-        anchors.add(id);
-      }
-      for (const link of elementsMap.get(id)?.alignments ?? []) {
-        // the resized elements are the source of the demand, not carriers
-        // of it, so the component stops at them
-        if (
-          link.axis === axis &&
-          !seen.has(link.elementId) &&
-          !resizedIds.has(link.elementId)
-        ) {
-          seen.add(link.elementId);
-          stack.push(link.elementId);
-        }
-      }
-    }
-    for (const id of seen) {
-      anchorsInComponent.set(id, anchors);
-    }
-    return anchors;
-  };
-
-  const queue = [...seeds.keys()];
-  while (queue.length > 0) {
-    const id = queue.shift()!;
-    const from = deltas.get(id)!;
-
-    for (const link of elementsMap.get(id)?.alignments ?? []) {
-      if (link.axis !== axis || resizedIds.has(link.elementId)) {
-        continue;
-      }
-      const partner = elementsMap.get(link.elementId);
-      // first-wins on a second demand, the same deterministic backstop
-      // the propagator has always used for an over-determined graph
-      if (!partner || deltas.has(link.elementId)) {
-        continue;
-      }
-      const required = deltaAtEdge(from, link.selfEdge);
-
-      if (isAlignmentAnchor(partner)) {
-        // An anchor neither moves nor stretches — it is the one thing
-        // alignment may never touch — so a demand on it is a refusal.
-        if (Math.abs(required) > EDGE_DELTA_EPSILON) {
-          blockers.add(link.elementId);
-        }
-        deltas.set(link.elementId, { min: 0, max: 0 });
-        continue;
-      }
-
-      if (Math.abs(required) <= EDGE_DELTA_EPSILON) {
-        // Demanded to hold still, which is a real answer: it pins the
-        // partner, and pins whatever hangs off it in turn.
-        deltas.set(link.elementId, { min: 0, max: 0 });
-        queue.push(link.elementId);
-        continue;
-      }
-
-      if (componentAnchors(link.elementId).size === 0) {
-        deltas.set(link.elementId, { min: required, max: required });
-        queue.push(link.elementId);
-        continue;
-      }
-
-      // It cannot travel, so it stretches — unless it can't do that
-      // either. A centre demand has no stretched reading: which edge
-      // absorbs it depends on which one the blockage pins, and that isn't
-      // a question this traversal has asked. A rotated element has none
-      // either, since its bounds aren't its width and height. Both stay
-      // refused, as everything here was before.
-      if (link.otherEdge === "center" || partner.angle !== 0) {
-        for (const anchorId of componentAnchors(link.elementId)) {
-          blockers.add(anchorId);
-        }
-        deltas.set(link.elementId, { min: 0, max: 0 });
-        continue;
-      }
-
-      // The anchors that made travelling impossible are why this element
-      // is about to change size, so they are worth naming even though
-      // they refuse nothing.
-      for (const anchorId of componentAnchors(link.elementId)) {
-        causes.add(anchorId);
-      }
-      deltas.set(
-        link.elementId,
-        link.otherEdge === "min"
-          ? { min: required, max: 0 }
-          : { min: 0, max: required },
-      );
-      queue.push(link.elementId);
-    }
-  }
-
-  return { deltas, blockers, causes };
+  // The same writer the resize path uses. Worth sharing now rather than
+  // translating by hand as this used to: a drag can change a partner's size,
+  // so it has the container-label question — carry it or refit it — that only
+  // the resize path used to have.
+  applyAlignmentDeltas(originalElements, dxById, dyById, dwById, dhById, scene);
 };
 
 /** The driver seeds for one axis, read off how far each resized element's
@@ -1633,7 +1002,11 @@ const geometricResizeSeeds = (
   for (const driverId of resizedIds) {
     const driver = elementsMap.get(driverId);
     const original = originalElements.get(driverId);
-    if (!driver || !original || !driver.alignments?.length) {
+    if (
+      !driver ||
+      !original ||
+      (!driver.alignments?.length && !driver.gapAlignments?.length)
+    ) {
       continue;
     }
     const now = getElementBounds(driver, elementsMap);
@@ -1646,6 +1019,20 @@ const geometricResizeSeeds = (
   return seeds;
 };
 
+/**
+ * What every element must do so that a resize of `resizedIds` leaves every
+ * hard alignment — edge links and equal-gap chains alike — intact.
+ *
+ * Both kinds in one solve, which is the whole of the change here. They used to
+ * be two passes: an edge propagation, then an equal-gap correction that had to
+ * treat whatever the first pass placed as immovable and iterate towards a fixed
+ * point it was not guaranteed to reach. A member subject to both was the
+ * awkward case, and it is no longer a case at all — its link and its chain are
+ * two rows of one system.
+ *
+ * Deltas off the resize-start snapshot rather than nudges to live positions,
+ * so repeated pointermove events can't accumulate drift.
+ */
 export const buildResizeAlignmentDeltas = (
   originalElements: PointerDownState["originalElements"],
   resizedIds: Set<string>,
@@ -1666,12 +1053,30 @@ export const buildResizeAlignmentDeltas = (
   const dhById = new Map<string, number>();
 
   for (const axis of ["x", "y"] as const) {
-    const { deltas } = propagateResizeOnAxis(
+    const seeds = geometricResizeSeeds(
       axis,
-      geometricResizeSeeds(axis, originalElements, resizedIds, elementsMap),
+      originalElements,
       resizedIds,
       elementsMap,
     );
+    if (seeds.size === 0) {
+      continue;
+    }
+    const response = solveAlignmentResponse(
+      alignmentDriverFromEdgeDeltas(seeds),
+      axis,
+      elementsMap,
+    );
+    if (!response.feasible) {
+      // The size change was refused up front, so there is nothing to carry.
+      // Reaching here at all means the clamp let a gesture through that the
+      // solve then couldn't answer, which is a bug rather than a state to
+      // paper over — but writing a partial answer would break an alignment,
+      // and holding still doesn't.
+      continue;
+    }
+    // Evaluated at 1, since the seeds *are* the measurements.
+    const deltas = applyAlignmentResponse(response, [1]);
     const positionById = axis === "x" ? dxById : dyById;
     const sizeById = axis === "x" ? dwById : dhById;
     for (const [id, delta] of deltas) {
@@ -1747,4 +1152,41 @@ export const applyAlignmentDeltas = (
     }
     updateBoundElements(partner, scene);
   }
+};
+
+/**
+ * The whole alignment response to a resize: solve, spread across groups, write
+ * once.
+ *
+ * Groups are not constraints — they are a post-pass over whatever the solve
+ * placed, so a member it moved carries its siblings and the arrangement the
+ * user grouped survives the constraint that moved it. Positions only: a
+ * sibling of a member that *stretched* travels by that member's leading edge,
+ * which is as near as anything rigid can get to an answer when the group's own
+ * extent has changed.
+ */
+export const propagateAlignmentsAfterResize = (
+  originalElements: PointerDownState["originalElements"],
+  resizedIds: Set<string>,
+  scene: Scene,
+) => {
+  const elementsMap = scene.getNonDeletedElementsMap();
+  const { dxById, dyById, dwById, dhById } = buildResizeAlignmentDeltas(
+    originalElements,
+    resizedIds,
+    elementsMap,
+  );
+  const groupMembers = getGroupMembers(elementsMap);
+  const skip = (id: string) =>
+    resizedIds.has(id) || isAlignmentAnchor(elementsMap.get(id));
+  spreadAcrossGroups(dxById, groupMembers, skip);
+  spreadAcrossGroups(dyById, groupMembers, skip);
+  applyAlignmentDeltas(
+    originalElements,
+    dxById,
+    dyById,
+    dwById,
+    dhById,
+    scene,
+  );
 };
