@@ -14,56 +14,45 @@ point-in-time.
 
 ---
 
-## Hard alignment — resize propagation
+## Hard alignment — the constraint solver
 
-**A partner that can't travel stretches, except in two cases.** A resize
-asks each partner to move first and to stretch only if an anchor in its link
-component forbids moving. Two demands have no stretched reading and stay
-refused: one landing on a partner's **centre**, since which edge should
-absorb it depends on which one the blockage pins — a question the traversal
-never asks — and one landing on a **rotated** partner, whose bounds are not
-its width and height, so an AABB-derived size change would be wrong. Both
-were refused before this existed, so neither is a regression; they are the
-cases where the old behaviour survives.
+Alignment is solved rather than propagated: every link, chain, anchor and the
+gesture itself is a row in one linear system, and a gesture is refused only
+when no displacement of anything satisfies it. See `ALIGNMENT_SOLVER_PLAN.md`
+for the design and the remaining stages. What follows is what it still does
+not cover.
 
-**Drags still only translate.** The move-else-stretch rule is on the resize
-path alone. `getAlignmentDragFactors` carries one scalar per element, which
-is a translation by construction, so a drag blocked by an anchor still
-freezes the axis rather than stretching anything. Deliberately unresolved:
-whether a drag *should* resize other elements is a design question, not an
-oversight.
+**Rotated elements never change size.** A rotated element gets a rigidity row
+(`δmin = δmax`), so alignment may move it but never stretch it, and a
+constraint that could only be met by stretching one is refused. Its
+axis-aligned box *is* linear in its width and height, so this is modellable —
+it couples the two axes into one system of twice the size, which is
+deliberately out of scope for now. Text is excluded on the same row for a
+different reason: a width change rewraps it, so the constraint would be
+rewriting the element's content rather than its box.
 
-**A stretched partner is not size-clamped.** `applyAlignmentDeltas` floors a
-stretched element at one unit, but nothing refuses the gesture as it
-approaches that floor, so an alignment can squash a partner to a sliver
-rather than stopping the resize the way an anchor does.
+**Multi-element resize is uncapped.** Both clamps are wired into the
+single-element path only. Per-element proposed bounds come from a common box
+scale, so the driver's edges are not affine in one proposed length the way
+`clampSizeToAlignments` needs them to be. A multi-element resize can therefore
+close a gap past contact or squash a partner below `MIN_ALIGNED_SIZE`.
 
-**Rotated driver escapes the gap-alignment resize cap.** Resize a *rotated*
-member of a hard gap chain and its gaps run straight past zero into
-negative; every unrotated member stops at contact. `clampSizeToGapAlignments`
-bails out at the top (`if (driver.angle !== 0 || !handle) return size`)
-because a rotated element's AABB isn't linear in its width and height, and
-the cap solves the zero-crossing as a line through two samples. Drag is
-unaffected — `clampDragToGapAlignments` has no angle guard. Three ways out:
-leave it; sample-and-bisect instead of solving the line, which handles the
-non-linearity; or crudely refuse to shrink a rotated driver once any gap in
-its chain is zero.
+**Rotated driver escapes the resize cap.** Resize a *rotated* member of a hard
+gap chain and its gaps run straight past zero into negative; every unrotated
+member stops at contact. `clampSizeToAlignments` bails out at the top
+(`if (driver.angle !== 0 || !handle) return size`) because a rotated element's
+axis-aligned box moves on *both* axes as either dimension changes, which breaks
+the per-axis independence the cap assumes. Drag is unaffected —
+`clampDragToGapAlignments` has no angle guard, because a drag doesn't change
+the driver's size.
 
-**Multi-element resize is uncapped.** The crossing cap is only wired into
-the single-element path. Per-element proposed bounds come from a common box
-scale, so the same prediction doesn't transfer.
-
-**A pinned middle is uncapped.** If a chain's middle element is the driver
-or is anchored, `correctGapAlignments` lands the correction on the outer
-members, and the "both gaps end at the mean" identity the cap is derived
-from no longer holds.
-
-**`correctGapAlignments` is not a general constraint solver.** Two chains
-sharing a member can hand that member back and forth, each recomputing it
-from its own knowns. The outer loop caps this at
-`MAX_GAP_CORRECTION_PASSES` (16) rather than converging, so an adversarial
-graph of chains can settle with a small residual error rather than
-diverging. Single chains, and chains that don't overlap, are exact.
+**A gap side's overlap range is approximate when its element stretches across
+the gap.** `gapSideShift` translates a cached gap's side rigidly, taking its
+position on the gap's own axis from the edge that bounds it — so the gap's
+*length* is exact. Across the gap it uses the leading edge, so a partner the
+gesture stretches in that direction has its side drawn with the right position
+and a slightly wrong extent, which can include or exclude an overlap near the
+threshold. The gap's measurement is unaffected.
 
 ---
 
@@ -131,14 +120,21 @@ being reported. This is the same backstop the over-constrained edge and chain
 cases take, and keeping the spread purely additive is also what guarantees
 the fixed-point loops around it terminate.
 
-**An anchored group member freezes a drag but not a resize.** On the drag
-path the anchor picks up a non-zero factor from its siblings, so
-`getAlignmentLockedAxes` freezes the axis and the group holds together — an
-anchor anywhere in a group anchors the group, as it should. On the resize
-path `floodAlignmentAxis` only *skips* the anchor, so its siblings still move
-and the group comes apart around it. Fixing it means teaching
-`getAlignmentAnchoredResizeBlockers` about groups; the flood has no way to
-refuse, only to not enter.
+**An anchored group member no longer freezes anything.** Group membership is
+not a row in the solver — it stays the post-pass `spreadAcrossGroups` applies
+to the solved deltas — so the solve never sees that moving a member would have
+to move an anchored sibling. The anchor itself is skipped and stays put, its
+siblings move, and the group comes apart around it. This used to hold on the
+drag path, where the anchor picked up a non-zero factor from its siblings
+during the propagator's alternating passes and froze the axis; it now behaves
+as the resize path always did. The fix is the same one that fixes the item
+below — make group membership a constraint — and it is the strongest argument
+for doing that sooner rather than later.
+
+**Group propagation does not re-enter the solve.** The old drag propagator
+alternated spreading across groups with following links, so a sibling pulled
+along by its group then dragged *its* own alignment partners. The post-pass
+runs once, after the solve, so that second hop no longer happens.
 
 ---
 

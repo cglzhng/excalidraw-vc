@@ -11,13 +11,14 @@ import { TOOL_TYPE, KEYS, arrayToMap } from "@excalidraw/common";
 import {
   clampDragToGapAlignments,
   hasHardGapAlignmentAmong,
-  getAlignmentDragFactors,
+  deltaAtEdge,
+  getAlignmentDragEdgeFactors,
   getAlignmentLockedAxes,
-  getAlignmentResizeMovers,
-  getGapAlignmentResizeMovers,
+  getAlignmentResizeEffects,
   getCommonBounds,
   getDraggedElementsBounds,
   getElementAbsoluteCoords,
+  getElementBounds,
 } from "@excalidraw/element";
 import { isBoundToContainer, isLinearElement } from "@excalidraw/element";
 
@@ -29,8 +30,9 @@ import {
 import type { InclusiveRange } from "@excalidraw/math";
 
 import type { Bounds } from "@excalidraw/common";
-import type { MaybeTransformHandleType } from "@excalidraw/element";
+import type { EdgeDelta, MaybeTransformHandleType } from "@excalidraw/element";
 import type {
+  AlignmentEdge,
   ElementsMap,
   ExcalidrawElement,
   NonDeletedExcalidrawElement,
@@ -137,9 +139,11 @@ export type SnapLine = PointSnapLine | GapSnapLine | PointerSnapLine;
  * coordinate on that axis would otherwise produce a stale snap.
  *
  * `factorX`/`factorY` say how far it moves — as a multiple of the drag
- * offset, which is what `getAlignmentDragFactors` deals in. An edge
- * partner takes 1, but a gap chain hands its members a whole arithmetic
- * progression, so −1 and ½ are as ordinary as 1. A point that snaps has
+ * offset, read off the travel of the particular edge the point sits on
+ * (`getAlignmentDragEdgeFactors`). An edge partner takes 1, a gap chain
+ * hands its members a whole arithmetic progression so −1 and ½ are as
+ * ordinary as 1, and two corners of one stretched partner can take
+ * different factors from each other. A point that snaps has
  * a factor of 0 by definition; the factor matters for the ones that
  * don't, whose *other* axis may still anchor a snap line, and that line
  * has to reach the element where it now is.
@@ -482,40 +486,71 @@ export const getVisibleGaps = (
   };
 };
 
-/** Per-axis multiple of the drag offset each element travels by. */
+/**
+ * Per axis, how far each of an element's two edges travels as a multiple of
+ * the drag offset.
+ *
+ * Two numbers per element rather than one, because a gesture can change a
+ * partner's size: the edge the drag pulls moves while the edge an anchor holds
+ * does not. Everything here that tracks a moving element tracks a particular
+ * *edge* of it — a snap point sits on a corner, a gap is bounded by the facing
+ * sides of two elements — so one displacement per element would be stale for
+ * half of them.
+ */
 export type DragFactors = {
-  x: ReadonlyMap<string, number>;
-  y: ReadonlyMap<string, number>;
+  x: ReadonlyMap<string, EdgeDelta>;
+  y: ReadonlyMap<string, EdgeDelta>;
 };
 
+const NO_TRAVEL: EdgeDelta = { min: 0, max: 0 };
+
 /**
- * How far one side of a cached gap has travelled, or null if its group
- * has come apart.
+ * How far one side of a cached gap has travelled, or null if its group has
+ * come apart.
  *
- * A gap side is a *maximum group*, and grouping is not alignment: two
- * members can be pulled by different constraints and take different
- * factors. There is then no single displacement for that side, and the
- * gap it bounds has stopped being a rectangle anyone can measure, so it
- * is dropped rather than drawn somewhere plausible.
+ * `edge` is the one that bounds this side of the gap on the gap's own axis —
+ * the start element's far edge, the end element's near edge — which is the
+ * only coordinate the gap's length is measured from.
+ *
+ * A gap side is a *maximum group*, and grouping is not alignment: two members
+ * can be pulled by different constraints and take different factors. There is
+ * then no single displacement for that side, and the gap it bounds has stopped
+ * being a rectangle anyone can measure, so it is dropped rather than drawn
+ * somewhere plausible.
  */
 const gapSideShift = (
   ids: readonly string[],
   offset: Vector2D,
   factors: DragFactors,
+  axis: "x" | "y",
+  edge: AlignmentEdge,
 ): Vector2D | null => {
-  let fx: number | null = null;
-  let fy: number | null = null;
+  const across = axis === "x" ? "y" : "x";
+  let along: number | null = null;
+  let perpendicular: number | null = null;
+
   for (const id of ids) {
-    const x = factors.x.get(id) ?? 0;
-    const y = factors.y.get(id) ?? 0;
-    if (fx === null) {
-      fx = x;
-      fy = y;
-    } else if (fx !== x || fy !== y) {
+    const a = deltaAtEdge(factors[axis].get(id) ?? NO_TRAVEL, edge);
+    // Across the gap the side is a segment, and a partner that stretches in
+    // *that* direction moves its two endpoints by different amounts. Its
+    // position is taken from the leading edge, which leaves the overlap range
+    // approximate in that case and the gap's length — the thing this is for —
+    // exact.
+    const p = deltaAtEdge(factors[across].get(id) ?? NO_TRAVEL, "min");
+    if (along === null) {
+      along = a;
+      perpendicular = p;
+    } else if (along !== a || perpendicular !== p) {
       return null;
     }
   }
-  return fx === null ? { x: 0, y: 0 } : { x: fx * offset.x, y: fy! * offset.y };
+
+  if (along === null) {
+    return { x: 0, y: 0 };
+  }
+  return axis === "x"
+    ? { x: along * offset.x, y: perpendicular! * offset.y }
+    : { x: perpendicular! * offset.x, y: along * offset.y };
 };
 
 const shiftBounds = (bounds: Bounds, by: Vector2D): Bounds => [
@@ -535,9 +570,10 @@ const shiftBounds = (bounds: Bounds, by: Vector2D): Bounds => [
  * snaps into a space that isn't there any more.
  *
  * The set of pairs barely changes during a drag, though — only their
- * coordinates — and those are known exactly, since a comover travels by
- * `factor × offset` (`getAlignmentDragFactors`, the same map the
- * propagator uses). So the enumeration stays cached and only the geometry
+ * coordinates — and those are known exactly, since each edge of a comover
+ * travels by `factor × offset` (`getAlignmentDragEdgeFactors`, the same
+ * response the drag itself applies). So the enumeration stays cached and
+ * only the geometry
  * is brought forward.
  *
  * Returns null when the two sides have drifted out of overlap, since a
@@ -553,8 +589,10 @@ const shiftCachedGap = (
   offset: Vector2D,
   factors: DragFactors,
 ): Gap | null => {
-  const start = gapSideShift(gap.startIds, offset, factors);
-  const end = gapSideShift(gap.endIds, offset, factors);
+  // The gap runs from the start element's far edge to the end element's near
+  // one, so those are the edges whose travel decides where it now sits.
+  const start = gapSideShift(gap.startIds, offset, factors, axis, "max");
+  const end = gapSideShift(gap.endIds, offset, factors, axis, "min");
   if (!start || !end) {
     return null;
   }
@@ -817,8 +855,9 @@ const getGapSnaps = (
 /**
  * Which reference elements the gesture will drag along with it, per axis.
  *
- * A drag carries an element whole, so every hard link it holds transmits
- * and `getAlignmentDragFactors` is the answer. A resize moves only the edges
+ * A drag carries the dragged element whole, so every hard link it holds
+ * transmits and `getAlignmentDragEdgeFactors` is the answer. A resize moves
+ * only the edges
  * its handle controls, so the same pair can comove or not depending on
  * which handle is held — top-aligned elements comove on y when the north
  * handle pulls the shared edge, and not at all when the south handle
@@ -834,8 +873,8 @@ const getSnapComovers = (
   const ids = new Set(selectedElements.map((element) => element.id));
   if (!resize) {
     return {
-      x: getAlignmentDragFactors(ids, "x", elementsMap),
-      y: getAlignmentDragFactors(ids, "y", elementsMap),
+      x: getAlignmentDragEdgeFactors(ids, "x", elementsMap),
+      y: getAlignmentDragEdgeFactors(ids, "y", elementsMap),
     };
   }
 
@@ -846,33 +885,41 @@ const getSnapComovers = (
       selectedElements.length > 1 ||
       selectedElements.some((element) => element.angle !== 0),
   };
-  // Nothing is treated as frozen here. A frozen axis is one the resize
-  // refuses outright, so its partners don't move and masking them would
-  // be wrong — but the freeze is decided later in the same pointermove,
-  // and being one frame stale would flicker the mask. Assuming free is
-  // the conservative side: it can only mask a target that isn't going to
-  // move, never expose one that is.
-  const frozen = { x: false, y: false };
-  const edge = getAlignmentResizeMovers(ids, elementsMap, opts, frozen);
-  const gap = getGapAlignmentResizeMovers(ids, elementsMap, opts, frozen);
+  const { movers } = getAlignmentResizeEffects(ids, elementsMap, opts);
   // A resize has no single offset for a factor to be a multiple of — its
   // partners move by per-edge amounts. Any non-zero value masks the point
   // correctly, and the travel is never read, because the correction it
   // feeds is only applied on the drag path.
-  const asFactors = (a: Set<string>, b: Set<string>) => {
-    const factors = new Map<string, number>();
-    for (const id of [...a, ...b]) {
-      factors.set(id, 1);
+  const asFactors = (moving: ReadonlySet<string>) => {
+    const factors = new Map<string, EdgeDelta>();
+    for (const id of moving) {
+      factors.set(id, { min: 1, max: 1 });
     }
     return factors;
   };
-  return { x: asFactors(edge.x, gap.x), y: asFactors(edge.y, gap.y) };
+  return { x: asFactors(movers.x), y: asFactors(movers.y) };
 };
 
 export type ResizeSnapContext = {
   handle: string | false;
   shouldResizeFromCenter: boolean;
 };
+
+/** Which of an element's edges a coordinate sits on, for reading the right
+ * travel off an {@link EdgeDelta}. Generous, because the coordinate came from
+ * the same bounds it is compared against and only has rounding between them. */
+const SNAP_EDGE_EPSILON = 0.01;
+
+const edgeUnder = (
+  coord: number,
+  min: number,
+  max: number,
+): AlignmentEdge =>
+  Math.abs(coord - min) <= SNAP_EDGE_EPSILON
+    ? "min"
+    : Math.abs(coord - max) <= SNAP_EDGE_EPSILON
+    ? "max"
+    : "center";
 
 export const getReferenceSnapPoints = (
   elements: readonly NonDeletedExcalidrawElement[],
@@ -901,16 +948,27 @@ export const getReferenceSnapPoints = (
   return referenceElements
     .filter((element) => !isBoundToContainer(element))
     .flatMap((element): ReferenceSnapPoint[] => {
-      const factorX = factors.x.get(element.id) ?? 0;
-      const factorY = factors.y.get(element.id) ?? 0;
-      return getElementsCorners([element], elementsMap).map((point) => ({
-        point,
-        // standing still is exactly what makes a point snappable
-        snapX: factorX === 0,
-        snapY: factorY === 0,
-        factorX,
-        factorY,
-      }));
+      const deltaX = factors.x.get(element.id) ?? NO_TRAVEL;
+      const deltaY = factors.y.get(element.id) ?? NO_TRAVEL;
+      const [minX, minY, maxX, maxY] = getElementBounds(element, elementsMap);
+
+      return getElementsCorners([element], elementsMap).map((point) => {
+        // Which edge a point rides is what decides how far it travels, and
+        // the two answers differ only when the gesture changes this element's
+        // size. A point on neither — an edge midpoint, or any point of a
+        // rotated element, which is never stretched — takes the mean, which
+        // is what its centre does.
+        const factorX = deltaAtEdge(deltaX, edgeUnder(point[0], minX, maxX));
+        const factorY = deltaAtEdge(deltaY, edgeUnder(point[1], minY, maxY));
+        return {
+          point,
+          // standing still is exactly what makes a point snappable
+          snapX: factorX === 0,
+          snapY: factorY === 0,
+          factorX,
+          factorY,
+        };
+      });
     });
 };
 
@@ -1107,8 +1165,8 @@ export const snapDraggedElements = (
   // brings the ones bounded by a comoving element up to date.
   const selectedIds = new Set(selectedElements.map((element) => element.id));
   const dragFactors: DragFactors = {
-    x: getAlignmentDragFactors(selectedIds, "x", elementsMap),
-    y: getAlignmentDragFactors(selectedIds, "y", elementsMap),
+    x: getAlignmentDragEdgeFactors(selectedIds, "x", elementsMap),
+    y: getAlignmentDragEdgeFactors(selectedIds, "y", elementsMap),
   };
 
   const selectionPoints = getElementsCorners(sourceElements, elementsMap, {
