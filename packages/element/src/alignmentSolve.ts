@@ -123,10 +123,25 @@ export const getGroupMembers = (
 export const ALIGNMENT_FEEL_ROWS = {
   /** Dragging a chain's end member holds the far end still, so the run
    * compresses between the two ends and every gap gives up an equal share. */
-  endDragHoldsFarEnd: true,
+  endDragHoldsFarEnd: false,
   /** Dragging an interior member travels the whole chain rigidly, so a
    * sideways drag doesn't squeeze the spacing. */
   interiorDragTravelsRigidly: true,
+  /**
+   * A resize holds the edge its handle isn't moving — the one part of the
+   * gesture the user didn't ask about. Offered like the rules above, so it
+   * holds wherever it can and lets go where holding it is what makes the
+   * gesture impossible: an element centred on an anchor then grows *both*
+   * ways instead of being refused.
+   *
+   * Off, nothing asks that edge to stay and the objective decides. Worth
+   * knowing what that means before trying it: translating costs a millionth
+   * of what stretching does, so the cheapest way to put the right edge where
+   * the pointer asked is usually to move the whole element there. A resize
+   * handle then drags rather than resizes, until a constraint makes
+   * translation impossible.
+   */
+  resizeHoldsItsOtherEdge: true,
 };
 
 /**
@@ -155,6 +170,10 @@ const WEIGHT_STRETCH = 1;
 /** Below this, a solved displacement is noise from the weighting above and is
  * read as an exact zero. */
 const RESPONSE_EPSILON = 1e-5;
+
+/** Below this share of the largest multiplier, a constraint is carrying no
+ * load. Relative, because a multiplier's size follows the gesture's. */
+const MULTIPLIER_EPSILON = 1e-6;
 
 /** Pivot floor for the row reduction. Row coefficients are 0, ±½ or ±1 by
  * construction, so this is an absolute tolerance rather than a scaled one. */
@@ -249,6 +268,46 @@ export type AlignmentResponse = {
   readonly blockers: ReadonlySet<string>;
   /** elements the answer changes the size of, rather than merely moving */
   readonly stretchers: ReadonlySet<string>;
+  /**
+   * When it isn't feasible: the constraints that contradict the gesture —
+   * the gesture's own rows among them, since a refusal is a conflict
+   * *with* it. Exact, and per axis by construction.
+   */
+  readonly refusedBy: readonly ConstraintRef[];
+  /**
+   * The constraints actually doing work: those whose multiplier in the
+   * solve is non-zero, meaning the answer would be cheaper without them.
+   * A link satisfied by everything standing still is not in here.
+   */
+  readonly activeConstraints: readonly ConstraintRef[];
+  /** constraints already implied by the others — releasable with no effect */
+  readonly implied: readonly ImpliedConstraint[];
+  /**
+   * The constraints that made the gesture let go of an edge it was holding —
+   * a resize handle's opposite side, released so the gesture could go
+   * through at all. Empty for a drag, which holds no edge still, and empty
+   * for a resize that kept the edge it meant to.
+   *
+   * The counterpart of `refusedBy`: same machinery, but the gesture went
+   * through in a changed shape rather than being refused, so the UI says
+   * "this is why it grew the other way" rather than "this is why nothing
+   * happened".
+   */
+  readonly releasedBy: readonly ConstraintRef[];
+  /**
+   * Per stretched element, the constraints that made it stretch rather than
+   * travel: the load-bearing rows naming it, which is what a "why did this
+   * change size" cue would point at. An element stretches only because
+   * something holds one of its edges while something else pulls the other,
+   * and both of those are in here.
+   */
+  readonly stretchCauses: ReadonlyMap<string, readonly ConstraintRef[]>;
+  /**
+   * How many degrees of freedom the constraints leave the component, after
+   * the gesture is accounted for. Zero means every element in it is fully
+   * pinned by the gesture; the arrangement has no slack left anywhere.
+   */
+  readonly freedom: number;
 };
 
 /** Evaluate a response at an actual gesture: `dofs` is the offset (drag) or
@@ -408,18 +467,129 @@ const edgeReachable = (
  */
 type RowStatus = "kept" | "redundant" | "inconsistent";
 
+/**
+ * What a row came from — the constraint it expresses, in the terms the rest
+ * of the editor names constraints by.
+ *
+ * Rows are anonymous arrays of coefficients, and every question of the form
+ * "*which* alignment did this" had to be answered by walking the links a
+ * second time and hoping the two models agreed. They didn't: a shortest-path
+ * walk blamed the axis that was working, and a chain that merely touched the
+ * route. A tag per row makes the solve answer for itself.
+ *
+ * Link and chain refs carry the identity the renderer already draws by, so a
+ * blamed row maps onto a guide with no further lookup.
+ */
+export type ConstraintRef =
+  /** the gesture itself, one row per driven edge */
+  | { readonly kind: "driver"; readonly elementId: string }
+  | {
+      readonly kind: "link";
+      readonly axis: Axis;
+      readonly selfId: string;
+      readonly selfEdge: Edge;
+      readonly elementId: string;
+      readonly otherEdge: Edge;
+    }
+  /** one gap boundary of a chain: gaps `at` and `at + 1` are equal */
+  | {
+      readonly kind: "chain";
+      readonly axis: Axis;
+      readonly ids: readonly string[];
+      readonly at: number;
+    }
+  | { readonly kind: "anchor"; readonly elementId: string }
+  /** rotated or text: a constraint may move it but never resize it */
+  | { readonly kind: "rigid"; readonly elementId: string }
+  | {
+      readonly kind: "feel";
+      readonly rule: keyof typeof ALIGNMENT_FEEL_ROWS;
+      readonly ids: readonly string[];
+    };
+
+/** A constraint's identity as a string, for the sets and maps that have to
+ * treat two rows from the same constraint as one. */
+export const constraintKey = (ref: ConstraintRef): string => {
+  switch (ref.kind) {
+    case "link":
+      return `link:${ref.axis}:${ref.selfId}:${ref.selfEdge}:${ref.elementId}:${ref.otherEdge}`;
+    case "chain":
+      return `chain:${ref.axis}:${ref.ids.join(",")}:${ref.at}`;
+    case "feel":
+      return `feel:${ref.rule}:${ref.ids.join(",")}`;
+    default:
+      return `${ref.kind}:${ref.elementId}`;
+  }
+};
+
+/** A redundant row and the rows that already implied it — an alignment that
+ * could be released without changing anything. */
+export type ImpliedConstraint = {
+  readonly ref: ConstraintRef;
+  readonly impliedBy: readonly ConstraintRef[];
+};
+
+/** Below this a combination coefficient is elimination noise rather than a
+ * row's genuine part in the result. Relative, because the coefficients are
+ * whatever the elimination produced rather than the 0, ±½, ±1 that row
+ * coefficients are limited to. */
+const COMBINATION_EPSILON = 1e-9;
+
 const createRowReducer = (nVars: number) => {
   const rows: number[][] = [];
   const pivots: number[] = [];
+  /** per kept row, its coefficients over the *original* rows — the proof of
+   * where it came from, carried through every elimination it survives */
+  const combinations: number[][] = [];
+  const origins: ConstraintRef[] = [];
+  const implied: ImpliedConstraint[] = [];
 
-  const add = (incoming: readonly number[]): RowStatus => {
+  /** `target += source * factor`, over combinations that may be shorter than
+   * each other: a row added later has coefficients the earlier ones lack. */
+  const accumulate = (
+    target: number[],
+    source: readonly number[],
+    factor: number,
+  ) => {
+    for (let j = 0; j < source.length; j++) {
+      target[j] = (target[j] ?? 0) + source[j] * factor;
+    }
+  };
+
+  /** The rows a combination actually leans on. */
+  const support = (combination: readonly number[]): ConstraintRef[] => {
+    let largest = 0;
+    for (const value of combination) {
+      largest = Math.max(largest, Math.abs(value ?? 0));
+    }
+    const threshold = COMBINATION_EPSILON * Math.max(1, largest);
+    const refs: ConstraintRef[] = [];
+    for (let j = 0; j < combination.length; j++) {
+      if (Math.abs(combination[j] ?? 0) > threshold && origins[j]) {
+        refs.push(origins[j]);
+      }
+    }
+    return refs;
+  };
+
+  const add = (
+    incoming: readonly number[],
+    ref: ConstraintRef,
+  ): { status: RowStatus; witness: ConstraintRef[] } => {
+    const index = origins.length;
+    origins.push(ref);
+
     const row = incoming.slice();
+    const combination: number[] = new Array<number>(index + 1).fill(0);
+    combination[index] = 1;
+
     for (let i = 0; i < rows.length; i++) {
       const factor = row[pivots[i]];
       if (factor !== 0) {
         for (let c = 0; c < row.length; c++) {
           row[c] -= factor * rows[i][c];
         }
+        accumulate(combination, combinations[i], -factor);
       }
     }
 
@@ -438,27 +608,38 @@ const createRowReducer = (nVars: number) => {
       // the gesture equals zero, which it doesn't.
       for (let c = nVars; c < row.length; c++) {
         if (Math.abs(row[c]) > ROW_EPSILON) {
-          return "inconsistent";
+          // The elimination that produced the contradiction is the proof of
+          // it: the rows it leaned on are the ones this row contradicts.
+          return { status: "inconsistent", witness: support(combination) };
         }
       }
-      return "redundant";
+      implied.push({
+        ref,
+        impliedBy: support(combination).filter((other) => other !== ref),
+      });
+      return { status: "redundant", witness: [] };
     }
 
     const scale = row[pivot];
     for (let c = 0; c < row.length; c++) {
       row[c] /= scale;
     }
-    for (const kept of rows) {
+    for (let j = 0; j < combination.length; j++) {
+      combination[j] = (combination[j] ?? 0) / scale;
+    }
+    rows.forEach((kept, i) => {
       const factor = kept[pivot];
       if (factor !== 0) {
         for (let c = 0; c < kept.length; c++) {
           kept[c] -= factor * row[c];
         }
+        accumulate(combinations[i], combination, -factor);
       }
-    }
+    });
     rows.push(row);
     pivots.push(pivot);
-    return "kept";
+    combinations.push(combination);
+    return { status: "kept", witness: [] };
   };
 
   /**
@@ -471,22 +652,53 @@ const createRowReducer = (nVars: number) => {
    * the constraints happen to allow and the element is not held still, it is
    * held by one edge and stretched by whatever pulls the other.
    */
-  const addAll = (incoming: readonly (readonly number[])[]): boolean => {
+  const addAll = (
+    incoming: readonly { row: readonly number[]; ref: ConstraintRef }[],
+  ): { ok: boolean; witness: ConstraintRef[] } => {
     const savedRows = rows.map((row) => row.slice());
     const savedPivots = pivots.slice();
-    for (const row of incoming) {
-      if (add(row) === "inconsistent") {
-        rows.length = 0;
-        rows.push(...savedRows);
-        pivots.length = 0;
-        pivots.push(...savedPivots);
-        return false;
+    const savedCombinations = combinations.map((one) => one.slice());
+    const savedOrigins = origins.length;
+    const savedImplied = implied.length;
+    const restore = () => {
+      rows.length = 0;
+      rows.push(...savedRows);
+      pivots.length = 0;
+      pivots.push(...savedPivots);
+      combinations.length = 0;
+      combinations.push(...savedCombinations);
+      // A declined rule was never part of the system, so it must leave no
+      // trace: a witness naming one would point at something the user can
+      // neither see nor edit.
+      origins.length = savedOrigins;
+      implied.length = savedImplied;
+    };
+    for (const { row, ref } of incoming) {
+      const { status, witness } = add(row, ref);
+      if (status === "inconsistent") {
+        restore();
+        // The rows that turned the offer down. For a feel rule nobody asks;
+        // for the edge a resize handle holds, this is why the element had to
+        // change shape in a way the user didn't ask for, and the UI says so.
+        return { ok: false, witness };
       }
     }
-    return true;
+    return { ok: true, witness: [] };
   };
 
-  return { add, addAll, rows };
+  return {
+    add,
+    addAll,
+    rows,
+    /** rank: one kept row per independent constraint */
+    get keptCount() {
+      return rows.length;
+    },
+    /** what each kept row is made of, over the original rows */
+    combinations,
+    origins,
+    implied,
+  };
 };
 
 /**
@@ -570,8 +782,12 @@ const addEdgeTerm = (
  */
 type SolveOutcome =
   | { readonly kind: "solved"; readonly response: AlignmentResponse }
-  /** the rows contradict each other: no displacement satisfies them */
-  | { readonly kind: "inconsistent" }
+  /** the rows contradict each other: no displacement satisfies them, and
+   * `refusedBy` is the set that does the contradicting */
+  | {
+      readonly kind: "inconsistent";
+      readonly refusedBy: readonly ConstraintRef[];
+    }
   /** the KKT system was not invertible, which should not be reachable — the
    * rows are independent by construction and the objective positive definite */
   | { readonly kind: "singular" };
@@ -579,15 +795,16 @@ type SolveOutcome =
 /**
  * The scene's response to a gesture, as a linear function of it.
  *
- * `released` names anchors to treat as free, which is how the blame for an
- * infeasible gesture is worked out: an anchor whose release makes the system
- * solvable is one of the reasons it wasn't.
+ * One solve answers every question asked of it: the displacements, which
+ * constraints refuse it, which are load-bearing, which are implied by the
+ * rest, and how much freedom is left. Blame used to be release-and-retest —
+ * re-solving with one anchor freed, per anchor — which the rows' own
+ * provenance has made unnecessary.
  */
 const solve = (
   driver: AlignmentDriver,
   axis: Axis,
   elementsMap: ElementsMap,
-  released: ReadonlySet<string>,
 ): SolveOutcome => {
   const ids = collectComponent(driver.edges.keys(), axis, elementsMap);
   const slotOf = new Map(ids.map((id, index) => [id, index]));
@@ -597,15 +814,41 @@ const solve = (
 
   const reducer = createRowReducer(nVars);
   let consistent = true;
-  const addHard = (row: readonly number[]) => {
-    if (reducer.add(row) === "inconsistent") {
+  const refusedBy: ConstraintRef[] = [];
+  const seenRefs = new Set<string>();
+  const addHard = (row: readonly number[], ref: ConstraintRef) => {
+    const { status, witness } = reducer.add(row, ref);
+    if (status === "inconsistent") {
+      // Every contradiction, not just the first. A contradicting row is
+      // dropped rather than stored, so the kept system stays consistent and
+      // later rows are still reduced against something meaningful — and a
+      // gesture can be blocked in two independent places at once, where
+      // fixing either one alone leaves it blocked by the other.
       consistent = false;
+      for (const found of witness) {
+        const key = constraintKey(found);
+        if (!seenRefs.has(key)) {
+          seenRefs.add(key);
+          refusedBy.push(found);
+        }
+      }
     }
   };
 
   // The gesture. Written before anything else so that an anchor or a link
   // contradicting it is reported as contradicting *it*, rather than the other
   // way round — the user's action is the thing we are trying to honour.
+  //
+  // An edge the gesture *holds still* — a resize handle's opposite side, whose
+  // coefficients are all zero — is offered rather than imposed, below. It is
+  // the one part of a gesture the user didn't ask for: dragging the right
+  // handle says "put the right edge here", and says nothing about the left
+  // beyond "you needn't move it". Where holding it is impossible — an element
+  // centred on an anchor, whose centre may not move — letting it go turns a
+  // refusal into a symmetric resize about the centre, which is what the
+  // constraint was asking for all along. Every edge the gesture actually
+  // moves stays hard, so the opposite side can never take over the resize.
+  const heldEdges: { row: number[]; ref: ConstraintRef }[] = [];
   for (const [id, edges] of driver.edges) {
     const slot = slotOf.get(id);
     if (slot === undefined) {
@@ -620,7 +863,16 @@ const solve = (
       coefficients.forEach((value, k) => {
         row[nVars + k] = value;
       });
-      addHard(row);
+      const ref: ConstraintRef = { kind: "driver", elementId: id };
+      if (coefficients.every((value) => value === 0)) {
+        // held still by the handle: offered below, or — with the rule off —
+        // not asked for at all, leaving the edge to the objective
+        if (ALIGNMENT_FEEL_ROWS.resizeHoldsItsOtherEdge) {
+          heldEdges.push({ row, ref });
+        }
+      } else {
+        addHard(row, ref);
+      }
     }
   }
 
@@ -633,11 +885,11 @@ const solve = (
     }
     const slot = slotOf.get(id)!;
 
-    if (isAlignmentAnchor(element) && !released.has(id)) {
+    if (isAlignmentAnchor(element)) {
       for (const edge of ["min", "max"] as const) {
         const row = blank();
         addEdgeTerm(row, slot, edge, 1);
-        addHard(row);
+        addHard(row, { kind: "anchor", elementId: id });
       }
       continue;
     }
@@ -646,7 +898,7 @@ const solve = (
       const row = blank();
       addEdgeTerm(row, slot, "min", 1);
       addEdgeTerm(row, slot, "max", -1);
-      addHard(row);
+      addHard(row, { kind: "rigid", elementId: id });
     }
   }
 
@@ -662,7 +914,14 @@ const solve = (
       const row = blank();
       addEdgeTerm(row, slot, link.selfEdge, 1);
       addEdgeTerm(row, partner, link.otherEdge, -1);
-      addHard(row);
+      addHard(row, {
+        kind: "link",
+        axis,
+        selfId: id,
+        selfEdge: link.selfEdge,
+        elementId: link.elementId,
+        otherEdge: link.otherEdge,
+      });
     }
   }
 
@@ -682,12 +941,29 @@ const solve = (
       addEdgeTerm(row, before, "max", -1);
       addEdgeTerm(row, after, "min", -1);
       addEdgeTerm(row, middle, "max", 1);
-      addHard(row);
+      addHard(row, { kind: "chain", axis, ids: chain, at: i });
     }
   }
 
   if (!consistent) {
-    return { kind: "inconsistent" };
+    return { kind: "inconsistent", refusedBy };
+  }
+
+  // The edges the gesture holds still, offered one at a time: an axis whose
+  // held edge cannot stay put should still hold the other one's.
+  const releasedBy: ConstraintRef[] = [];
+  const seenReleases = new Set<string>();
+  for (const held of heldEdges) {
+    const { ok, witness } = reducer.addAll([held]);
+    if (!ok) {
+      for (const ref of witness) {
+        const key = constraintKey(ref);
+        if (!seenReleases.has(key)) {
+          seenReleases.add(key);
+          releasedBy.push(ref);
+        }
+      }
+    }
   }
 
   // The feel rules, offered to whatever freedom the hard rows left. A chain
@@ -713,24 +989,48 @@ const solve = (
           (["min", "max"] as const).map((edge) => {
             const row = blank();
             addEdgeTerm(row, farEnd, edge, 1);
-            return row;
+            return {
+              row,
+              ref: {
+                kind: "feel" as const,
+                rule: "endDragHoldsFarEnd" as const,
+                ids: chain,
+              },
+            };
           }),
         );
       }
     } else if (!isEnd && ALIGNMENT_FEEL_ROWS.interiorDragTravelsRigidly) {
-      // Equal translations, member to member. Sizes are left to the objective,
-      // which holds them where a rigid chain needs no change.
-      const rigid: number[][] = [];
-      for (let i = 0; i + 1 < chain.length; i++) {
-        const here = slotOf.get(chain[i]);
-        const next = slotOf.get(chain[i + 1]);
-        if (here === undefined || next === undefined) {
+      // Every other member *translates*, both edges, by however far the driven
+      // member's centre moves. Both edges for the same reason the far-end rule
+      // uses both: a member told only where its centre goes can get there by
+      // holding one edge and moving the other twice as far, which is a stretch
+      // and not what "travels rigidly" says. That is not hypothetical — a
+      // member with an edge an anchor holds has no other way to satisfy a
+      // centre row, so the rule that is supposed to move a chain rigidly ends
+      // up resizing it instead. Written against the driven member's centre
+      // rather than member to member so a *resize* of an interior member
+      // carries the rest along without spreading its size change to them.
+      const drivenSlot = slotOf.get(driven[0]);
+      const rigid: { row: number[]; ref: ConstraintRef }[] = [];
+      for (const id of chain) {
+        const slot = slotOf.get(id);
+        if (slot === undefined || drivenSlot === undefined || id === driven[0]) {
           continue;
         }
-        const row = blank();
-        addEdgeTerm(row, here, "center", 1);
-        addEdgeTerm(row, next, "center", -1);
-        rigid.push(row);
+        for (const edge of ["min", "max"] as const) {
+          const row = blank();
+          addEdgeTerm(row, slot, edge, 1);
+          addEdgeTerm(row, drivenSlot, "center", -1);
+          rigid.push({
+            row,
+            ref: {
+              kind: "feel",
+              rule: "interiorDragTravelsRigidly",
+              ids: chain,
+            },
+          });
+        }
       }
       reducer.addAll(rigid);
     }
@@ -828,6 +1128,42 @@ const solve = (
     byElement.set(id, perDof);
   });
 
+  // The multipliers say which rows are load-bearing: a row the answer is
+  // pressed against has a non-zero one, a row it satisfies without effort has
+  // zero. They belong to the *reduced* rows, each of which is a combination
+  // of the original ones, so the weight a reduced row carries is shared out
+  // over the constraints it was built from.
+  const perOrigin = new Array<number>(reducer.origins.length).fill(0);
+  reducer.combinations.forEach((combination, index) => {
+    for (let k = 0; k < driver.dofCount; k++) {
+      const multiplier = solution[nVars + index][k];
+      for (let j = 0; j < combination.length; j++) {
+        perOrigin[j] += Math.abs(multiplier * (combination[j] ?? 0));
+      }
+    }
+  });
+  const largestWeight = Math.max(0, ...perOrigin);
+  const activeConstraints = reducer.origins.filter(
+    // relative: multipliers carry the objective's units, which the gesture's
+    // own scale runs through
+    (_, index) => perOrigin[index] > MULTIPLIER_EPSILON * largestWeight,
+  );
+
+  // What holds a stretched element's edges: every load-bearing constraint
+  // that names it. The gesture's own rows are in there when the driver is
+  // what is pulling, which is the usual case and worth saying.
+  const stretchCauses = new Map<string, ConstraintRef[]>();
+  for (const id of stretchers) {
+    const causes = activeConstraints.filter((ref) =>
+      ref.kind === "link"
+        ? ref.selfId === id || ref.elementId === id
+        : ref.kind === "chain" || ref.kind === "feel"
+        ? ref.ids.includes(id)
+        : ref.elementId === id,
+    );
+    stretchCauses.set(id, causes);
+  }
+
   return {
     kind: "solved",
     response: {
@@ -836,6 +1172,12 @@ const solve = (
       feasible: true,
       blockers: new Set(),
       stretchers,
+      refusedBy: [],
+      releasedBy,
+      activeConstraints,
+      implied: reducer.implied,
+      stretchCauses,
+      freedom: nVars - reducer.keptCount,
     },
   };
 };
@@ -853,42 +1195,49 @@ export const solveAlignmentResponse = (
   axis: Axis,
   elementsMap: ElementsMap,
 ): AlignmentResponse => {
-  const outcome = solve(driver, axis, elementsMap, new Set());
+  const outcome = solve(driver, axis, elementsMap);
   if (outcome.kind === "solved") {
     return outcome.response;
   }
 
-  const refused = (blockers: ReadonlySet<string>): AlignmentResponse => ({
+  const refused = (
+    blockers: ReadonlySet<string>,
+    refusedBy: readonly ConstraintRef[],
+  ): AlignmentResponse => ({
     byElement: new Map(),
     dofCount: driver.dofCount,
     feasible: false,
     blockers,
     stretchers: new Set(),
+    refusedBy,
+    releasedBy: [],
+    activeConstraints: [],
+    implied: [],
+    stretchCauses: new Map(),
+    freedom: 0,
   });
 
   if (outcome.kind === "singular") {
     // Nothing to blame: no arrangement of anchors produced this, so naming one
     // would be inventing a reason.
-    return refused(new Set());
+    return refused(new Set(), []);
   }
 
-  // The constraints contradict each other, so some anchor is in the way.
-  // Releasing one at a time names the ones actually responsible: an anchor
-  // whose absence makes the gesture possible is a reason it wasn't. Where no
-  // single release is enough they are collectively to blame, and all of them
-  // are reported.
-  const component = collectComponent(driver.edges.keys(), axis, elementsMap);
-  const anchors = component.filter(
-    (id) => !driver.edges.has(id) && isAlignmentAnchor(elementsMap.get(id)),
-  );
+  // The anchors among the contradicting rows are the ones whose release would
+  // make the gesture possible — which is what release-and-retest used to
+  // establish, one extra solve per anchor, and what the witness now says
+  // outright. Where the contradiction involves no anchor at all (two links
+  // pulling one edge two ways, a rigid element asked to stretch) there is
+  // nothing for the anvil overlay to name, and `refusedBy` carries the real
+  // answer.
   const blockers = new Set<string>();
-  for (const id of anchors) {
-    if (solve(driver, axis, elementsMap, new Set([id])).kind === "solved") {
-      blockers.add(id);
+  for (const ref of outcome.refusedBy) {
+    if (ref.kind === "anchor") {
+      blockers.add(ref.elementId);
     }
   }
 
-  return refused(blockers.size > 0 ? blockers : new Set(anchors));
+  return refused(blockers, outcome.refusedBy);
 };
 
 /**
@@ -900,15 +1249,17 @@ export const solveAlignmentResponse = (
  * overlay means: not "this is why nothing happened" but "this is why what
  * happened looks like that".
  *
- * Release-and-compare rather than a structural rule, which is what makes it
- * exact. An anchor merely *being* in the component is not enough — the far end
- * of a chain the feel rule already holds at zero is doing nothing the user
- * wouldn't have seen anyway, and releasing it changes nothing, so it stays out.
- * That is the distinction the old solver spelled out by hand as
- * "does this pin override the default".
+ * Read off the solve's multipliers, which is both exact and free. A
+ * constraint's multiplier is what the answer is pressed against it by: zero
+ * means the optimum would be the same without it, non-zero means releasing it
+ * would move something. So an anchor is in play exactly when one of its two
+ * rows is carrying load — the far end of a chain the feel rule already holds
+ * at zero has an anchor row doing nothing, and stays out, which is the
+ * distinction the old solver spelled out by hand as "does this pin override
+ * the default".
  *
- * Free when there are no anchors about, which is the overwhelmingly common
- * case: the component is walked, no anchor is found, and nothing is re-solved.
+ * This used to be release-and-compare: one extra whole solve per anchor,
+ * every frame of every gesture near one. The multipliers were always there.
  */
 export const alignmentAnchorsInPlay = (
   driver: AlignmentDriver,
@@ -916,45 +1267,38 @@ export const alignmentAnchorsInPlay = (
   elementsMap: ElementsMap,
 ): Set<string> => {
   const inPlay = new Set<string>();
-  const anchors = collectComponent(
-    driver.edges.keys(),
-    axis,
-    elementsMap,
-  ).filter(
-    (id) => !driver.edges.has(id) && isAlignmentAnchor(elementsMap.get(id)),
-  );
-  if (anchors.length === 0) {
-    return inPlay;
-  }
-
-  const base = solve(driver, axis, elementsMap, new Set());
-  if (base.kind !== "solved") {
+  const outcome = solve(driver, axis, elementsMap);
+  if (outcome.kind !== "solved") {
     // A refusal is blamed by `solveAlignmentResponse`, on its own terms.
     return inPlay;
   }
 
-  const differs = (other: AlignmentResponse) => {
-    for (const [id, perDof] of base.response.byElement) {
-      const against = other.byElement.get(id);
-      if (!against) {
-        return true;
-      }
-      for (let k = 0; k < perDof.length; k++) {
-        if (
-          perDof[k].min !== against[k].min ||
-          perDof[k].max !== against[k].max
-        ) {
-          return true;
-        }
+  // An anchor whose work a *feel rule* would have done anyway is not why
+  // anything landed where it did. The rule was offered and found redundant —
+  // the far end of a chain is held at zero by the rule and by the anchor
+  // alike — so the anchor's rows carry the load and its multiplier is
+  // non-zero, though releasing it would change nothing: the rule, no longer
+  // redundant, would simply be kept instead.
+  //
+  // This is the one place where "load-bearing" and "releasing it would change
+  // the answer" come apart, and it is why the feel rules are offered rather
+  // than imposed: a row that *is* in the system cannot be substituted for,
+  // but a candidate one can.
+  const substitutable = new Set<string>();
+  for (const { ref, impliedBy } of outcome.response.implied) {
+    if (ref.kind !== "feel") {
+      continue;
+    }
+    for (const by of impliedBy) {
+      if (by.kind === "anchor") {
+        substitutable.add(by.elementId);
       }
     }
-    return false;
-  };
+  }
 
-  for (const id of anchors) {
-    const released = solve(driver, axis, elementsMap, new Set([id]));
-    if (released.kind !== "solved" || differs(released.response)) {
-      inPlay.add(id);
+  for (const ref of outcome.response.activeConstraints) {
+    if (ref.kind === "anchor" && !substitutable.has(ref.elementId)) {
+      inPlay.add(ref.elementId);
     }
   }
   return inPlay;

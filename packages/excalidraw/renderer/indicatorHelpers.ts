@@ -38,6 +38,76 @@ export const getAlignmentIndicatorColor = (
     ? ALIGNMENT_COLOR_LIGHT
     : ALIGNMENT_COLOR_DARK;
 
+/** One full there-and-back flash, in ms. Short enough to read as an alarm
+ * rather than as decoration, and the gesture it reports on is usually over
+ * in a second or two. */
+const REFUSAL_FLASH_PERIOD = 600;
+
+/** Channel-wise blend of two `#rrggbb` colours, `t` of the way from `from`
+ * to `to`. */
+const mixHex = (from: string, to: string, t: number): string => {
+  const channel = (at: number) => {
+    const a = parseInt(from.slice(at, at + 2), 16);
+    const b = parseInt(to.slice(at, at + 2), 16);
+    return Math.round(a + (b - a) * t)
+      .toString(16)
+      .padStart(2, "0");
+  };
+  return `#${channel(1)}${channel(3)}${channel(5)}`;
+};
+
+/**
+ * The colour of an alignment that is *refusing* the gesture in progress,
+ * pulsing between the ordinary indicator red and the anvil's warning red.
+ *
+ * A change of shade rather than of anything structural: the line still says
+ * what it always says, and what the flash adds is that it is the reason
+ * nothing is moving. Interpolated rather than switched, because a hard swap
+ * at this rate reads as a rendering fault.
+ */
+/** Where in the there-and-back the flash is: 0 at rest, 1 at the far end. */
+const flashPhase = (runtime: number) =>
+  (1 - Math.cos((2 * Math.PI * runtime) / REFUSAL_FLASH_PERIOD)) / 2;
+
+/** The far end of the flash: the shade a refusing alignment deepens to.
+ *
+ * Its own constants rather than the anvil's warning red, which it currently
+ * matches. The two answer to different questions — how far a *line* should
+ * travel from the indicator red it starts at, against what an anvil drawn
+ * over an element's own artwork needs to stay legible — so tuning either
+ * for its own job shouldn't silently move the other. */
+const REFUSAL_FLASH_COLOR_LIGHT = "#cf2929";
+const REFUSAL_FLASH_COLOR_DARK = "#ff6b6b";
+
+export const getRefusalFlashColor = (
+  theme: AppState["theme"],
+  zenModeEnabled: boolean,
+  runtime: number,
+): string => {
+  const light = theme === THEME.LIGHT || zenModeEnabled;
+  return mixHex(
+    light ? ALIGNMENT_COLOR_LIGHT : ALIGNMENT_COLOR_DARK,
+    light ? REFUSAL_FLASH_COLOR_LIGHT : REFUSAL_FLASH_COLOR_DARK,
+    flashPhase(runtime),
+  );
+};
+
+/** How far a flashing badge swells at the peak of its pulse. Small: the
+ * badge is a fixed screen size everywhere else, and a mark that changes
+ * size reads as movement long before it reads as a change of size. */
+const REFUSAL_PULSE_AMPLITUDE = 0.15;
+
+/**
+ * The size a flashing badge is drawn at, as a multiple of its usual radius.
+ * On the same phase as {@link getRefusalFlashColor}, so a badge swells and
+ * deepens as one beat rather than two overlapping ones.
+ *
+ * Drawing only — the hit radius doesn't pulse, or the badge would be a
+ * target that moves under the pointer.
+ */
+export const getRefusalFlashScale = (runtime: number): number =>
+  1 + REFUSAL_PULSE_AMPLITUDE * flashPhase(runtime);
+
 // ---------------------------------------------------------------------------
 // Badges and their glyphs
 // ---------------------------------------------------------------------------
@@ -241,8 +311,8 @@ const BINDING_LEADER_DOT_RADIUS = 2;
 const ANCHOR_BUTTON_COLOR = "#6965db";
 
 // Anchor color when the user is attempting a drag that is blocked
-const ANCHOR_WARNING_COLOR_LIGHT = "#a51111";
-const ANCHOR_WARNING_COLOR_DARK = "#ff6b6b";
+const ANCHOR_WARNING_COLOR_LIGHT = "#e24545";
+const ANCHOR_WARNING_COLOR_DARK = "#d16969";
 
 /** The anvil's height for an element: a fraction of the element's shorter
  * side, clamped to a screen-space range so it still reads on a tiny shape
@@ -449,8 +519,10 @@ export const drawEqualsBadge = (
   color: string,
   locked: boolean,
   hovered = false,
+  /** see {@link getRefusalFlashScale} */
+  scale = 1,
 ) => {
-  const r = INDICATOR_BADGE_RADIUS / zoom;
+  const r = (INDICATOR_BADGE_RADIUS * scale) / zoom;
   const halfBar = r * EQUALS_GLYPH.halfBar;
   const barGap = r * EQUALS_GLYPH.barGap;
 
@@ -511,8 +583,10 @@ export const drawAlignmentBadge = (
   lockedX: boolean | null,
   lockedY: boolean | null,
   hovered = false,
+  /** see {@link getRefusalFlashScale} */
+  scale = 1,
 ) => {
-  const r = INDICATOR_BADGE_RADIUS / zoom;
+  const r = (INDICATOR_BADGE_RADIUS * scale) / zoom;
   const arms = [
     { locked: lockedX, vertical: true },
     { locked: lockedY, vertical: false },
@@ -607,8 +681,10 @@ export const drawAlignmentClusterBadge = (
   zoom: number,
   color: string,
   count: number,
+  /** see {@link getRefusalFlashScale} */
+  scale = 1,
 ) => {
-  const r = INDICATOR_BADGE_RADIUS / zoom;
+  const r = (INDICATOR_BADGE_RADIUS * scale) / zoom;
 
   context.save();
   context.lineWidth = badgeLineWidth(r, zoom);

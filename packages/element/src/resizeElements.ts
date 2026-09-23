@@ -338,11 +338,27 @@ export const transformElements = (
 
         // Hard alignment: drag partners aligned to this element so the
         // shared edge follows the resize, and restore any equal gaps the
-        // new size broke.
+        // new size broke. Handed the gesture rather than left to measure
+        // it: alignment may move the edge this handle holds, and reading
+        // the driver's own geometry back would mistake that for the
+        // gesture (see `ResizeIntent`).
         propagateAlignmentsAfterResize(
           originalElements,
           new Set([elementId]),
           scene,
+          // A rotated element's bounds are not its width and height, so a
+          // proposed length says nothing about how far its bounds moved.
+          // Those seeds stay measured, as they were before.
+          latestElement.angle === 0
+            ? {
+                opts: {
+                  handle: transformHandleType,
+                  shouldResizeFromCenter,
+                  allEdgesMove: false,
+                },
+                length: { x: nextWidth, y: nextHeight },
+              }
+            : undefined,
         );
       }
     }

@@ -2661,11 +2661,50 @@ const _renderInteractiveScene = ({
     badgeLayout.edgeLines,
     badgeLayout.gapLines,
   );
-  renderGapAlignmentLocks(context, appState, badgeLayout.gapLines);
-  renderAlignmentLocks(context, appState, badgeLayout.edgeLines);
-  renderGapAlignmentIcons(context, appState, badgeLayout.gapLines);
-  renderAlignmentLockIcons(context, appState, badgeLayout.edgeLines);
-  renderAlignmentClusterBadges(context, appState, badgeLayout.clusters);
+  // A refusal flashes, so while one is on screen the scene keeps asking for
+  // frames — the gesture is usually held still against the constraint that
+  // refused it, and nothing else would be repainting.
+  const refusing =
+    badgeLayout.edgeLines.some((line) => line.blocked) ||
+    badgeLayout.gapLines.some((line) => line.blocked);
+  const refusalRuntime = refusing
+    ? (animationState?.alignmentRefusal?.runtime ?? 0) + deltaTime
+    : null;
+  nextAnimationState = {
+    ...nextAnimationState,
+    alignmentRefusal:
+      refusalRuntime === null ? undefined : { runtime: refusalRuntime },
+  };
+  renderGapAlignmentLocks(
+    context,
+    appState,
+    badgeLayout.gapLines,
+    refusalRuntime,
+  );
+  renderAlignmentLocks(
+    context,
+    appState,
+    badgeLayout.edgeLines,
+    refusalRuntime,
+  );
+  renderGapAlignmentIcons(
+    context,
+    appState,
+    badgeLayout.gapLines,
+    refusalRuntime,
+  );
+  renderAlignmentLockIcons(
+    context,
+    appState,
+    badgeLayout.edgeLines,
+    refusalRuntime,
+  );
+  renderAlignmentClusterBadges(
+    context,
+    appState,
+    badgeLayout.clusters,
+    refusalRuntime,
+  );
   renderElementAlignmentLocks(
     context,
     appState,

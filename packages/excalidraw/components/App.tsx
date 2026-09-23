@@ -122,8 +122,11 @@ import {
   setAlignmentPairsLocked,
   unlockAlignmentPair,
   getAlignmentResizeEffects,
+  constraintKey,
   lockGapAlignment,
   unlockGapAlignment,
+  type ConstraintRef,
+  type ResizeAlignmentEffects,
   type AlignmentGuide,
   type GapAlignmentGuide,
   bindOrUnbindBindingElements,
@@ -12177,10 +12180,17 @@ class App extends React.Component<AppProps, AppState> {
         isRotating: false,
         isCropping: false,
         resizingElement: null,
-        alignmentResizeAnchorIds: updateStable(
-          prevState.alignmentResizeAnchorIds,
-          [],
-        ),
+        // same reasoning as the movers below: two empty arrays under `x` /
+        // `y` never compare equal shallowly
+        alignmentResizeConstraints: App.resizeConstraintsAreEmpty(
+          prevState.alignmentResizeConstraints,
+        )
+          ? prevState.alignmentResizeConstraints
+          : {
+              refusedBy: { x: [], y: [] },
+              active: { x: [], y: [] },
+              releasedBy: { x: [], y: [] },
+            },
         alignmentResizeStretchAnchorIds: updateStable(
           prevState.alignmentResizeStretchAnchorIds,
           [],
@@ -14185,6 +14195,18 @@ class App extends React.Component<AppProps, AppState> {
     return false;
   };
 
+  /** Whether a published resize answer says nothing at all, in which case
+   * the old object is kept rather than replaced with an equal one. */
+  private static resizeConstraintsAreEmpty = (
+    constraints: AppState["alignmentResizeConstraints"],
+  ) =>
+    constraints.refusedBy.x.length === 0 &&
+    constraints.refusedBy.y.length === 0 &&
+    constraints.active.x.length === 0 &&
+    constraints.active.y.length === 0 &&
+    constraints.releasedBy.x.length === 0 &&
+    constraints.releasedBy.y.length === 0;
+
   /**
    * Publish what the in-progress resize is doing to the alignment graph:
    * the anchors refusing it, so the anvil overlay can point at them the
@@ -14203,9 +14225,13 @@ class App extends React.Component<AppProps, AppState> {
     transformHandleType: MaybeTransformHandleType,
     resizeFromCenter: boolean,
   ) => {
-    let blockers = { x: new Set<string>(), y: new Set<string>() };
     let stretchCauses = new Set<string>();
     let movers = { x: new Set<string>(), y: new Set<string>() };
+    let constraints: AppState["alignmentResizeConstraints"] = {
+      refusedBy: { x: [], y: [] },
+      active: { x: [], y: [] },
+      releasedBy: { x: [], y: [] },
+    };
 
     if (transformHandleType && transformHandleType !== "rotation") {
       const resizedIds = new Set(
@@ -14228,25 +14254,42 @@ class App extends React.Component<AppProps, AppState> {
         elementsMap,
         edgeOpts,
       );
-      blockers = effects.blockers;
+      constraints = {
+        refusedBy: effects.refusedBy,
+        active: effects.active,
+        releasedBy: effects.releasedBy,
+      };
       movers = effects.movers;
       // Not per axis: the overlay marks the element, and an anchor that
       // forces a stretch on either axis is equally the reason for it.
       stretchCauses = new Set([...effects.causes.x, ...effects.causes.y]);
     }
 
-    const nextAnchors = [...new Set([...blockers.x, ...blockers.y])];
     const nextStretchAnchors = [...stretchCauses];
     const nextMovers = { x: [...movers.x], y: [...movers.y] };
-    const current = this.state.alignmentResizeAnchorIds;
+    const currentConstraints = this.state.alignmentResizeConstraints;
     const currentStretch = this.state.alignmentResizeStretchAnchorIds;
     const currentMovers = this.state.alignmentResizeMoverIds;
 
     const sameIds = (next: string[], prev: readonly string[]) =>
       next.length === prev.length && next.every((id, i) => id === prev[i]);
+    // by key, since the refs are rebuilt by each solve
+    const sameRefs = (
+      next: readonly ConstraintRef[],
+      prev: readonly ConstraintRef[],
+    ) =>
+      next.length === prev.length &&
+      next.every((ref, i) => constraintKey(ref) === constraintKey(prev[i]));
 
-    if (!sameIds(nextAnchors, current)) {
-      this.setState({ alignmentResizeAnchorIds: nextAnchors });
+    if (
+      !sameRefs(constraints.refusedBy.x, currentConstraints.refusedBy.x) ||
+      !sameRefs(constraints.refusedBy.y, currentConstraints.refusedBy.y) ||
+      !sameRefs(constraints.active.x, currentConstraints.active.x) ||
+      !sameRefs(constraints.active.y, currentConstraints.active.y) ||
+      !sameRefs(constraints.releasedBy.x, currentConstraints.releasedBy.x) ||
+      !sameRefs(constraints.releasedBy.y, currentConstraints.releasedBy.y)
+    ) {
+      this.setState({ alignmentResizeConstraints: constraints });
     }
     if (!sameIds(nextStretchAnchors, currentStretch)) {
       this.setState({ alignmentResizeStretchAnchorIds: nextStretchAnchors });

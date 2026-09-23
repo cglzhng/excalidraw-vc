@@ -5,9 +5,11 @@ upstream behaviour the fork changed on purpose, or snapshot state the fork
 added to; none were introduced by the alignment solver (`91b04ac4` fails
 exactly the same 234 tests as its parent).
 
-Triaged against `91b04ac4` on 2026-09-21: **234 failed, 1620 passed** across
-121 files. Entries are point-in-time — when a full run disagrees with this
-file, diff the failing names against it before re-triaging:
+Triaged against `91b04ac4` on 2026-09-21, then snapshots regenerated:
+**94 failed, 1760 passed** across 121 files (18 failing). Every failure left
+is an assertion. The per-section counts below are approximate, and sum to a
+little over 94. Entries are point-in-time — when a full run disagrees with
+this file, diff the failing names against it before re-triaging:
 
 ```bash
 yarn test:app --watch=false --reporter=default --reporter=json --outputFile.json=test-results.json
@@ -18,23 +20,16 @@ several of these are the test-side shadow of.
 
 ---
 
-## Stale snapshots (~140)
+## Snapshots
 
-Snapshots recorded before the fork added fields. Nothing is wrong in them;
-`yarn test:update` absorbs the lot.
+Regenerated with `yarn test:update` on 2026-09-21, clearing 140 snapshot-only
+failures: `appState` had gained `alignmentResizeMoverIds`,
+`alignmentResizeStretchAnchorIds` and `expandedAlignmentCluster`, and
+elements `shortId`. Snapshots now record the fork's behaviour, so a snapshot
+that changes is a behaviour change — not evidence of anything predating
+that date.
 
-- **`appState`** gains `alignmentResizeMoverIds`,
-  `alignmentResizeStretchAnchorIds` and `expandedAlignmentCluster`:
-  `history.test.tsx` (~63), `regressionTests.test.tsx` (~50),
-  `contextmenu.test.tsx` (3).
-- **Elements** gain `shortId`: `transform.test.ts` (11),
-  `dragCreate.test.tsx` (5), `multiPointCreate.test.tsx` (2),
-  `move.test.tsx` (2), `export.test.ts` (1).
-
-Several `regressionTests` and `history` tests fail on both a snapshot and an
-assertion; the assertion is listed in its own section below.
-
-## Badges and the anvil take the press (~40)
+## Badges and the anvil take the press (~23)
 
 Alignment badges, equal-gap badges, cluster badges and the anchor anvil all
 consume pointer-down (see `CLAUDE.md` → Hard alignment → UI). The anvil sits
@@ -127,15 +122,13 @@ Introduced in `ee159f7e`.
 
 - `selection.test.tsx` — the three "inner box-selection" tests.
 
-## `contextmenu` finds two rectangle tools (~28)
+## `contextmenu` finds two rectangle tools (~14)
 
 `UI.clickTool("rectangle")` throws "Found multiple elements with tool name:
-rectangle" in every test that draws through the toolbar, and each such test
-then also fails its "number of renders" snapshot. The fork renders a second
-button with that tool name; which one is untraced.
+rectangle" in every test that draws through the toolbar. The fork renders a
+second button with that tool name; which one is untraced.
 
-- `contextmenu.test.tsx` — every failure other than the three `appState`
-  snapshots above.
+- `contextmenu.test.tsx` — every test that clicks a tool.
 
 ## Untraced (9)
 

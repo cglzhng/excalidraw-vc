@@ -11,7 +11,16 @@ exports[`history > multiplayer undo/redo > conflicts in arrows and their bindabl
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -666,7 +675,16 @@ exports[`history > multiplayer undo/redo > conflicts in arrows and their bindabl
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -1248,7 +1266,16 @@ exports[`history > multiplayer undo/redo > conflicts in arrows and their bindabl
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -1624,7 +1651,16 @@ exports[`history > multiplayer undo/redo > conflicts in arrows and their bindabl
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -2002,7 +2038,16 @@ exports[`history > multiplayer undo/redo > conflicts in arrows and their bindabl
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -2280,7 +2325,16 @@ exports[`history > multiplayer undo/redo > conflicts in arrows and their bindabl
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -2754,7 +2808,16 @@ exports[`history > multiplayer undo/redo > conflicts in bound text elements and 
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -3074,7 +3137,16 @@ exports[`history > multiplayer undo/redo > conflicts in bound text elements and 
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -3410,7 +3482,16 @@ exports[`history > multiplayer undo/redo > conflicts in bound text elements and 
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -3726,7 +3807,16 @@ exports[`history > multiplayer undo/redo > conflicts in bound text elements and 
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -4033,7 +4123,16 @@ exports[`history > multiplayer undo/redo > conflicts in bound text elements and 
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -4288,7 +4387,16 @@ exports[`history > multiplayer undo/redo > conflicts in bound text elements and 
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -4561,7 +4669,16 @@ exports[`history > multiplayer undo/redo > conflicts in bound text elements and 
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -4848,7 +4965,16 @@ exports[`history > multiplayer undo/redo > conflicts in bound text elements and 
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -5095,7 +5221,16 @@ exports[`history > multiplayer undo/redo > conflicts in bound text elements and 
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -5342,7 +5477,16 @@ exports[`history > multiplayer undo/redo > conflicts in bound text elements and 
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -5604,7 +5748,16 @@ exports[`history > multiplayer undo/redo > conflicts in bound text elements and 
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -5875,7 +6028,16 @@ exports[`history > multiplayer undo/redo > conflicts in frames and their childre
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -6150,7 +6312,16 @@ exports[`history > multiplayer undo/redo > should iterate through the history wh
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -6496,7 +6667,16 @@ exports[`history > multiplayer undo/redo > should iterate through the history wh
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -6915,7 +7095,16 @@ exports[`history > multiplayer undo/redo > should iterate through the history wh
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -7308,7 +7497,16 @@ exports[`history > multiplayer undo/redo > should iterate through the history wh
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -7637,7 +7835,16 @@ exports[`history > multiplayer undo/redo > should iterate through the history wh
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -7944,7 +8151,16 @@ exports[`history > multiplayer undo/redo > should iterate through the history wh
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -8189,7 +8405,16 @@ exports[`history > multiplayer undo/redo > should iterate through the history wh
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -8560,7 +8785,16 @@ exports[`history > multiplayer undo/redo > should iterate through the history wh
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -8931,7 +9165,16 @@ exports[`history > multiplayer undo/redo > should not let remote changes to inte
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -9355,7 +9598,16 @@ exports[`history > multiplayer undo/redo > should not let remote changes to inte
     "locked": false,
     "type": "freedraw",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -9658,7 +9910,16 @@ exports[`history > multiplayer undo/redo > should not let remote changes to inte
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -9911,7 +10172,16 @@ exports[`history > multiplayer undo/redo > should not override remote changes on
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -10192,7 +10462,16 @@ exports[`history > multiplayer undo/redo > should not override remote changes on
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -10439,7 +10718,16 @@ exports[`history > multiplayer undo/redo > should override remotely added groups
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -10757,7 +11045,16 @@ exports[`history > multiplayer undo/redo > should override remotely added points
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -11089,7 +11386,16 @@ exports[`history > multiplayer undo/redo > should redistribute deltas when eleme
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -11340,7 +11646,16 @@ exports[`history > multiplayer undo/redo > should redraw arrows on undo > [end o
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -12281,7 +12596,16 @@ exports[`history > multiplayer undo/redo > should update history entries after r
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -12556,7 +12880,16 @@ exports[`history > singleplayer undo/redo > remounting undo/redo buttons should 
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -12807,7 +13140,16 @@ exports[`history > singleplayer undo/redo > should clear the redo stack on eleme
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -13060,7 +13402,16 @@ exports[`history > singleplayer undo/redo > should create entry when selecting f
     "locked": false,
     "type": "freedraw",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -13481,7 +13832,16 @@ exports[`history > singleplayer undo/redo > should create new history entry on e
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -13706,7 +14066,16 @@ exports[`history > singleplayer undo/redo > should create new history entry on e
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -13928,7 +14297,16 @@ exports[`history > singleplayer undo/redo > should create new history entry on i
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -14246,7 +14624,16 @@ exports[`history > singleplayer undo/redo > should create new history entry on i
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -14561,7 +14948,16 @@ exports[`history > singleplayer undo/redo > should create new history entry on s
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -14822,7 +15218,16 @@ exports[`history > singleplayer undo/redo > should disable undo/redo buttons whe
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -15075,7 +15480,16 @@ exports[`history > singleplayer undo/redo > should end up with no history entry 
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -15328,7 +15742,16 @@ exports[`history > singleplayer undo/redo > should iterate through the history w
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -15590,7 +16013,16 @@ exports[`history > singleplayer undo/redo > should not clear the redo stack on s
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -15938,7 +16370,16 @@ exports[`history > singleplayer undo/redo > should not collapse when applying co
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -16122,7 +16563,16 @@ exports[`history > singleplayer undo/redo > should not end up with history entry
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -16423,7 +16873,16 @@ exports[`history > singleplayer undo/redo > should not end up with history entry
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -16701,7 +17160,16 @@ exports[`history > singleplayer undo/redo > should not modify anything on unrela
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -16868,7 +17336,16 @@ exports[`history > singleplayer undo/redo > should not override appstate changes
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -17165,7 +17642,16 @@ exports[`history > singleplayer undo/redo > should support appstate name or view
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -17340,7 +17826,16 @@ exports[`history > singleplayer undo/redo > should support bidirectional binding
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -18115,7 +18610,16 @@ exports[`history > singleplayer undo/redo > should support bidirectional binding
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -18788,7 +19292,16 @@ exports[`history > singleplayer undo/redo > should support bidirectional binding
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -19461,7 +19974,16 @@ exports[`history > singleplayer undo/redo > should support bidirectional binding
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -20237,7 +20759,16 @@ exports[`history > singleplayer undo/redo > should support bidirectional binding
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -21032,7 +21563,16 @@ exports[`history > singleplayer undo/redo > should support changes in elements' 
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -21531,7 +22071,16 @@ exports[`history > singleplayer undo/redo > should support duplication of groups
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -22065,7 +22614,16 @@ exports[`history > singleplayer undo/redo > should support element creation, del
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],
@@ -22543,7 +23101,16 @@ exports[`history > singleplayer undo/redo > should support linear element creati
     "locked": false,
     "type": "selection",
   },
-  "alignmentResizeAnchorIds": [],
+  "alignmentResizeConstraints": {
+    "active": {
+      "x": [],
+      "y": [],
+    },
+    "refusedBy": {
+      "x": [],
+      "y": [],
+    },
+  },
   "alignmentResizeMoverIds": {
     "x": [],
     "y": [],

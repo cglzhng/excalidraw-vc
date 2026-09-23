@@ -7,7 +7,7 @@ import type {
   StrokeWidthKey,
 } from "@excalidraw/common";
 
-import type { LinearElementEditor } from "@excalidraw/element";
+import type { ConstraintRef, LinearElementEditor } from "@excalidraw/element";
 
 import type { MaybeTransformHandleType } from "@excalidraw/element";
 
@@ -256,7 +256,7 @@ export type InteractiveCanvasAppState = Readonly<
     hoveredAlignmentAnchorId: AppState["hoveredAlignmentAnchorId"];
     hoveredAlignmentIcon: AppState["hoveredAlignmentIcon"];
     expandedAlignmentCluster: AppState["expandedAlignmentCluster"];
-    alignmentResizeAnchorIds: AppState["alignmentResizeAnchorIds"];
+    alignmentResizeConstraints: AppState["alignmentResizeConstraints"];
     alignmentResizeStretchAnchorIds: AppState["alignmentResizeStretchAnchorIds"];
     alignmentResizeMoverIds: AppState["alignmentResizeMoverIds"];
     // a resize is a gesture like a drag, and the alignment guides treat
@@ -604,12 +604,30 @@ export interface AppState {
    * the only identity that survives between them. Transient, and likewise
    * not observed by the store. */
   expandedAlignmentCluster: [number, number] | null;
-  /** anchors currently refusing the in-progress resize, so the anvil
-   * overlay can name them. Computed where the transform handle is known
-   * (`maybeHandleResize`) rather than in the renderer, which never sees
-   * it. Transient feedback, so — like the hover above — not observed by
-   * the store. */
-  alignmentResizeAnchorIds: readonly string[];
+  /** what the in-progress resize is doing to the alignment graph, as the
+   * solve reports it: the constraints refusing it (the anvil overlay reads
+   * the anchors among them, the guides the rest) and the ones carrying it.
+   * Per axis, both of them. Computed where the transform handle is known
+   * (`maybeHandleResize`) rather than in the renderer, which never sees it.
+   * One object rather than a field apiece, so the next thing the solve
+   * reports doesn't mean another `appState` field. Transient feedback, so —
+   * like the hover above — not observed by the store. */
+  alignmentResizeConstraints: {
+    refusedBy: {
+      x: readonly ConstraintRef[];
+      y: readonly ConstraintRef[];
+    };
+    active: {
+      x: readonly ConstraintRef[];
+      y: readonly ConstraintRef[];
+    };
+    /** and the ones that made it let go of the edge its handle was holding,
+     * so the guides can say why the element grew the other way too */
+    releasedBy: {
+      x: readonly ConstraintRef[];
+      y: readonly ConstraintRef[];
+    };
+  };
   /** anchors that are *permitting* the in-progress resize but forcing a
    * partner to stretch to get past them. Not blockers — the gesture is
    * going through — but they are the reason an element changed size

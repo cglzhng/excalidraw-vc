@@ -170,13 +170,21 @@ Two things about the offer, both learned by getting them wrong first:
   the far-end rule is weak enough that a chain pulling on one of the far end's
   edges can satisfy both the chain and the rule by *stretching* it, instead of
   the rule being declined. The chain-around-an-anchor case does exactly that.
+  The interior rule shipped with the same flaw and was fixed later: written as
+  centre-to-centre rows, a member with an edge an anchor holds satisfies "my
+  centre travels" by moving its other edge twice as far, so the rule that is
+  meant to carry a chain along rigidly resized it instead. Both rules now
+  constrain both edges, and each is written against the *driven* member's
+  centre so that resizing an interior member carries the rest without
+  spreading its size change to them.
 
 A chain gets a soft row when a BFS from the drivers over **edge links and group
 membership only** (not chains — that is the pre-pass `spreadEdgeLinks` already
 performs) reaches exactly one of its members:
 
-- that member is an end of the chain: row `δ(far end) = 0`
-- it is interior: rows `δ(ids[i]) - δ(ids[i+1]) = 0` for each consecutive pair
+- that member is an end of the chain: rows `δmin(far end) = δmax(far end) = 0`
+- it is interior: rows `δmin(m) = δmax(m) = centre(driven)` for every other
+  member `m`
 
 Being generous here is safe: a redundant or conflicting soft row on an
 already-determined chain is discarded by the nullspace projection rather than

@@ -641,15 +641,43 @@ export const unlockGapAlignment = (
  * rules, say — contributes nothing, so an existing crossing is left alone
  * rather than trapping the drag.
  */
+/**
+ * What stopped a gesture short of where the pointer asked for: a gap that
+ * reached contact, or an element the solve was stretching that reached its
+ * minimum extent.
+ *
+ * The clamps have always known this — the tightest bound wins and the rest
+ * are discarded — and have always thrown it away. Reported so the same cue
+ * that says which alignments refuse a gesture can say which one it is
+ * resting against.
+ */
+export type ClampBlame =
+  | {
+      readonly kind: "gap";
+      readonly axis: Axis;
+      readonly ids: readonly string[];
+      /** which gap of the chain: the one between `ids[at]` and `ids[at + 1]` */
+      readonly at: number;
+    }
+  | { readonly kind: "extent"; readonly axis: Axis; readonly elementId: string };
+
 export const clampDragToGapAlignments = (
   directlyMovedIds: Set<string>,
   offset: { x: number; y: number },
   originalElements: ReadonlyMap<string, ExcalidrawElement>,
   elementsMap: ElementsMap,
-): { x: number; y: number } => {
-  const clampAxis = (axis: Axis, t: number): number => {
+): {
+  x: number;
+  y: number;
+  /** what each axis was stopped by, where it was stopped at all */
+  blame: { x: ClampBlame | null; y: ClampBlame | null };
+} => {
+  const clampAxis = (
+    axis: Axis,
+    t: number,
+  ): { value: number; blame: ClampBlame | null } => {
     if (t === 0) {
-      return t;
+      return { value: t, blame: null };
     }
     const response = solveAlignmentResponse(
       alignmentDragDriver(directlyMovedIds),
@@ -658,17 +686,27 @@ export const clampDragToGapAlignments = (
     );
     let lo = -Infinity;
     let hi = Infinity;
+    let loBlame: ClampBlame | null = null;
+    let hiBlame: ClampBlame | null = null;
 
     /** Hold `value(t) = value + slope·t` at or above zero. */
-    const keepNonNegative = (value: number, slope: number) => {
+    const keepNonNegative = (
+      value: number,
+      slope: number,
+      blame: ClampBlame,
+    ) => {
       if (slope === 0 || value < 0) {
         return;
       }
       const contact = -value / slope;
       if (slope < 0) {
-        hi = Math.min(hi, contact);
-      } else {
-        lo = Math.max(lo, contact);
+        if (contact < hi) {
+          hi = contact;
+          hiBlame = blame;
+        }
+      } else if (contact > lo) {
+        lo = contact;
+        loBlame = blame;
       }
     };
 
@@ -701,6 +739,7 @@ export const clampDragToGapAlignments = (
         keepNonNegative(
           spans[i + 1][0] - spans[i][1],
           deltaOf(link.ids[i + 1]).min - deltaOf(link.ids[i]).max,
+          { kind: "gap", axis, ids: link.ids, at: i },
         );
       }
     }
@@ -712,14 +751,24 @@ export const clampDragToGapAlignments = (
       }
       const range = rangeOf(id);
       if (range) {
-        keepNonNegative(range[1] - range[0] - MIN_ALIGNED_SIZE, max - min);
+        keepNonNegative(range[1] - range[0] - MIN_ALIGNED_SIZE, max - min, {
+          kind: "extent",
+          axis,
+          elementId: id,
+        });
       }
     }
 
-    return Math.min(Math.max(t, lo), hi);
+    const value = Math.min(Math.max(t, lo), hi);
+    return {
+      value,
+      blame: value === t ? null : value === hi ? hiBlame : loBlame,
+    };
   };
 
-  return { x: clampAxis("x", offset.x), y: clampAxis("y", offset.y) };
+  const x = clampAxis("x", offset.x);
+  const y = clampAxis("y", offset.y);
+  return { x: x.value, y: y.value, blame: { x: x.blame, y: y.blame } };
 };
 
 /**
@@ -757,10 +806,15 @@ export const clampSizeToAlignments = (
   originalElements: ReadonlyMap<string, ExcalidrawElement>,
   elementsMap: ElementsMap,
   opts: { handle: string | false; shouldResizeFromCenter: boolean },
-): { nextWidth: number; nextHeight: number } => {
+): {
+  nextWidth: number;
+  nextHeight: number;
+  /** what each axis was stopped by — see {@link ClampBlame} */
+  blame: { x: ClampBlame | null; y: ClampBlame | null };
+} => {
   const handle = opts.handle;
   if (driver.angle !== 0 || !handle) {
-    return size;
+    return { ...size, blame: { x: null, y: null } };
   }
 
   const chains = collectHardChains(elementsMap);
@@ -773,15 +827,18 @@ export const clampSizeToAlignments = (
       : null;
   };
 
-  const clampAxis = (axis: Axis, length: number): number => {
+  const clampAxis = (
+    axis: Axis,
+    length: number,
+  ): { value: number; blame: ClampBlame | null } => {
     const response = solveAlignmentResponse(resizeDriver, axis, elementsMap);
     const origDriver = origRangeOf(driver.id, axis);
     if (!response.feasible || !origDriver) {
-      return length;
+      return { value: length, blame: null };
     }
     const originalLength = origDriver[1] - origDriver[0];
     if (length === originalLength) {
-      return length;
+      return { value: length, blame: null };
     }
 
     /** How far the driver's two edges have travelled at a proposed length. */
@@ -805,10 +862,12 @@ export const clampSizeToAlignments = (
      * that can't be measured — it never binds, and it is the same at both
      * samples, since what it depends on doesn't vary with the length.
      */
-    const marginsAt = (at: number): number[] => {
+    const marginsAt = (
+      at: number,
+    ): { value: number; blame: ClampBlame }[] => {
       const deltas = applyAlignmentResponse(response, driverEdgesAt(at));
       const deltaOf = (id: string) => deltas.get(id) ?? NO_MOVEMENT;
-      const margins: number[] = [];
+      const margins: { value: number; blame: ClampBlame }[] = [];
 
       for (const link of chains) {
         if (link.axis !== axis) {
@@ -817,13 +876,15 @@ export const clampSizeToAlignments = (
         for (let i = 0; i < link.ids.length - 1; i++) {
           const before = origRangeOf(link.ids[i], axis);
           const after = origRangeOf(link.ids[i + 1], axis);
-          margins.push(
-            before && after
-              ? after[0] +
+          margins.push({
+            value:
+              before && after
+                ? after[0] +
                   deltaOf(link.ids[i + 1]).min -
                   (before[1] + deltaOf(link.ids[i]).max)
-              : Infinity,
-          );
+                : Infinity,
+            blame: { kind: "gap", axis, ids: link.ids, at: i },
+          });
         }
       }
 
@@ -833,11 +894,12 @@ export const clampSizeToAlignments = (
       for (const id of response.stretchers) {
         const range = origRangeOf(id, axis);
         const delta = deltaOf(id);
-        margins.push(
-          range
+        margins.push({
+          value: range
             ? range[1] - range[0] + delta.max - delta.min - MIN_ALIGNED_SIZE
             : Infinity,
-        );
+          blame: { kind: "extent", axis, elementId: id },
+        });
       }
       return margins;
     };
@@ -851,10 +913,12 @@ export const clampSizeToAlignments = (
     const atProposed = marginsAt(length);
     let lo = -Infinity;
     let hi = Infinity;
+    let loBlame: ClampBlame | null = null;
+    let hiBlame: ClampBlame | null = null;
 
     for (let i = 0; i < atOriginal.length; i++) {
-      const start = atOriginal[i];
-      const proposed = atProposed[i];
+      const start = atOriginal[i].value;
+      const proposed = atProposed[i].value;
       if (start < 0 || proposed >= 0) {
         // already past zero before the gesture began, or not crossing now
         continue;
@@ -866,17 +930,28 @@ export const clampSizeToAlignments = (
       // the length at which this margin reaches exactly zero
       const contact = originalLength - start / slope;
       if (slope < 0) {
-        hi = Math.min(hi, contact);
-      } else {
-        lo = Math.max(lo, contact);
+        if (contact < hi) {
+          hi = contact;
+          hiBlame = atOriginal[i].blame;
+        }
+      } else if (contact > lo) {
+        lo = contact;
+        loBlame = atOriginal[i].blame;
       }
     }
-    return clamp(length, lo, hi);
+    const value = clamp(length, lo, hi);
+    return {
+      value,
+      blame: value === length ? null : value === hi ? hiBlame : loBlame,
+    };
   };
 
+  const x = clampAxis("x", size.nextWidth);
+  const y = clampAxis("y", size.nextHeight);
   return {
-    nextWidth: clampAxis("x", size.nextWidth),
-    nextHeight: clampAxis("y", size.nextHeight),
+    nextWidth: x.value,
+    nextHeight: y.value,
+    blame: { x: x.blame, y: y.blame },
   };
 };
 

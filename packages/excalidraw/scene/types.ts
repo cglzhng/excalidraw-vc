@@ -93,6 +93,11 @@ export type StaticSceneRenderConfig = {
 
 export type InteractiveSceneRenderAnimationState = {
   bindingHighlight: { runtime: number } | undefined;
+  /** how long the alignments refusing the current gesture have been on
+   * screen — what makes them flash. Present only while something is
+   * refused, which is also what keeps the canvas repainting when the
+   * pointer is held still against the constraint. */
+  alignmentRefusal?: { runtime: number } | undefined;
 };
 
 export type InteractiveSceneRenderConfig = {

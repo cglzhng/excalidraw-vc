@@ -274,7 +274,7 @@ const getRelevantAppStateProps = (
   hoveredAlignmentAnchorId: appState.hoveredAlignmentAnchorId,
   hoveredAlignmentIcon: appState.hoveredAlignmentIcon,
   expandedAlignmentCluster: appState.expandedAlignmentCluster,
-  alignmentResizeAnchorIds: appState.alignmentResizeAnchorIds,
+  alignmentResizeConstraints: appState.alignmentResizeConstraints,
   alignmentResizeStretchAnchorIds: appState.alignmentResizeStretchAnchorIds,
   alignmentResizeMoverIds: appState.alignmentResizeMoverIds,
   isResizing: appState.isResizing,
