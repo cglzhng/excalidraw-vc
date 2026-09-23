@@ -10258,10 +10258,17 @@ class App extends React.Component<AppProps, AppState> {
         isRotating: false,
         isCropping: false,
         resizingElement: null,
-        alignmentResizeAnchorIds: updateStable(
-          prevState.alignmentResizeAnchorIds,
-          [],
-        ),
+        // same reasoning as the movers below: two empty arrays under `x` /
+        // `y` never compare equal shallowly
+        alignmentResizeConstraints: App.resizeConstraintsAreEmpty(
+          prevState.alignmentResizeConstraints,
+        )
+          ? prevState.alignmentResizeConstraints
+          : {
+              refusedBy: { x: [], y: [] },
+              active: { x: [], y: [] },
+              releasedBy: { x: [], y: [] },
+            },
         alignmentResizeStretchAnchorIds: updateStable(
           prevState.alignmentResizeStretchAnchorIds,
           [],
@@ -11994,6 +12001,18 @@ class App extends React.Component<AppProps, AppState> {
       });
     }
   };
+
+  /** Whether a published resize answer says nothing at all, in which case
+   * the old object is kept rather than replaced with an equal one. */
+  private static resizeConstraintsAreEmpty = (
+    constraints: AppState["alignmentResizeConstraints"],
+  ) =>
+    constraints.refusedBy.x.length === 0 &&
+    constraints.refusedBy.y.length === 0 &&
+    constraints.active.x.length === 0 &&
+    constraints.active.y.length === 0 &&
+    constraints.releasedBy.x.length === 0 &&
+    constraints.releasedBy.y.length === 0;
 
   private getContextMenuItems = (
     type: "canvas" | "element",

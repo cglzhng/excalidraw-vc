@@ -24,6 +24,8 @@ import {
   getBadgeFanOffset,
   getIndicatorLineWidth,
   getNarrowIndicatorLineDash,
+  getRefusalFlashColor,
+  getRefusalFlashScale,
   getWideIndicatorLineDash,
 } from "./indicatorHelpers";
 
@@ -31,6 +33,7 @@ import type { Bounds } from "@excalidraw/common";
 import type {
   AlignmentGuide,
   AlignmentMovers,
+  ConstraintRef,
   GapAlignmentGuide,
 } from "@excalidraw/element";
 import type {
@@ -101,6 +104,9 @@ export type AlignmentGuideLine = {
   /** inside a collapsed cluster — the line still draws, the badge does
    * not (see {@link layOutAlignmentBadges}) */
   badgeHidden?: boolean;
+  /** on the route between a refused gesture and an anchor refusing it, so
+   * it draws flashing rather than steady */
+  blocked?: boolean;
   /** on the vertical line of a concentric pair — the centre alignment on
    * x — the pair's other centre line. This line's badge is a crosshair
    * standing for both (see {@link pairCentredGuides}). */
@@ -287,17 +293,86 @@ export const getAlignmentDragMovers = (
 
   if (appState.isResizing) {
     const resize = appState.alignmentResizeMoverIds;
-    // a resize's anchors are published separately, by the handle-aware
+    // a resize's answers are published separately, by the handle-aware
     // `maybeHandleResize`
     return {
       x: new Set(resize.x),
       y: new Set(resize.y),
       pinAnchors: { permitting: new Set(), refusing: new Set() },
+      refusedBy: appState.alignmentResizeConstraints.refusedBy,
+      active: appState.alignmentResizeConstraints.active,
+      releasedBy: appState.alignmentResizeConstraints.releasedBy,
     };
   }
 
   return null;
 };
+
+/**
+ * Whether a drawn guide is one of the constraints refusing the gesture.
+ *
+ * A refused gesture moves nothing, so the "what is being enforced" sets are
+ * empty and the guides would go dark exactly when the user most needs to see
+ * which alignments are in the way. These lines are drawn instead — the same
+ * lines, since they are the same constraints; only the outcome differs.
+ *
+ * Straight off the solve, which reports what its own rows contradicted. The
+ * only work left here is matching a ref to a line: a link is stored on both
+ * partners and the solve reads it from whichever end it reached first, so
+ * either orientation counts.
+ */
+const namesLine = (
+  refs: readonly ConstraintRef[],
+  guide: AlignmentGuide,
+): boolean =>
+  refs.some(
+    (ref) =>
+      ref.kind === "link" &&
+      ((ref.selfId === guide.selfId &&
+        ref.selfEdge === guide.selfEdge &&
+        ref.elementId === guide.elementId &&
+        ref.otherEdge === guide.otherEdge) ||
+        (ref.selfId === guide.elementId &&
+          ref.selfEdge === guide.otherEdge &&
+          ref.elementId === guide.selfId &&
+          ref.otherEdge === guide.selfEdge)),
+  );
+
+/**
+ * Whether a guide is one the gesture is *fighting*: refusing it outright, or
+ * forcing it to let go of an edge its handle was holding — an element
+ * centred on an anchor growing both ways, say.
+ *
+ * Both flash, because both say "this constraint is why what you asked for
+ * isn't what you got". The anvils still tell the two apart: filled for a
+ * refusal, outlined for one that shaped a gesture it allowed.
+ */
+const isRefusedLine = (
+  movers: AlignmentDragMovers,
+  guide: AlignmentGuide,
+): boolean =>
+  namesLine(movers.refusedBy[guide.axis], guide) ||
+  namesLine(movers.releasedBy[guide.axis], guide);
+
+/** A chain is refused when any of its gap boundaries is: what the badges
+ * assert is the chain, and it is drawn and released whole. */
+const namesChain = (
+  refs: readonly ConstraintRef[],
+  guide: GapAlignmentGuide,
+): boolean =>
+  refs.some(
+    (ref) =>
+      ref.kind === "chain" &&
+      ref.ids.length === guide.ids.length &&
+      ref.ids.every((id, index) => id === guide.ids[index]),
+  );
+
+const isRefusedChain = (
+  movers: AlignmentDragMovers,
+  guide: GapAlignmentGuide,
+): boolean =>
+  namesChain(movers.refusedBy[guide.axis], guide) ||
+  namesChain(movers.releasedBy[guide.axis], guide);
 
 /**
  * The elements to build guides from during a gesture: everything moving,
@@ -316,7 +391,22 @@ const getGuideSourceElements = (
 ): NonDeletedExcalidrawElement[] => {
   const elements = [...selectedElements];
   const seen = new Set(selectedElements.map((element) => element.id));
-  for (const id of new Set([...movers.x, ...movers.y])) {
+  // Everything moving, plus everything named in a refusal — a refused
+  // gesture moves nothing, and its guides have to come from somewhere.
+  const named = new Set<string>([...movers.x, ...movers.y]);
+  for (const refs of [movers.refusedBy.x, movers.refusedBy.y]) {
+    for (const ref of refs) {
+      if (ref.kind === "link") {
+        named.add(ref.selfId);
+        named.add(ref.elementId);
+      } else if (ref.kind === "chain" || ref.kind === "feel") {
+        ref.ids.forEach((id) => named.add(id));
+      } else {
+        named.add(ref.elementId);
+      }
+    }
+  }
+  for (const id of named) {
     if (seen.has(id)) {
       continue;
     }
@@ -332,24 +422,28 @@ const getGuideSourceElements = (
  * The edge-alignment guides actually drawn for a selection.
  *
  * At rest that is simply the selection's own guides. During a gesture —
- * drag or resize alike — it is every hard link the gesture is
- * *enforcing*, which reaches past the selection: dragging A moves its
- * partner B, and B's own link to C is what then moves C, so all three
- * lines are load-bearing and the user should see why C moved. Soft
- * coincidences are dropped, because their padlock is an offer that
- * cannot be taken up with the pointer already down, and the transient
- * snap guides report the live coincidences anyway. Whatever line is
- * drawn keeps its padlock: the badge is what says the line is a kept
- * alignment rather than a passing snap.
+ * drag or resize alike — a hard link is drawn when either of two things
+ * is true of it. Soft coincidences are dropped, because their padlock is
+ * an offer that cannot be taken up with the pointer already down, and the
+ * transient snap guides report the live coincidences anyway. Whatever
+ * line is drawn keeps its padlock: the badge is what says the line is a
+ * kept alignment rather than a passing snap.
  *
- * A link counts as enforced only when *both* its ends are moving on its
- * own axis. That excludes two things a looser "touches something that
- * moved" test would wrongly include: a link on the other axis, which the
- * gesture isn't transmitting through, and a link whose ends both sit
- * still — a gap chain can hold a member in place while its neighbours
- * travel, and a resize handle moves only the edges it controls, so
- * either way the links hanging off what stayed put are being satisfied
- * by nothing happening rather than by doing any work.
+ * **It is carrying the gesture** — the solve reports it as load-bearing
+ * (or as refusing it outright). That reaches past the selection: dragging
+ * A moves its partner B, and B's own link to C is what then moves C, so
+ * all three lines are doing work and the user should see why C moved.
+ * This used to be approximated as "both ends are moving", which counts a
+ * link the gesture satisfies for free — both its ends dragged directly,
+ * or both carried by one group — as though it were holding something
+ * together.
+ *
+ * **Or it is the selection's own** — a link of an element you are
+ * actually moving, whichever end it is stored on, and whether or not its
+ * partner moves. Those are the alignments the gesture is *about*: a
+ * selected element aligned to something stationary shows the line it is
+ * keeping, which is the whole reason it isn't going where the pointer
+ * went.
  */
 export const getVisibleAlignmentGuideLines = (
   elementsMap: NonDeletedSceneElementsMap,
@@ -362,16 +456,24 @@ export const getVisibleAlignmentGuideLines = (
     );
   }
 
+  const selectedIds = new Set(selectedElements.map((element) => element.id));
+
   return pairCentredGuides(
     getAlignmentGuideLines(
       getGuideSourceElements(elementsMap, selectedElements, movers),
       elementsMap,
-    ).filter(
-      ({ guide }) =>
-        guide.hard &&
-        movers[guide.axis].has(guide.selfId) &&
-        movers[guide.axis].has(guide.elementId),
-    ),
+    )
+      .filter(
+        ({ guide }) =>
+          guide.hard &&
+          (isRefusedLine(movers, guide) ||
+            namesLine(movers.active[guide.axis], guide) ||
+            selectedIds.has(guide.selfId) ||
+            selectedIds.has(guide.elementId)),
+      )
+      .map((line) =>
+        isRefusedLine(movers, line.guide) ? { ...line, blocked: true } : line,
+      ),
   );
 };
 
@@ -379,6 +481,9 @@ export const renderAlignmentLocks = (
   context: CanvasRenderingContext2D,
   appState: InteractiveCanvasAppState,
   lines: readonly AlignmentGuideLine[],
+  /** how long the current refusal has been on screen, or null when the
+   * gesture is not being refused */
+  flashRuntime: number | null,
 ) => {
   if (lines.length === 0) {
     return;
@@ -386,6 +491,10 @@ export const renderAlignmentLocks = (
 
   const zoom = appState.zoom.value;
   const color = getAlignmentIndicatorColor(appState.theme, appState.zenModeEnabled);
+  const colorOf = (line: AlignmentGuideLine) =>
+    line.blocked && flashRuntime !== null
+      ? getRefusalFlashColor(appState.theme, appState.zenModeEnabled, flashRuntime)
+      : color;
 
   context.save();
   context.translate(appState.scrollX, appState.scrollY);
@@ -393,18 +502,20 @@ export const renderAlignmentLocks = (
   context.lineWidth = getIndicatorLineWidth(zoom);
 
   // Halos first, so a neighbouring line is never buried under one.
-  for (const { from, to, icon, badgeHidden } of lines) {
-    if (!badgeHidden && isHoveredIcon(appState, icon)) {
-      drawIndicatorLineHalo(context, from, to, zoom, color);
+  for (const line of lines) {
+    if (!line.badgeHidden && isHoveredIcon(appState, line.icon)) {
+      drawIndicatorLineHalo(context, line.from, line.to, zoom, colorOf(line));
     }
   }
 
   // A hovered soft line goes solid: the dash says "not kept yet", and the
   // hover is a preview of the click that would keep it.
-  for (const { guide, from, to, icon, badgeHidden } of lines) {
+  for (const line of lines) {
+    const { guide, from, to, icon, badgeHidden } = line;
     const solid =
       guide.hard || (!badgeHidden && isHoveredIcon(appState, icon));
     context.setLineDash(solid ? [] : getWideIndicatorLineDash(zoom));
+    context.strokeStyle = colorOf(line);
     context.beginPath();
     context.moveTo(from[0], from[1]);
     context.lineTo(to[0], to[1]);
@@ -428,17 +539,33 @@ export const renderAlignmentLockIcons = (
   context: CanvasRenderingContext2D,
   appState: InteractiveCanvasAppState,
   lines: readonly AlignmentGuideLine[],
+  /** see {@link renderAlignmentLocks} — a badge flashes with its line, so
+   * the constraint reads as one mark however it is drawn */
+  flashRuntime: number | null,
 ) => {
   if (lines.length === 0) {
     return;
   }
   const zoom = appState.zoom.value;
   const color = getAlignmentIndicatorColor(appState.theme, appState.zenModeEnabled);
+  const flashing = (line: AlignmentGuideLine) =>
+    line.blocked && flashRuntime !== null;
+  const colorOf = (line: AlignmentGuideLine) =>
+    flashing(line)
+      ? getRefusalFlashColor(
+          appState.theme,
+          appState.zenModeEnabled,
+          flashRuntime!,
+        )
+      : color;
+  const scaleOf = (line: AlignmentGuideLine) =>
+    flashing(line) ? getRefusalFlashScale(flashRuntime!) : 1;
 
   context.save();
   context.translate(appState.scrollX, appState.scrollY);
   context.setLineDash([]);
-  for (const { guide, icon, badgeHidden, badgeMerged, centredPartner } of lines) {
+  for (const line of lines) {
+    const { guide, icon, badgeHidden, badgeMerged, centredPartner } = line;
     if (badgeHidden || badgeMerged) {
       continue;
     }
@@ -448,10 +575,11 @@ export const renderAlignmentLockIcons = (
         icon[0],
         icon[1],
         zoom,
-        color,
+        colorOf(line),
         guide.hard,
         centredPartner.hard,
         isHoveredIcon(appState, icon),
+        scaleOf(line),
       );
       continue;
     }
@@ -460,10 +588,11 @@ export const renderAlignmentLockIcons = (
       icon[0],
       icon[1],
       zoom,
-      color,
+      colorOf(line),
       guide.axis === "x" ? guide.hard : null,
       guide.axis === "y" ? guide.hard : null,
       isHoveredIcon(appState, icon),
+      scaleOf(line),
     );
   }
   context.restore();
@@ -494,6 +623,8 @@ export type GapAlignmentGuideLine = {
     /** inside a collapsed cluster — see {@link AlignmentGuideLine} */
     badgeHidden?: boolean;
   }[];
+  /** carrying a refusal — see {@link AlignmentGuideLine} */
+  blocked?: boolean;
 };
 
 /** Key for one gap, by the pair of elements bounding it. */
@@ -601,13 +732,21 @@ export const getVisibleGapGuideLines = (
   return getGapAlignmentGuideLines(
     getGuideSourceElements(elementsMap, selectedElements, movers),
     elementsMap,
-  ).filter(
-    (line) =>
-      line.spans.length > 0 &&
-      (line.guide.hard
-        ? line.guide.ids.some((id) => movers[line.guide.axis].has(id))
-        : line.guide.ids.some((id) => selectedIds.has(id))),
-  );
+  )
+    .filter(
+      (line) =>
+        line.spans.length > 0 &&
+        // a hard chain draws when it is carrying the gesture, refusing it,
+        // or has a selected member — the same rule the edge guides follow
+        (line.guide.hard
+          ? isRefusedChain(movers, line.guide) ||
+            namesChain(movers.active[line.guide.axis], line.guide) ||
+            line.guide.ids.some((id) => selectedIds.has(id))
+          : line.guide.ids.some((id) => selectedIds.has(id))),
+    )
+    .map((line) =>
+      isRefusedChain(movers, line.guide) ? { ...line, blocked: true } : line,
+    );
 };
 
 /**
@@ -631,6 +770,9 @@ export type AlignmentBadgeCluster = {
   center: [number, number];
   count: number;
   open: boolean;
+  /** any badge it stands in for carries a refusal, so the counted badge
+   * flashes too — collapsing badges must not swallow the warning */
+  blocked?: boolean;
 };
 
 /** One badge's place in the layout, with the way to write its result
@@ -639,6 +781,8 @@ type BadgeSlot = {
   /** stable across frames, so an opened fan doesn't reshuffle */
   key: string;
   icon: [number, number];
+  /** its line is carrying a refusal */
+  blocked?: boolean;
   /** which coordinate varies along this badge's own guide line — 0 for a
    * line running horizontally, 1 for one running vertically. An opened
    * badge only ever moves along this, so it never leaves its line. */
@@ -663,6 +807,7 @@ const badgeSlots = (
     slots.push({
       key: `e:${axis}:${selfId}:${selfEdge}:${elementId}:${otherEdge}`,
       icon: line.icon,
+      blocked: line.blocked,
       // an alignment *on* x is a line of constant x, so it runs vertically
       along: axis === "x" ? 1 : 0,
       place: (icon) => {
@@ -681,6 +826,7 @@ const badgeSlots = (
       slots.push({
         key: `g:${line.guide.axis}:${line.guide.ids.join(",")}:${index}`,
         icon: span.icon,
+        blocked: line.blocked,
         // a gap measured *along* x is a span running horizontally — the
         // opposite of an edge guide on the same axis, which is what keeps
         // the two kinds apart when they crowd together
@@ -789,7 +935,12 @@ export const layOutAlignmentBadges = (
       for (const index of members) {
         slots[index].place(null);
       }
-      clusters.push({ center, count: members.length, open: false });
+      clusters.push({
+        center,
+        count: members.length,
+        open: false,
+        blocked: members.some((index) => slots[index].blocked),
+      });
       continue;
     }
 
@@ -829,6 +980,8 @@ export const renderAlignmentClusterBadges = (
   context: CanvasRenderingContext2D,
   appState: InteractiveCanvasAppState,
   clusters: readonly AlignmentBadgeCluster[],
+  /** see {@link renderAlignmentLockIcons} */
+  flashRuntime: number | null,
 ) => {
   const zoom = appState.zoom.value;
   const color = getAlignmentIndicatorColor(appState.theme, appState.zenModeEnabled);
@@ -838,13 +991,21 @@ export const renderAlignmentClusterBadges = (
   context.setLineDash([]);
   for (const cluster of clusters) {
     if (!cluster.open) {
+      const flashing = cluster.blocked && flashRuntime !== null;
       drawAlignmentClusterBadge(
         context,
         cluster.center[0],
         cluster.center[1],
         zoom,
-        color,
+        flashing
+          ? getRefusalFlashColor(
+              appState.theme,
+              appState.zenModeEnabled,
+              flashRuntime!,
+            )
+          : color,
         cluster.count,
+        flashing ? getRefusalFlashScale(flashRuntime!) : 1,
       );
     }
   }
@@ -876,6 +1037,8 @@ export const renderGapAlignmentLocks = (
   // already computed by the caller, which needs the same lines to tell
   // `renderSnaps` which gaps not to draw
   lines: readonly GapAlignmentGuideLine[],
+  /** see {@link renderAlignmentLocks} */
+  flashRuntime: number | null,
 ) => {
   if (lines.length === 0) {
     return;
@@ -883,6 +1046,10 @@ export const renderGapAlignmentLocks = (
 
   const zoom = appState.zoom.value;
   const color = getAlignmentIndicatorColor(appState.theme, appState.zenModeEnabled);
+  const colorOf = (line: GapAlignmentGuideLine) =>
+    line.blocked && flashRuntime !== null
+      ? getRefusalFlashColor(appState.theme, appState.zenModeEnabled, flashRuntime)
+      : color;
 
   context.save();
   context.translate(appState.scrollX, appState.scrollY);
@@ -897,15 +1064,17 @@ export const renderGapAlignmentLocks = (
   };
 
   // Halos first, so a neighbouring span is never buried under one.
-  for (const { spans } of lines) {
-    if (isHoveredGapGuide(appState, spans)) {
-      for (const { from, to } of spans) {
-        drawIndicatorLineHalo(context, from, to, zoom, color);
+  for (const line of lines) {
+    if (isHoveredGapGuide(appState, line.spans)) {
+      for (const { from, to } of line.spans) {
+        drawIndicatorLineHalo(context, from, to, zoom, colorOf(line));
       }
     }
   }
 
-  for (const { guide, spans } of lines) {
+  for (const line of lines) {
+    const { guide, spans } = line;
+    context.strokeStyle = colorOf(line);
     const badged = showsBadges(appState, guide);
     // Hovering any one badge lights the whole chain, so the whole chain's
     // spans go solid together — the same rule the badges follow, for the
@@ -959,6 +1128,8 @@ export const renderGapAlignmentIcons = (
   context: CanvasRenderingContext2D,
   appState: InteractiveCanvasAppState,
   lines: readonly GapAlignmentGuideLine[],
+  /** see {@link renderAlignmentLockIcons} */
+  flashRuntime: number | null,
 ) => {
   if (lines.length === 0) {
     return;
@@ -969,16 +1140,35 @@ export const renderGapAlignmentIcons = (
   context.save();
   context.translate(appState.scrollX, appState.scrollY);
   context.setLineDash([]);
-  for (const { guide, spans } of lines) {
+  for (const line of lines) {
+    const { guide, spans } = line;
     if (!showsBadges(appState, guide)) {
       continue;
     }
+    const flashing = line.blocked && flashRuntime !== null;
+    const badgeColor = flashing
+      ? getRefusalFlashColor(
+          appState.theme,
+          appState.zenModeEnabled,
+          flashRuntime!,
+        )
+      : color;
+    const badgeScale = flashing ? getRefusalFlashScale(flashRuntime!) : 1;
     const hovered = isHoveredGapGuide(appState, spans);
     for (const { icon, badgeHidden } of spans) {
       if (badgeHidden) {
         continue;
       }
-      drawEqualsBadge(context, icon[0], icon[1], zoom, color, guide.hard, hovered);
+      drawEqualsBadge(
+        context,
+        icon[0],
+        icon[1],
+        zoom,
+        badgeColor,
+        guide.hard,
+        hovered,
+        badgeScale,
+      );
     }
   }
   context.restore();
@@ -1191,7 +1381,8 @@ export const renderElementAlignmentLocks = (
  * A resize is reported the same way, but the set isn't computed here:
  * whether an anchor is in the way depends on which transform handle is
  * held, which only `App.maybeHandleResize` knows, so it publishes the
- * answer as `alignmentResizeAnchorIds`.
+ * refusing constraints as `alignmentResizeRefusedBy` and the anchors among
+ * them are read off here.
  *
  * A drag also names the anchors that pinned a gap chain in place of its
  * default (`AlignmentMovers.pinAnchors`): outlined while the chain
@@ -1210,7 +1401,17 @@ export const renderAnchorLockOverlays = (
   if (selectedElements.length === 0) {
     return;
   }
-  const anchors = new Set<string>(appState.alignmentResizeAnchorIds);
+  const anchors = new Set<string>();
+  for (const refs of [
+    appState.alignmentResizeConstraints.refusedBy.x,
+    appState.alignmentResizeConstraints.refusedBy.y,
+  ]) {
+    for (const ref of refs) {
+      if (ref.kind === "anchor") {
+        anchors.add(ref.elementId);
+      }
+    }
+  }
 
   if (movers) {
     const directlyMoved = new Set(selectedElements.map((el) => el.id));

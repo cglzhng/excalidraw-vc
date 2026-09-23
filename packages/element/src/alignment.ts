@@ -17,7 +17,11 @@ import { isBoundToContainer, isLinearElement } from "./typeChecks";
 
 import type { PointerDownState } from "@excalidraw/excalidraw/types";
 
-import type { AlignmentResponse, EdgeDelta } from "./alignmentSolve";
+import type {
+  AlignmentResponse,
+  ConstraintRef,
+  EdgeDelta,
+} from "./alignmentSolve";
 import type { Scene } from "./Scene";
 import type {
   AlignmentEdge,
@@ -591,6 +595,34 @@ export const spreadAcrossGroups = <T>(
   return changed;
 };
 
+/**
+ * {@link spreadAcrossGroups}, then write a zero for every element the solve
+ * covered that is still unplaced — and spread once more, so their group
+ * siblings get it too.
+ *
+ * The zeros are what put an element back. Everything is placed from its
+ * gesture-start geometry each frame, so one the solve moved on an earlier
+ * frame stays where that frame left it unless something is written now — and
+ * "nothing moves" is exactly the answer when the gesture comes back to where
+ * it started, which snapping makes a common frame rather than a rare one.
+ * They go in after the first spread rather than before, so a member the solve
+ * holds still never outranks a moving sibling for its group's displacement.
+ */
+const settleAcrossGroups = (
+  valueById: Map<string, number>,
+  covered: ReadonlySet<string>,
+  groupMembers: ReadonlyMap<string, string[]>,
+  skip: (id: string) => boolean,
+) => {
+  spreadAcrossGroups(valueById, groupMembers, skip);
+  for (const id of covered) {
+    if (!valueById.has(id) && !skip(id)) {
+      valueById.set(id, 0);
+    }
+  }
+  spreadAcrossGroups(valueById, groupMembers, skip);
+};
+
 /** Smallest extent alignment will leave an element with. Enough to keep
  * every constraint well defined — an element with a positive extent still
  * has a min edge below its max — without meaningfully limiting how small
@@ -598,41 +630,44 @@ export const spreadAcrossGroups = <T>(
 export const MIN_ALIGNED_SIZE = 2;
 
 /**
- * The anchors that would have to move for `id` to be *translated* on
- * `axis`: every anchor in its hard edge-link component.
+ * The anchors an element is held by: those reachable from it through the
+ * constraints the solve says are *carrying load*.
  *
- * A translation passes through every link unchanged, so translating one
- * element takes its whole component with it. An anchor anywhere in there
- * means it cannot travel at all — which is the question both propagators
- * ask, of a partner that has been handed a demand and of a chain member
- * the equal-gap correction wants to shift.
- *
- * `barriers` are elements the component stops at: during a resize, the
- * resized elements are the *source* of the demand rather than carriers of
- * it, so a component must not be joined through one.
+ * An element only stretches because something stopped it travelling, and
+ * what stops it is an anchor somewhere on the other side of the links doing
+ * the holding. This used to walk the link topology instead, which named
+ * every anchor in the component whether or not it was doing anything —
+ * the rows already know which of them the answer is pressed against.
  */
-export const getTranslationBlockingAnchors = (
+const anchorsHolding = (
   id: string,
-  axis: Axis,
-  elementsMap: ElementsMap,
-  barriers: ReadonlySet<string> = new Set(),
+  active: readonly ConstraintRef[],
 ): Set<string> => {
   const anchors = new Set<string>();
   const seen = new Set<string>([id]);
   const stack = [id];
   while (stack.length > 0) {
     const current = stack.pop()!;
-    if (isAlignmentAnchor(elementsMap.get(current))) {
-      anchors.add(current);
-    }
-    for (const link of elementsMap.get(current)?.alignments ?? []) {
-      if (
-        link.axis === axis &&
-        !seen.has(link.elementId) &&
-        !barriers.has(link.elementId)
+    const reach = (next: string) => {
+      if (!seen.has(next)) {
+        seen.add(next);
+        stack.push(next);
+      }
+    };
+    for (const ref of active) {
+      if (ref.kind === "anchor" && ref.elementId === current) {
+        anchors.add(current);
+      } else if (ref.kind === "link") {
+        if (ref.selfId === current) {
+          reach(ref.elementId);
+        } else if (ref.elementId === current) {
+          reach(ref.selfId);
+        }
+      } else if (
+        (ref.kind === "chain" || ref.kind === "feel") &&
+        ref.ids.includes(current)
       ) {
-        seen.add(link.elementId);
-        stack.push(link.elementId);
+        ref.ids.forEach(reach);
       }
     }
   }
@@ -703,6 +738,27 @@ export type AlignmentMovers = {
   x: Set<string>;
   y: Set<string>;
   pinAnchors: { permitting: Set<string>; refusing: Set<string> };
+  /**
+   * The constraints refusing each axis, straight from that axis's solve —
+   * what the UI draws to say which alignments are in the way.
+   *
+   * Per axis, because the axes are independent: a pair coupled on both —
+   * an edge link on y and a gap chain on x, say — has only the y link
+   * refusing when the y drag is the impossible one, and naming the chain
+   * would point at a constraint letting the gesture through.
+   */
+  refusedBy: { x: readonly ConstraintRef[]; y: readonly ConstraintRef[] };
+  /**
+   * The constraints actually carrying the gesture on each axis — the ones
+   * whose release would change where something lands. What the guides draw,
+   * alongside the selection's own alignments: a link the gesture satisfies
+   * for free (both its ends are being dragged, say) is doing nothing, and a
+   * line saying otherwise is a line that isn't true.
+   */
+  active: { x: readonly ConstraintRef[]; y: readonly ConstraintRef[] };
+  /** always empty for a drag, which holds no edge still — carried so the
+   * renderer can ask one question of drags and resizes alike */
+  releasedBy: { x: readonly ConstraintRef[]; y: readonly ConstraintRef[] };
 };
 
 export const getAlignmentMovers = (
@@ -714,13 +770,21 @@ export const getAlignmentMovers = (
     permitting: new Set<string>(),
     refusing: new Set<string>(),
   };
+  const refusedBy: { x: readonly ConstraintRef[]; y: readonly ConstraintRef[] } =
+    { x: [], y: [] };
+  const active: { x: readonly ConstraintRef[]; y: readonly ConstraintRef[] } = {
+    x: [],
+    y: [],
+  };
   const moversOn = (axis: Axis) => {
     const response = solveAlignmentResponse(driver, axis, elementsMap);
     const moving = new Set<string>();
     if (!response.feasible) {
       response.blockers.forEach((id) => pinAnchors.refusing.add(id));
+      refusedBy[axis] = response.refusedBy;
       return moving;
     }
+    active[axis] = response.activeConstraints;
     alignmentAnchorsInPlay(driver, axis, elementsMap).forEach((id) =>
       pinAnchors.permitting.add(id),
     );
@@ -731,7 +795,14 @@ export const getAlignmentMovers = (
     }
     return moving;
   };
-  return { x: moversOn("x"), y: moversOn("y"), pinAnchors };
+  return {
+    x: moversOn("x"),
+    y: moversOn("y"),
+    pinAnchors,
+    refusedBy,
+    active,
+    releasedBy: { x: [], y: [] },
+  };
 };
 
 /**
@@ -862,11 +933,22 @@ export type ResizeAlignmentEffects = {
   frozen: { x: boolean; y: boolean };
   /** anchors that refuse the resize outright */
   blockers: { x: Set<string>; y: Set<string> };
-  /** anchors that permit it but force a partner to change size — the reason
-   * an element stretched instead of travelling */
+  /** anchors that permit it but shape it: holding a partner that had to
+   * stretch instead of travelling, or making the gesture let go of the edge
+   * its handle was holding. Both read off the solve's own answer — the
+   * anchors among `releasedBy`, and those reachable from a stretched element
+   * through the constraints carrying load */
   causes: { x: Set<string>; y: Set<string> };
   /** everything the resize sets moving, drivers included */
   movers: { x: Set<string>; y: Set<string> };
+  /** the constraints a refused axis is refused *by*, straight from the solve
+   * — what the UI draws when it has to say which alignments are in the way */
+  refusedBy: { x: readonly ConstraintRef[]; y: readonly ConstraintRef[] };
+  /** the constraints carrying the resize, for the guides to draw */
+  active: { x: readonly ConstraintRef[]; y: readonly ConstraintRef[] };
+  /** the constraints that made the resize let go of the edge its handle was
+   * holding — why the element grew the other way as well */
+  releasedBy: { x: readonly ConstraintRef[]; y: readonly ConstraintRef[] };
 };
 
 export const getAlignmentResizeEffects = (
@@ -888,6 +970,9 @@ export const getAlignmentResizeEffects = (
         blockers: new Set(response.blockers),
         causes: new Set<string>(),
         movers: new Set<string>(),
+        refusedBy: response.refusedBy,
+        active: [] as readonly ConstraintRef[],
+        releasedBy: [] as readonly ConstraintRef[],
       };
     }
 
@@ -898,22 +983,35 @@ export const getAlignmentResizeEffects = (
       }
     }
 
-    // An element only stretched because it could not travel, and what stops
-    // it travelling is an anchor somewhere in its rigid component. Those are
-    // the anchors worth naming, even though they refuse nothing.
+    // Anchors that permitted the resize and shaped it: the ones holding a
+    // partner that had to stretch because it could not travel, and the ones
+    // that made the gesture let go of the edge its handle was holding.
+    //
+    // Both read straight off the solve, which names the constraints behind
+    // each. This used to be a graph walk per stretched element per axis —
+    // "which anchors would stop this one travelling" — asking of the link
+    // topology a question the rows had already answered.
     const causes = new Set<string>();
     for (const id of response.stretchers) {
-      for (const anchorId of getTranslationBlockingAnchors(
-        id,
-        axis,
-        elementsMap,
-        resizedIds,
-      )) {
+      for (const anchorId of anchorsHolding(id, response.activeConstraints)) {
         causes.add(anchorId);
       }
     }
+    for (const ref of response.releasedBy) {
+      if (ref.kind === "anchor") {
+        causes.add(ref.elementId);
+      }
+    }
 
-    return { frozen: false, blockers: new Set<string>(), causes, movers };
+    return {
+      frozen: false,
+      blockers: new Set<string>(),
+      causes,
+      movers,
+      refusedBy: [] as readonly ConstraintRef[],
+      active: response.activeConstraints,
+      releasedBy: response.releasedBy,
+    };
   };
 
   const x = onAxis("x");
@@ -923,6 +1021,9 @@ export const getAlignmentResizeEffects = (
     blockers: { x: x.blockers, y: y.blockers },
     causes: { x: x.causes, y: y.causes },
     movers: { x: x.movers, y: y.movers },
+    refusedBy: { x: x.refusedBy, y: y.refusedBy },
+    active: { x: x.active, y: y.active },
+    releasedBy: { x: x.releasedBy, y: y.releasedBy },
   };
 };
 
@@ -956,16 +1057,22 @@ export const dragAlignedElements = (
   const dyById = new Map<string, number>();
   const dwById = new Map<string, number>();
   const dhById = new Map<string, number>();
+  const covered = { x: new Set<string>(), y: new Set<string>() };
 
   for (const axis of ["x", "y"] as const) {
     const deltas = applyAlignmentResponse(response[axis], [offset[axis]]);
     const positionById = axis === "x" ? dxById : dyById;
     const sizeById = axis === "x" ? dwById : dhById;
     for (const [id, delta] of deltas) {
-      // A delta of zero is a real answer — "this one holds still" — and the
-      // directly dragged elements were already placed by the caller, with
-      // snapping and the grid applied.
-      if (directlyMovedIds.has(id) || (delta.min === 0 && delta.max === 0)) {
+      // The directly dragged elements were already placed by the caller,
+      // with snapping and the grid applied.
+      if (directlyMovedIds.has(id)) {
+        continue;
+      }
+      covered[axis].add(id);
+      // A delta of zero is a real answer — "this one holds still" — but it is
+      // written after the group spread, not here; see `settleAcrossGroups`.
+      if (delta.min === 0 && delta.max === 0) {
         continue;
       }
       positionById.set(id, delta.min);
@@ -980,14 +1087,75 @@ export const dragAlignedElements = (
   const groupMembers = getGroupMembers(elementsMap);
   const skip = (id: string) =>
     directlyMovedIds.has(id) || isAlignmentAnchor(elementsMap.get(id));
-  spreadAcrossGroups(dxById, groupMembers, skip);
-  spreadAcrossGroups(dyById, groupMembers, skip);
+  settleAcrossGroups(dxById, covered.x, groupMembers, skip);
+  settleAcrossGroups(dyById, covered.y, groupMembers, skip);
 
   // The same writer the resize path uses. Worth sharing now rather than
   // translating by hand as this used to: a drag can change a partner's size,
   // so it has the container-label question — carry it or refit it — that only
   // the resize path used to have.
   applyAlignmentDeltas(originalElements, dxById, dyById, dwById, dhById, scene);
+};
+
+/**
+ * What the gesture itself is, for a single-element resize: the proposed
+ * extent per axis, and the handle that says which edge that extent grows
+ * from.
+ *
+ * Passed in rather than measured off the element, and that is the whole
+ * point. The solve may move the edge the handle holds (see
+ * {@link movedItsHeldEdge}), which writes the driver's own geometry — and a
+ * seed measured from that geometry on the next frame no longer looks like
+ * "this edge is held", so the answer flips, the element springs back, and
+ * the two states alternate for as long as the pointer is held. Seeding from
+ * the gesture instead closes the loop: the same pointer position asks the
+ * same question every frame, whatever the last answer did to the element.
+ */
+export type ResizeIntent = {
+  opts: ResizeEdgeOpts;
+  /** the proposed extent on each axis — width and height */
+  length: { x: number; y: number };
+};
+
+/** The driver seeds for one axis, from the gesture: how far the handle
+ * moves each of the driver's edges, in scene units. An edge the handle holds
+ * seeds as 0, which the solver reads as an *offer* to hold it rather than a
+ * demand. */
+const intendedResizeSeeds = (
+  axis: Axis,
+  originalElements: PointerDownState["originalElements"],
+  resizedIds: Set<string>,
+  elementsMap: ElementsMap,
+  intent: ResizeIntent,
+): Map<string, EdgeDelta> => {
+  const seeds = new Map<string, EdgeDelta>();
+  for (const driverId of resizedIds) {
+    const original = originalElements.get(driverId);
+    const driver = elementsMap.get(driverId);
+    if (
+      !driver ||
+      !original ||
+      (!driver.alignments?.length && !driver.gapAlignments?.length)
+    ) {
+      continue;
+    }
+    const was = getElementBounds(original, elementsMap);
+    const originalLength =
+      edgeCoord(was, axis, "max") - edgeCoord(was, axis, "min");
+    const grew = intent.length[axis] - originalLength;
+    const movesMin = resizeMovesEdge(axis, "min", intent.opts);
+    const movesMax = resizeMovesEdge(axis, "max", intent.opts);
+    if (!movesMin && !movesMax) {
+      continue;
+    }
+    seeds.set(driverId, {
+      // both edges move on a resize from centre, each by half; otherwise the
+      // handle's own edge takes all of it and the other is held
+      min: movesMin ? (movesMax ? -grew / 2 : -grew) : 0,
+      max: movesMax ? (movesMin ? grew / 2 : grew) : 0,
+    });
+  }
+  return seeds;
 };
 
 /** The driver seeds for one axis, read off how far each resized element's
@@ -1019,6 +1187,35 @@ const geometricResizeSeeds = (
   return seeds;
 };
 
+/** Below this a driver's answer is the measurement it was seeded with, give
+ * or take the solve's own arithmetic. */
+const DRIVER_CORRECTION_EPSILON = 1e-6;
+
+/**
+ * Whether the solve moved a *driver's* edge that the handle was holding still
+ * — the one case where alignment has something to say about the geometry of
+ * the element being resized, rather than only about its partners.
+ *
+ * Only for a lone, unrotated driver: a rotated element's axis-aligned bounds
+ * are not its `x` and `width`, so a bounds delta can't be written back to it,
+ * and a multi-element resize places every member from the box's scale rather
+ * than from a handle, so no member has a held edge to give up.
+ */
+const movedItsHeldEdge = (
+  id: string,
+  delta: EdgeDelta,
+  seeds: ReadonlyMap<string, EdgeDelta>,
+  opts: { soleUnrotatedDriver: boolean },
+): boolean => {
+  const seed = seeds.get(id);
+  return (
+    opts.soleUnrotatedDriver &&
+    seed != null &&
+    (Math.abs(delta.min - seed.min) > DRIVER_CORRECTION_EPSILON ||
+      Math.abs(delta.max - seed.max) > DRIVER_CORRECTION_EPSILON)
+  );
+};
+
 /**
  * What every element must do so that a resize of `resizedIds` leaves every
  * hard alignment — edge links and equal-gap chains alike — intact.
@@ -1037,11 +1234,17 @@ export const buildResizeAlignmentDeltas = (
   originalElements: PointerDownState["originalElements"],
   resizedIds: Set<string>,
   elementsMap: ElementsMap,
+  /** the gesture, where the caller knows it — a single-element resize. A
+   * multi-element one has no handle per member, so its seeds are measured. */
+  intent?: ResizeIntent,
 ): {
   dxById: Map<string, number>;
   dyById: Map<string, number>;
   dwById: Map<string, number>;
   dhById: Map<string, number>;
+  /** everything the solve placed, held-still ones included, per axis —
+   * the maps above leave the zeros out (see `settleAcrossGroups`) */
+  covered: { x: Set<string>; y: Set<string> };
 } => {
   // Position and size rather than the pair of edges the solve works in:
   // a translation is then still a lone entry in `dxById`, which is what
@@ -1051,14 +1254,23 @@ export const buildResizeAlignmentDeltas = (
   const dyById = new Map<string, number>();
   const dwById = new Map<string, number>();
   const dhById = new Map<string, number>();
+  const covered = { x: new Set<string>(), y: new Set<string>() };
+  const [soleDriver] = [...resizedIds];
+  const opts = {
+    soleUnrotatedDriver:
+      resizedIds.size === 1 && (elementsMap.get(soleDriver)?.angle ?? 0) === 0,
+  };
 
   for (const axis of ["x", "y"] as const) {
-    const seeds = geometricResizeSeeds(
-      axis,
-      originalElements,
-      resizedIds,
-      elementsMap,
-    );
+    const seeds = intent
+      ? intendedResizeSeeds(
+          axis,
+          originalElements,
+          resizedIds,
+          elementsMap,
+          intent,
+        )
+      : geometricResizeSeeds(axis, originalElements, resizedIds, elementsMap);
     if (seeds.size === 0) {
       continue;
     }
@@ -1080,7 +1292,16 @@ export const buildResizeAlignmentDeltas = (
     const positionById = axis === "x" ? dxById : dyById;
     const sizeById = axis === "x" ? dwById : dhById;
     for (const [id, delta] of deltas) {
-      if (resizedIds.has(id) || (delta.min === 0 && delta.max === 0)) {
+      if (resizedIds.has(id) && !movedItsHeldEdge(id, delta, seeds, opts)) {
+        // The driver is already where the pointer put it. The exception is
+        // the edge the handle holds: the solve may let it go where holding
+        // it would have refused the gesture (an element centred on an anchor
+        // resizes symmetrically instead), and then the driver's own geometry
+        // is the solve's answer rather than the pointer's.
+        continue;
+      }
+      covered[axis].add(id);
+      if (delta.min === 0 && delta.max === 0) {
         continue;
       }
       positionById.set(id, delta.min);
@@ -1090,19 +1311,23 @@ export const buildResizeAlignmentDeltas = (
     }
   }
 
-  return { dxById, dyById, dwById, dhById };
+  return { dxById, dyById, dwById, dhById, covered };
 };
 
 /**
  * Write the accumulated deltas to the scene, each element placed relative
  * to its resize-start geometry.
  *
+ * Size is written every time, from the start size plus whatever delta there
+ * is, so a partner stretched on an earlier frame gets its size back once the
+ * answer is a plain move again.
+ *
  * A partner that only moved carries its label along, as it always has. A
- * partner that *stretched* is a container whose box changed under it, so
- * its label is refitted the same way a directly resized one would be —
- * see the bound-text notes in `CLAUDE.md`. The two are told apart by
- * whether a size delta was recorded at all, which is why the size maps
- * hold only the entries that are really non-zero.
+ * partner whose box is changing — stretched now, or stretched on an earlier
+ * frame and returning — is a container whose box changed under it, so its
+ * label is refitted the same way a directly resized one would be; that is
+ * also what lets a label shrunk on the way out grow back. See the bound-text
+ * notes in `CLAUDE.md`.
  */
 export const applyAlignmentDeltas = (
   originalElements: PointerDownState["originalElements"],
@@ -1129,24 +1354,35 @@ export const applyAlignmentDeltas = (
     const dw = dwById.get(id) ?? 0;
     const dh = dhById.get(id) ?? 0;
     const original = originalElements.get(id) ?? partner;
+    // Per axis, because an axis with no answer is one this solve has nothing
+    // to say about — not one whose geometry should go back to where the
+    // gesture started. The driver is the case that makes the difference: a
+    // corner resize writes both axes itself, and a correction on one of them
+    // must not undo the other.
+    const onX = dxById.has(id) || dwById.has(id);
+    const onY = dyById.has(id) || dhById.has(id);
+    const width = Math.max(1, original.width + dw);
+    const height = Math.max(1, original.height + dh);
+    const resized =
+      (onX && (dw !== 0 || width !== partner.width)) ||
+      (onY && (dh !== 0 || height !== partner.height));
 
     scene.mutateElement(partner, {
-      x: original.x + dx,
-      y: original.y + dy,
-      ...(dw !== 0 ? { width: Math.max(1, original.width + dw) } : {}),
-      ...(dh !== 0 ? { height: Math.max(1, original.height + dh) } : {}),
+      ...(onX ? { x: original.x + dx, width } : {}),
+      ...(onY ? { y: original.y + dy, height } : {}),
     });
 
     const boundText = getBoundTextElement(partner, elementsMap);
     if (boundText) {
-      if (dw !== 0 || dh !== 0) {
+      if (resized) {
         handleBindTextResize(partner, scene, false);
       } else {
-        // the container's label rides along — see `dragAlignedElements`
+        // the container's label rides along — see `dragAlignedElements`,
+        // and per axis for the same reason its container is
         const originalText = originalElements.get(boundText.id) ?? boundText;
         scene.mutateElement(boundText, {
-          x: originalText.x + dx,
-          y: originalText.y + dy,
+          ...(onX ? { x: originalText.x + dx } : {}),
+          ...(onY ? { y: originalText.y + dy } : {}),
         });
       }
     }
@@ -1169,18 +1405,21 @@ export const propagateAlignmentsAfterResize = (
   originalElements: PointerDownState["originalElements"],
   resizedIds: Set<string>,
   scene: Scene,
+  intent?: ResizeIntent,
 ) => {
   const elementsMap = scene.getNonDeletedElementsMap();
-  const { dxById, dyById, dwById, dhById } = buildResizeAlignmentDeltas(
-    originalElements,
-    resizedIds,
-    elementsMap,
-  );
+  const { dxById, dyById, dwById, dhById, covered } =
+    buildResizeAlignmentDeltas(
+      originalElements,
+      resizedIds,
+      elementsMap,
+      intent,
+    );
   const groupMembers = getGroupMembers(elementsMap);
   const skip = (id: string) =>
     resizedIds.has(id) || isAlignmentAnchor(elementsMap.get(id));
-  spreadAcrossGroups(dxById, groupMembers, skip);
-  spreadAcrossGroups(dyById, groupMembers, skip);
+  settleAcrossGroups(dxById, covered.x, groupMembers, skip);
+  settleAcrossGroups(dyById, covered.y, groupMembers, skip);
   applyAlignmentDeltas(
     originalElements,
     dxById,

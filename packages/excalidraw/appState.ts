@@ -146,7 +146,11 @@ export const getDefaultAppState = (): Omit<
     hoveredAlignmentAnchorId: null,
     hoveredAlignmentIcon: null,
     expandedAlignmentCluster: null,
-    alignmentResizeAnchorIds: [],
+    alignmentResizeConstraints: {
+      refusedBy: { x: [], y: [] },
+      active: { x: [], y: [] },
+      releasedBy: { x: [], y: [] },
+    },
     alignmentResizeStretchAnchorIds: [],
     alignmentResizeMoverIds: { x: [], y: [] },
     bindMode: "orbit",
@@ -316,7 +320,7 @@ const APP_STATE_STORAGE_CONF = (<
   hoveredAlignmentAnchorId: { browser: false, export: false, server: false },
   hoveredAlignmentIcon: { browser: false, export: false, server: false },
   expandedAlignmentCluster: { browser: false, export: false, server: false },
-  alignmentResizeAnchorIds: { browser: false, export: false, server: false },
+  alignmentResizeConstraints: { browser: false, export: false, server: false },
   alignmentResizeStretchAnchorIds: {
     browser: false,
     export: false,

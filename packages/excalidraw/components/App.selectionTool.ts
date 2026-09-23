@@ -14,6 +14,7 @@ import {
   addElementsToFrame,
   cropElement,
   dragSelectedElements,
+  constraintKey,
   getAlignmentResizeEffects,
   getCommonBounds,
   getCommonFrameId,
@@ -61,6 +62,7 @@ import {
 } from "@excalidraw/math";
 
 import type {
+  ConstraintRef,
   MaybeTransformHandleType,
   TransformHandleType,
 } from "@excalidraw/element";
@@ -85,7 +87,7 @@ import { snapDraggedElements, snapResizingElements } from "../snapping";
 import { selectGroupsForSelectedElements } from "./App.selection";
 
 import type React from "react";
-import type { PointerDownState } from "../types";
+import type { AppState, PointerDownState } from "../types";
 import type App from "./App";
 
 // VERSION-LOG: Set to false to disable alt+drag duplication
@@ -595,9 +597,13 @@ export class AppSelectionTool {
     transformHandleType: MaybeTransformHandleType,
     resizeFromCenter: boolean,
   ) => {
-    let blockers = { x: new Set<string>(), y: new Set<string>() };
     let stretchCauses = new Set<string>();
     let movers = { x: new Set<string>(), y: new Set<string>() };
+    let constraints: AppState["alignmentResizeConstraints"] = {
+      refusedBy: { x: [], y: [] },
+      active: { x: [], y: [] },
+      releasedBy: { x: [], y: [] },
+    };
 
     if (transformHandleType && transformHandleType !== "rotation") {
       const resizedIds = new Set(
@@ -620,25 +626,42 @@ export class AppSelectionTool {
         elementsMap,
         edgeOpts,
       );
-      blockers = effects.blockers;
+      constraints = {
+        refusedBy: effects.refusedBy,
+        active: effects.active,
+        releasedBy: effects.releasedBy,
+      };
       movers = effects.movers;
       // Not per axis: the overlay marks the element, and an anchor that
       // forces a stretch on either axis is equally the reason for it.
       stretchCauses = new Set([...effects.causes.x, ...effects.causes.y]);
     }
 
-    const nextAnchors = [...new Set([...blockers.x, ...blockers.y])];
     const nextStretchAnchors = [...stretchCauses];
     const nextMovers = { x: [...movers.x], y: [...movers.y] };
-    const current = this.app.state.alignmentResizeAnchorIds;
+    const currentConstraints = this.app.state.alignmentResizeConstraints;
     const currentStretch = this.app.state.alignmentResizeStretchAnchorIds;
     const currentMovers = this.app.state.alignmentResizeMoverIds;
 
     const sameIds = (next: string[], prev: readonly string[]) =>
       next.length === prev.length && next.every((id, i) => id === prev[i]);
+    // by key, since the refs are rebuilt by each solve
+    const sameRefs = (
+      next: readonly ConstraintRef[],
+      prev: readonly ConstraintRef[],
+    ) =>
+      next.length === prev.length &&
+      next.every((ref, i) => constraintKey(ref) === constraintKey(prev[i]));
 
-    if (!sameIds(nextAnchors, current)) {
-      this.app.setState({ alignmentResizeAnchorIds: nextAnchors });
+    if (
+      !sameRefs(constraints.refusedBy.x, currentConstraints.refusedBy.x) ||
+      !sameRefs(constraints.refusedBy.y, currentConstraints.refusedBy.y) ||
+      !sameRefs(constraints.active.x, currentConstraints.active.x) ||
+      !sameRefs(constraints.active.y, currentConstraints.active.y) ||
+      !sameRefs(constraints.releasedBy.x, currentConstraints.releasedBy.x) ||
+      !sameRefs(constraints.releasedBy.y, currentConstraints.releasedBy.y)
+    ) {
+      this.app.setState({ alignmentResizeConstraints: constraints });
     }
     if (!sameIds(nextStretchAnchors, currentStretch)) {
       this.app.setState({
