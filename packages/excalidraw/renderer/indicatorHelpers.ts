@@ -58,7 +58,7 @@ const mixHex = (from: string, to: string, t: number): string => {
 
 /**
  * The colour of an alignment that is *refusing* the gesture in progress,
- * pulsing between the ordinary indicator red and the anvil's warning red.
+ * pulsing between the ordinary indicator red and a deeper one.
  *
  * A change of shade rather than of anything structural: the line still says
  * what it always says, and what the flash adds is that it is the reason
@@ -71,8 +71,7 @@ const flashPhase = (runtime: number) =>
 
 /** The far end of the flash: the shade a refusing alignment deepens to.
  *
- * Its own constants rather than the anvil's warning red, which it currently
- * matches. The two answer to different questions — how far a *line* should
+ * Its own constants rather than the anvil's warning red. The two answer to different questions — how far a *line* should
  * travel from the indicator red it starts at, against what an anvil drawn
  * over an element's own artwork needs to stay legible — so tuning either
  * for its own job shouldn't silently move the other. */
@@ -95,7 +94,12 @@ export const getRefusalFlashColor = (
 /** How far a flashing badge swells at the peak of its pulse. Small: the
  * badge is a fixed screen size everywhere else, and a mark that changes
  * size reads as movement long before it reads as a change of size. */
-const REFUSAL_PULSE_AMPLITUDE = 0.15;
+const REFUSAL_PULSE_AMPLITUDE = 0.20;
+
+/** The same for a flashing anvil. Its own constant because the anvil is
+ * scaled to its element rather than fixed on screen, so the swell that
+ * reads well on a badge may be too much or too little on it. */
+const ANCHOR_REFUSAL_PULSE_AMPLITUDE = 0.04;
 
 /**
  * The size a flashing badge is drawn at, as a multiple of its usual radius.
@@ -105,8 +109,10 @@ const REFUSAL_PULSE_AMPLITUDE = 0.15;
  * Drawing only — the hit radius doesn't pulse, or the badge would be a
  * target that moves under the pointer.
  */
-export const getRefusalFlashScale = (runtime: number): number =>
-  1 + REFUSAL_PULSE_AMPLITUDE * flashPhase(runtime);
+export const getRefusalFlashScale = (
+  runtime: number,
+  amplitude = REFUSAL_PULSE_AMPLITUDE,
+): number => 1 + amplitude * flashPhase(runtime);
 
 // ---------------------------------------------------------------------------
 // Badges and their glyphs
@@ -681,10 +687,8 @@ export const drawAlignmentClusterBadge = (
   zoom: number,
   color: string,
   count: number,
-  /** see {@link getRefusalFlashScale} */
-  scale = 1,
 ) => {
-  const r = (INDICATOR_BADGE_RADIUS * scale) / zoom;
+  const r = INDICATOR_BADGE_RADIUS / zoom;
 
   context.save();
   context.lineWidth = badgeLineWidth(r, zoom);
@@ -1081,6 +1085,10 @@ export const drawAnchorOverlayButton = (
 // flag ties the fill to the opacity. That pairing is right for the
 // button, where hollow means "not anchored"; here it would fade an anchor
 // that is very much anchored.
+//
+// With a `flashRuntime` it flashes and pulses on the same beat as the
+// lines it is named alongside — from its own warning red to the shade they
+// deepen to, so the two peak together.
 export const drawAnchorOverlayWarning = (
   context: CanvasRenderingContext2D,
   cx: number,
@@ -1089,11 +1097,23 @@ export const drawAnchorOverlayWarning = (
   theme: AppState["theme"],
   zenModeEnabled: boolean,
   blocking = true,
+  flashRuntime: number | null = null,
 ) => {
+  const light = theme === THEME.LIGHT || zenModeEnabled;
+  const base = light ? ANCHOR_WARNING_COLOR_LIGHT : ANCHOR_WARNING_COLOR_DARK;
   const color =
-    theme === THEME.LIGHT || zenModeEnabled
-      ? ANCHOR_WARNING_COLOR_LIGHT
-      : ANCHOR_WARNING_COLOR_DARK;
+    flashRuntime === null
+      ? base
+      : mixHex(
+          base,
+          light ? REFUSAL_FLASH_COLOR_LIGHT : REFUSAL_FLASH_COLOR_DARK,
+          flashPhase(flashRuntime),
+        );
+  const drawnSize =
+    flashRuntime === null
+      ? size
+      : size *
+        getRefusalFlashScale(flashRuntime, ANCHOR_REFUSAL_PULSE_AMPLITUDE);
 
   context.save();
   context.globalAlpha = ANCHOR_OVERLAY_OPACITY;
@@ -1101,9 +1121,9 @@ export const drawAnchorOverlayWarning = (
     context,
     cx,
     cy,
-    size,
+    drawnSize,
     color,
-    Math.max(size * ANCHOR_LINE_RATIO_HOVER, 1),
+    Math.max(drawnSize * ANCHOR_LINE_RATIO_HOVER, 1),
     blocking,
   );
   context.restore();

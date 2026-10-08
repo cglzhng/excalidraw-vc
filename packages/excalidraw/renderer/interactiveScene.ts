@@ -101,6 +101,7 @@ import {
   renderGapAlignmentIcons,
   renderGapAlignmentLocks,
   renderAnchorLockOverlays,
+  getAnchorOverlays,
 } from "../renderer/renderAlignmentLocks";
 import { renderSnaps } from "../renderer/renderSnaps";
 import { roundRect } from "../renderer/roundRect";
@@ -2661,12 +2662,19 @@ const _renderInteractiveScene = ({
     badgeLayout.edgeLines,
     badgeLayout.gapLines,
   );
+  const anchorOverlays = getAnchorOverlays(
+    appState,
+    allElementsMap,
+    selectedElements,
+    alignmentDragMovers,
+  );
   // A refusal flashes, so while one is on screen the scene keeps asking for
   // frames — the gesture is usually held still against the constraint that
   // refused it, and nothing else would be repainting.
   const refusing =
     badgeLayout.edgeLines.some((line) => line.blocked) ||
-    badgeLayout.gapLines.some((line) => line.blocked);
+    badgeLayout.gapLines.some((line) => line.blocked) ||
+    (anchorOverlays?.flashing.size ?? 0) > 0;
   const refusalRuntime = refusing
     ? (animationState?.alignmentRefusal?.runtime ?? 0) + deltaTime
     : null;
@@ -2699,12 +2707,7 @@ const _renderInteractiveScene = ({
     badgeLayout.edgeLines,
     refusalRuntime,
   );
-  renderAlignmentClusterBadges(
-    context,
-    appState,
-    badgeLayout.clusters,
-    refusalRuntime,
-  );
+  renderAlignmentClusterBadges(context, appState, badgeLayout.clusters);
   renderElementAlignmentLocks(
     context,
     appState,
@@ -2715,8 +2718,8 @@ const _renderInteractiveScene = ({
     context,
     appState,
     allElementsMap,
-    selectedElements,
-    alignmentDragMovers,
+    anchorOverlays,
+    refusalRuntime,
   );
 
   // Short ids, drawn only while the version log is open: the log names

@@ -121,7 +121,7 @@ export type AlignmentGuideLine = {
  * Fold the two centre alignments of a concentric pair into one badge.
  *
  * Two elements centred on each other share both centre lines, and both
- * lines' midpoints are the shared centre — so their padlocks always land
+ * lines' badges sit at the shared centre — so their padlocks always land
  * on one spot and always collapse into a "2". Centering is common enough
  * to deserve better, so it gets a badge of its own: a crosshair, carried
  * by the line on x and standing for both. The alignments themselves are
@@ -216,14 +216,18 @@ export const getAlignmentGuideLines = (
     const at = (v: number): [number, number] =>
       guide.axis === "x" ? [coord, v] : [v, coord];
 
-    const from = at(along[0]);
-    const to = at(along[along.length - 1]);
+    // The badge sits between the two elements' inner ends: in the gap when
+    // they are apart, so it lands on whitespace rather than on either
+    // shape, and at the centre of their overlap when they aren't. One
+    // expression covers both, since past contact the inner ends swap.
+    const [loA, , hiA] = anchorsA;
+    const [loB, , hiB] = anchorsB;
     lines.push({
       guide,
-      from,
-      to,
+      from: at(along[0]),
+      to: at(along[along.length - 1]),
       crosses: along.map(at),
-      icon: [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2],
+      icon: at((Math.max(loA, loB) + Math.min(hiA, hiB)) / 2),
     });
   }
   return lines;
@@ -753,8 +757,8 @@ export const getVisibleGapGuideLines = (
  * A knot of badges too close together to aim between, and what it does
  * about it.
  *
- * Alignment badges sit at their line's midpoint, and guides from one
- * selected element all share an endpoint, so their midpoints crowd —
+ * Alignment badges sit between their two elements, so guides from one
+ * selected element to neighbouring partners crowd into the same space —
  * worst of all when elements are centred, where several lines coincide
  * outright. Since the hit-test takes the *nearest* badge, exactly
  * coincident ones leave all but one permanently unreachable: not merely
@@ -770,9 +774,6 @@ export type AlignmentBadgeCluster = {
   center: [number, number];
   count: number;
   open: boolean;
-  /** any badge it stands in for carries a refusal, so the counted badge
-   * flashes too — collapsing badges must not swallow the warning */
-  blocked?: boolean;
 };
 
 /** One badge's place in the layout, with the way to write its result
@@ -884,7 +885,7 @@ const clusterSlots = (
 
 /**
  * Place every badge for a frame, collapsing the crowded ones and fanning
- * out the one the pointer has opened.
+ * out the one the pointer has opened, and any carrying a refusal.
  *
  * `expanded` is a cluster's centre, not an index: clusters are derived
  * fresh each frame from wherever the guides currently are, so the only
@@ -927,20 +928,18 @@ export const layOutAlignmentBadges = (
       members.reduce((sum, i) => sum + slots[i].icon[1], 0) / members.length,
     ];
 
-    if (
-      !expanded ||
-      Math.abs(expanded[0] - center[0]) >= HOVER_MATCH_EPSILON ||
-      Math.abs(expanded[1] - center[1]) >= HOVER_MATCH_EPSILON
-    ) {
+    // A cluster holding a refusal opens as though hovered: a counted badge
+    // can say *that* something in it refused, but not which one.
+    const opened =
+      members.some((index) => slots[index].blocked) ||
+      (expanded !== null &&
+        Math.abs(expanded[0] - center[0]) < HOVER_MATCH_EPSILON &&
+        Math.abs(expanded[1] - center[1]) < HOVER_MATCH_EPSILON);
+    if (!opened) {
       for (const index of members) {
         slots[index].place(null);
       }
-      clusters.push({
-        center,
-        count: members.length,
-        open: false,
-        blocked: members.some((index) => slots[index].blocked),
-      });
+      clusters.push({ center, count: members.length, open: false });
       continue;
     }
 
@@ -980,8 +979,6 @@ export const renderAlignmentClusterBadges = (
   context: CanvasRenderingContext2D,
   appState: InteractiveCanvasAppState,
   clusters: readonly AlignmentBadgeCluster[],
-  /** see {@link renderAlignmentLockIcons} */
-  flashRuntime: number | null,
 ) => {
   const zoom = appState.zoom.value;
   const color = getAlignmentIndicatorColor(appState.theme, appState.zenModeEnabled);
@@ -991,21 +988,13 @@ export const renderAlignmentClusterBadges = (
   context.setLineDash([]);
   for (const cluster of clusters) {
     if (!cluster.open) {
-      const flashing = cluster.blocked && flashRuntime !== null;
       drawAlignmentClusterBadge(
         context,
         cluster.center[0],
         cluster.center[1],
         zoom,
-        flashing
-          ? getRefusalFlashColor(
-              appState.theme,
-              appState.zenModeEnabled,
-              flashRuntime!,
-            )
-          : color,
+        color,
         cluster.count,
-        flashing ? getRefusalFlashScale(flashRuntime!) : 1,
       );
     }
   }
@@ -1381,7 +1370,7 @@ export const renderElementAlignmentLocks = (
  * A resize is reported the same way, but the set isn't computed here:
  * whether an anchor is in the way depends on which transform handle is
  * held, which only `App.maybeHandleResize` knows, so it publishes the
- * refusing constraints as `alignmentResizeRefusedBy` and the anchors among
+ * refusing constraints as `alignmentResizeConstraints` and the anchors among
  * them are read off here.
  *
  * A drag also names the anchors that pinned a gap chain in place of its
@@ -1391,15 +1380,26 @@ export const renderElementAlignmentLocks = (
  * Drawn as the *warning* anvil rather than the toggle's button form — see
  * {@link drawAnchorOverlayWarning} for why the two look different.
  */
-export const renderAnchorLockOverlays = (
-  context: CanvasRenderingContext2D,
+export type AnchorOverlays = {
+  refusing: ReadonlySet<string>;
+  permitting: ReadonlySet<string>;
+  /** the ones named in a refusal or a release, which flash with the lines
+   * naming them: every refusing anchor, and any permitting one that forced
+   * a resize to give up its held edge */
+  flashing: ReadonlySet<string>;
+};
+
+/** Which anchors to draw a warning anvil over this frame, and in which
+ * form. Separate from drawing so the scene can tell whether anything is
+ * flashing before it decides whether to keep repainting. */
+export const getAnchorOverlays = (
   appState: InteractiveCanvasAppState,
   elementsMap: NonDeletedSceneElementsMap,
   selectedElements: readonly NonDeletedExcalidrawElement[],
   movers: AlignmentDragMovers | null,
-) => {
+): AnchorOverlays | null => {
   if (selectedElements.length === 0) {
-    return;
+    return null;
   }
   const anchors = new Set<string>();
   for (const refs of [
@@ -1436,15 +1436,41 @@ export const renderAnchorLockOverlays = (
     ].filter((id) => !anchors.has(id)),
   );
   if (anchors.size === 0 && stretchAnchors.size === 0) {
-    return;
+    return null;
   }
 
+  const flashing = new Set(anchors);
+  const released = [
+    ...appState.alignmentResizeConstraints.releasedBy.x,
+    ...appState.alignmentResizeConstraints.releasedBy.y,
+    ...(movers?.releasedBy.x ?? []),
+    ...(movers?.releasedBy.y ?? []),
+  ];
+  for (const ref of released) {
+    if (ref.kind === "anchor" && stretchAnchors.has(ref.elementId)) {
+      flashing.add(ref.elementId);
+    }
+  }
+  return { refusing: anchors, permitting: stretchAnchors, flashing };
+};
+
+export const renderAnchorLockOverlays = (
+  context: CanvasRenderingContext2D,
+  appState: InteractiveCanvasAppState,
+  elementsMap: NonDeletedSceneElementsMap,
+  overlays: AnchorOverlays | null,
+  /** see {@link renderAlignmentLockIcons} */
+  flashRuntime: number | null,
+) => {
+  if (!overlays) {
+    return;
+  }
   const zoom = appState.zoom.value;
   context.save();
   context.translate(appState.scrollX, appState.scrollY);
   for (const [ids, blocking] of [
-    [anchors, true],
-    [stretchAnchors, false],
+    [overlays.refusing, true],
+    [overlays.permitting, false],
   ] as const) {
     for (const id of ids) {
       const el = elementsMap.get(id);
@@ -1460,6 +1486,7 @@ export const renderAnchorLockOverlays = (
         appState.theme,
         appState.zenModeEnabled,
         blocking,
+        overlays.flashing.has(id) ? flashRuntime : null,
       );
     }
   }
