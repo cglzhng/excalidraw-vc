@@ -46,6 +46,21 @@ the per-axis independence the cap assumes. Drag is unaffected —
 `clampDragToGapAlignments` has no angle guard, because a drag doesn't change
 the driver's size.
 
+**The feel rules stop at the first chain.** A chain driven from a single
+point has a free slope, and the feel rules (far end holds, interior travels
+rigidly) are what pin it. Which member is "driven" comes from
+`edgeReachable`, which walks edge links and groups from the drivers but never
+*through* a gap chain. So in driver → link → chain → link → chain 2, the first
+chain gets its rule and chain 2 finds no driven member and gets none: its
+slope falls to the minimum-disturbance objective, and its far end drifts
+*against* the drag (`1, 0.4, −0.2` for a 3-chain, where the rule gives
+`1, ½, 0`). Invisible when chain 2 hangs off a member of the first chain that
+doesn't move. The fix is to let the walk enter chains — the member it first
+arrives at becomes that chain's driven one, and the walk continues from the
+chain's members, so each chain downstream finds its own entry point; a chain
+entered at several members at once is genuinely multiply driven and gets no
+rule.
+
 **A gap side's overlap range is approximate when its element stretches across
 the gap.** `gapSideShift` translates a cached gap's side rigidly, taking its
 position on the gap's own axis from the edge that bounds it — so the gap's

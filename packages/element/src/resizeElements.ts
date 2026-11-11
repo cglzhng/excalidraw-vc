@@ -27,6 +27,8 @@ import {
   propagateAlignmentsAfterResize,
 } from "./alignment";
 import { clampSizeToAlignments } from "./gapAlignment";
+
+import type { ClampBlame, ClampBlames } from "./gapAlignment";
 import {
   getArrowLocalFixedPoints,
   unbindBindingElement,
@@ -161,59 +163,84 @@ const clampMultiElementResize = (
 ) => {
   /** The scale at which the first member of the selection reaches the
    * floor on this dimension, or 0 if none of them has any extent there
-   * — a vertical line never gets narrower than it already is. */
+   * — a vertical line never gets narrower than it already is. Also which
+   * member that is, since it is the one a held floor blames. */
   const minScaleFor = (dimension: "width" | "height") => {
     let least = Infinity;
+    let narrowest: string | null = null;
     for (const element of selectedElements) {
       const extent = (originalElements.get(element.id) ?? element)[dimension];
-      if (extent > 0) {
-        least = Math.min(least, extent);
+      if (extent > 0 && extent < least) {
+        least = extent;
+        narrowest = element.id;
       }
     }
-    return least === Infinity ? 0 : MIN_RESIZE_EXTENT / least;
+    return {
+      scale: least === Infinity ? 0 : MIN_RESIZE_EXTENT / least,
+      narrowest,
+    };
   };
+  const extentBlame = (
+    axis: "x" | "y",
+    elementId: string | null,
+  ): ClampBlame | null =>
+    elementId ? { kind: "extent", axis, elementId } : null;
+
+  const width = minScaleFor("width");
+  const height = minScaleFor("height");
 
   if (shouldMaintainAspectRatio) {
     // One scale drives both dimensions, so the floor has to be a floor on
     // *it*: flooring the two sides independently would change the ratio
     // the gesture exists to preserve.
-    const minScale = Math.max(minScaleFor("width"), minScaleFor("height"));
+    const floor =
+      width.scale >= height.scale
+        ? { ...width, axis: "x" as const }
+        : { ...height, axis: "y" as const };
+    const requested =
+      box.width > 0
+        ? Math.abs(next.nextWidth) / box.width
+        : box.height > 0
+        ? Math.abs(next.nextHeight) / box.height
+        : 1;
     // That scale is the larger of two absolute ratios, so it starts
     // growing again as soon as the pointer passes the anchor on *either*
     // axis — and it feeds both dimensions. So a crossing anywhere pins
     // the whole box, not just the axis whose own flag is set.
-    const scale =
-      next.flipByX || next.flipByY
-        ? minScale
-        : Math.max(
-            box.width > 0
-              ? Math.abs(next.nextWidth) / box.width
-              : box.height > 0
-              ? Math.abs(next.nextHeight) / box.height
-              : 1,
-            minScale,
-          );
+    const held = next.flipByX || next.flipByY || requested < floor.scale;
+    const scale = held ? floor.scale : requested;
+    const blame = held ? extentBlame(floor.axis, floor.narrowest) : null;
     return {
       nextWidth: box.width * scale,
       nextHeight: box.height * scale,
       flipByX: false,
       flipByY: false,
+      blame: {
+        x: floor.axis === "x" ? blame : null,
+        y: floor.axis === "y" ? blame : null,
+      },
     };
   }
 
   // Without a shared scale the two dimensions are read off their own
   // axis, so each is held on its own.
-  const floorFor = (dimension: "width" | "height") =>
-    box[dimension] * minScaleFor(dimension);
+  const floorWidth = box.width * width.scale;
+  const floorHeight = box.height * height.scale;
+  const requestedWidth = next.flipByX ? 0 : next.nextWidth;
+  const requestedHeight = next.flipByY ? 0 : next.nextHeight;
 
   return {
-    nextWidth: Math.max(next.flipByX ? 0 : next.nextWidth, floorFor("width")),
-    nextHeight: Math.max(
-      next.flipByY ? 0 : next.nextHeight,
-      floorFor("height"),
-    ),
+    nextWidth: Math.max(requestedWidth, floorWidth),
+    nextHeight: Math.max(requestedHeight, floorHeight),
     flipByX: false,
     flipByY: false,
+    blame: {
+      x: requestedWidth < floorWidth ? extentBlame("x", width.narrowest) : null,
+      y:
+        requestedHeight < floorHeight
+          ? extentBlame("y", height.narrowest)
+          : null,
+    },
   };
 };
 
@@ -278,6 +305,9 @@ export const transformElements = (
   centerX: number,
   centerY: number,
   renderEnvironment?: RenderEnvironment,
+  /** told what the resize is resting against, where a floor or an
+   * alignment clamp stopped it short of the pointer */
+  onClampBlame?: (blame: ClampBlames) => void,
 ): boolean => {
   const elementsMap = scene.getNonDeletedElementsMap();
   if (selectedElements.length === 1) {
@@ -299,23 +329,22 @@ export const transformElements = (
       const origElement = originalElements.get(elementId);
 
       if (latestElement && origElement) {
-        const { nextWidth, nextHeight } = clampSizeToAlignments(
+        const proposed = getNextSingleWidthAndHeightFromPointer(
+          latestElement,
+          origElement,
+          transformHandleType,
+          pointerX,
+          pointerY,
+          {
+            shouldMaintainAspectRatio,
+            shouldResizeFromCenter,
+          },
+        );
+        const { nextWidth, nextHeight, blame } = clampSizeToAlignments(
           clampSizeToFrozenAlignmentAxes(
             // first, so nothing downstream has to reason about an
             // element whose edges have crossed over
-            clampSizeToMinimumExtent(
-              getNextSingleWidthAndHeightFromPointer(
-                latestElement,
-                origElement,
-                transformHandleType,
-                pointerX,
-                pointerY,
-                {
-                  shouldMaintainAspectRatio,
-                  shouldResizeFromCenter,
-                },
-              ),
-            ),
+            clampSizeToMinimumExtent(proposed),
             origElement,
             new Set([elementId]),
             elementsMap,
@@ -332,6 +361,21 @@ export const transformElements = (
           elementsMap,
           { handle: transformHandleType, shouldResizeFromCenter },
         );
+        // The floor is blamed only where it is what the size ended at — a
+        // frozen axis puts the size back to where it started instead, and
+        // the refusal says why.
+        const floorBlame = (
+          axis: "x" | "y",
+          requested: number,
+          held: number,
+        ): ClampBlame | null =>
+          requested < MIN_RESIZE_EXTENT && held === MIN_RESIZE_EXTENT
+            ? { kind: "extent", axis, elementId }
+            : null;
+        onClampBlame?.({
+          x: blame.x ?? floorBlame("x", proposed.nextWidth, nextWidth),
+          y: blame.y ?? floorBlame("y", proposed.nextHeight, nextHeight),
+        });
 
         resizeSingleElement(
           nextWidth,
@@ -431,6 +475,10 @@ export const transformElements = (
           boxScaled: true,
         },
       );
+      onClampBlame?.({
+        x: nextWidth === held.nextWidth ? held.blame.x : null,
+        y: nextHeight === held.nextHeight ? held.blame.y : null,
+      });
 
       resizeMultipleElements(
         selectedElements,

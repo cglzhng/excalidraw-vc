@@ -101,6 +101,7 @@ import {
   releaseAlignmentsToDeleted,
   setAlignmentPairsLocked,
   unlockAlignmentPair,
+  NO_CLAMP_BLAME,
   lockGapAlignment,
   unlockGapAlignment,
   type AlignmentGuide,
@@ -10281,6 +10282,10 @@ class App extends React.Component<AppProps, AppState> {
           prevState.alignmentResizeMoverIds.y.length === 0
             ? prevState.alignmentResizeMoverIds
             : { x: [], y: [] },
+        alignmentClampBlame:
+          prevState.alignmentClampBlame.x || prevState.alignmentClampBlame.y
+            ? NO_CLAMP_BLAME
+            : prevState.alignmentClampBlame,
         selectionElement: null,
         frameToHighlight: null,
         elementsToHighlight: null,

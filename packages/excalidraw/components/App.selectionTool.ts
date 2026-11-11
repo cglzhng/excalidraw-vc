@@ -14,6 +14,7 @@ import {
   addElementsToFrame,
   cropElement,
   dragSelectedElements,
+  clampBlameKey,
   constraintKey,
   getAlignmentResizeEffects,
   getCommonBounds,
@@ -62,6 +63,7 @@ import {
 } from "@excalidraw/math";
 
 import type {
+  ClampBlames,
   ConstraintRef,
   MaybeTransformHandleType,
   TransformHandleType,
@@ -579,6 +581,19 @@ export class AppSelectionTool {
     return true;
   };
 
+  /** Publish what the gesture is resting against, if a clamp stopped it
+   * short — only the gesture code knows how far the pointer asked to go.
+   * Rewritten only when it changes, as below. */
+  private updateAlignmentClampBlame = (blame: ClampBlames) => {
+    const current = this.app.state.alignmentClampBlame;
+    if (
+      clampBlameKey(blame.x) !== clampBlameKey(current.x) ||
+      clampBlameKey(blame.y) !== clampBlameKey(current.y)
+    ) {
+      this.app.setState({ alignmentClampBlame: blame });
+    }
+  };
+
   /**
    * Publish what the in-progress resize is doing to the alignment graph:
    * the anchors refusing it, so the anvil overlay can point at them the
@@ -831,6 +846,7 @@ export class AppSelectionTool {
         pointerDownState.resize.center.x,
         pointerDownState.resize.center.y,
         this.app.renderEnvironment,
+        this.updateAlignmentClampBlame,
       )
     ) {
       const elementsToHighlight = new Set<NonDeletedExcalidrawElement>();
@@ -1131,14 +1147,16 @@ export class AppSelectionTool {
         // when we're editing the name of a frame, we want the user to be
         // able to select and interact with the text input
         if (!this.app.state.editingFrame) {
-          dragSelectedElements(
-            pointerDownState,
-            selectedElements,
-            dragOffset,
-            this.app.scene,
-            snapOffset,
-            event[KEYS.CTRL_OR_CMD] ? null : this.app.getEffectiveGridSize(),
-            this.app.renderEnvironment,
+          this.updateAlignmentClampBlame(
+            dragSelectedElements(
+              pointerDownState,
+              selectedElements,
+              dragOffset,
+              this.app.scene,
+              snapOffset,
+              event[KEYS.CTRL_OR_CMD] ? null : this.app.getEffectiveGridSize(),
+              this.app.renderEnvironment,
+            ),
           );
         }
 

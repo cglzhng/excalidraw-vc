@@ -7,7 +7,11 @@ import type {
   StrokeWidthKey,
 } from "@excalidraw/common";
 
-import type { ConstraintRef, LinearElementEditor } from "@excalidraw/element";
+import type {
+  ClampBlames,
+  ConstraintRef,
+  LinearElementEditor,
+} from "@excalidraw/element";
 
 import type {
   ListMarkerAdvance,
@@ -265,6 +269,7 @@ export type InteractiveCanvasAppState = Readonly<
     alignmentResizeConstraints: AppState["alignmentResizeConstraints"];
     alignmentResizeStretchAnchorIds: AppState["alignmentResizeStretchAnchorIds"];
     alignmentResizeMoverIds: AppState["alignmentResizeMoverIds"];
+    alignmentClampBlame: AppState["alignmentClampBlame"];
     // a resize is a gesture like a drag, and the alignment guides treat
     // the two alike; `alignmentResizeMoverIds` can't stand in for this,
     // since a resize that drives no alignment publishes nothing
@@ -676,6 +681,11 @@ export interface AppState {
    * edges move depends on the transform handle. Also transient, also
    * unobserved. */
   alignmentResizeMoverIds: { x: readonly string[]; y: readonly string[] };
+  /** what the in-progress drag or resize is resting against, per axis: a
+   * gap closed to contact, or an element at its minimum size. Only the
+   * gesture code knows how far the pointer asked to go, so it is reported
+   * from there. Transient and unobserved, like the fields above. */
+  alignmentClampBlame: ClampBlames;
   // when locking multiple units of elements together, we assign a temporary
   // groupId to them so we can unlock them together;
   // as elements are unlocked, we remove the groupId from the elements

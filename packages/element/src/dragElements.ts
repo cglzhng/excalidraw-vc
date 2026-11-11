@@ -20,7 +20,7 @@ import type { LocalPoint, Radians } from "@excalidraw/math";
 import type { NonDeletedExcalidrawElement } from "@excalidraw/element/types";
 
 import { dragAlignedElements, getAlignmentLockedAxes } from "./alignment";
-import { clampDragToGapAlignments } from "./gapAlignment";
+import { clampDragToGapAlignments, NO_CLAMP_BLAME } from "./gapAlignment";
 import {
   getFrameArrowIdsToReattach,
   getSimultaneouslyUpdatedElementIds,
@@ -41,6 +41,7 @@ import {
   isTextElement,
 } from "./typeChecks";
 
+import type { ClampBlames } from "./gapAlignment";
 import type { RenderEnvironment } from "./renderEnvironment";
 import type { Scene } from "./Scene";
 
@@ -64,13 +65,13 @@ export const dragSelectedElements = (
   gridSize: NullableGridSize,
   /** measures the labels of the bound arrows the drag moves */
   renderEnvironment?: RenderEnvironment,
-) => {
+): ClampBlames => {
   if (
     _selectedElements.length === 1 &&
     isElbowArrow(_selectedElements[0]) &&
     (_selectedElements[0].startBinding || _selectedElements[0].endBinding)
   ) {
-    return;
+    return NO_CLAMP_BLAME;
   }
 
   const selectedElements = _selectedElements.filter((element) => {
@@ -113,7 +114,7 @@ export const dragSelectedElements = (
     // if original element is not set (e.g. when you duplicate during a drag
     // operation), exit to avoid undefined behavior
     if (!origElement) {
-      return;
+      return NO_CLAMP_BLAME;
     }
     origElements.push(origElement);
   }
@@ -237,6 +238,9 @@ export const dragSelectedElements = (
     adjustedOffset,
     scene,
   );
+
+  // what the drag is resting against, if a clamp stopped it short
+  return adjustedOffset.blame;
 };
 
 const calculateOffset = (

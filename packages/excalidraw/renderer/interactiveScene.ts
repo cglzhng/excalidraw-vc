@@ -103,6 +103,8 @@ import {
   renderGapAlignmentLocks,
   renderAnchorLockOverlays,
   getAnchorOverlays,
+  getClampedExtentIds,
+  renderClampedExtents,
 } from "../renderer/renderAlignmentLocks";
 import { renderSnaps } from "../renderer/renderSnaps";
 import { roundRect } from "../renderer/roundRect";
@@ -2697,10 +2699,12 @@ const _renderInteractiveScene = ({
   // A refusal flashes, so while one is on screen the scene keeps asking for
   // frames — the gesture is usually held still against the constraint that
   // refused it, and nothing else would be repainting.
+  const clampedExtentIds = getClampedExtentIds(alignmentDragMovers);
   const refusing =
     badgeLayout.edgeLines.some((line) => line.blocked) ||
     badgeLayout.gapLines.some((line) => line.blocked) ||
-    (anchorOverlays?.flashing.size ?? 0) > 0;
+    (anchorOverlays?.flashing.size ?? 0) > 0 ||
+    clampedExtentIds.size > 0;
   const refusalRuntime = refusing
     ? (animationState?.alignmentRefusal?.runtime ?? 0) + deltaTime
     : null;
@@ -2709,6 +2713,13 @@ const _renderInteractiveScene = ({
     alignmentRefusal:
       refusalRuntime === null ? undefined : { runtime: refusalRuntime },
   };
+  renderClampedExtents(
+    context,
+    appState,
+    allElementsMap,
+    clampedExtentIds,
+    refusalRuntime,
+  );
   renderGapAlignmentLocks(
     context,
     appState,

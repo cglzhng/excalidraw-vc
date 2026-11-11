@@ -285,6 +285,7 @@ const getRelevantAppStateProps = (
   alignmentResizeConstraints: appState.alignmentResizeConstraints,
   alignmentResizeStretchAnchorIds: appState.alignmentResizeStretchAnchorIds,
   alignmentResizeMoverIds: appState.alignmentResizeMoverIds,
+  alignmentClampBlame: appState.alignmentClampBlame,
   isResizing: appState.isResizing,
   hoveredElementIds: appState.hoveredElementIds,
   debugVersionLogHighlightedElementIds:

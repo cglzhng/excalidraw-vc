@@ -153,6 +153,7 @@ export const getDefaultAppState = (): Omit<
     },
     alignmentResizeStretchAnchorIds: [],
     alignmentResizeMoverIds: { x: [], y: [] },
+    alignmentClampBlame: { x: null, y: null },
     bindMode: "orbit",
     boxSelectionMode: "contain",
     colorTopPicks: {
@@ -327,6 +328,7 @@ const APP_STATE_STORAGE_CONF = (<
     server: false,
   },
   alignmentResizeMoverIds: { browser: false, export: false, server: false },
+  alignmentClampBlame: { browser: false, export: false, server: false },
   bindMode: { browser: true, export: false, server: false },
   colorTopPicks: { browser: true, export: false, server: false },
   fontTopPicks: { browser: true, export: false, server: false },

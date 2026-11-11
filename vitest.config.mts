@@ -1,6 +1,6 @@
 import path from "path";
 
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig({
   resolve: {
@@ -80,6 +80,10 @@ export default defineConfig({
       hooks: "parallel",
     },
     setupFiles: ["./setupTests.ts"],
+    // Claude Code worktrees are whole checkouts of the repo nested under
+    // `.claude/`; collected, their tests would run a second time — and
+    // against this checkout's sources, since the aliases above resolve here.
+    exclude: [...configDefaults.exclude, "**/.claude/**"],
     globals: true,
     environment: "jsdom",
     // don't list skipped tests in the failure tree — keeps output readable

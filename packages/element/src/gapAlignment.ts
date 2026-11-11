@@ -661,6 +661,27 @@ export type ClampBlame =
     }
   | { readonly kind: "extent"; readonly axis: Axis; readonly elementId: string };
 
+/** Per axis, what a gesture is resting against, where it is resting against
+ * anything. */
+export type ClampBlames = {
+  readonly x: ClampBlame | null;
+  readonly y: ClampBlame | null;
+};
+
+export const NO_CLAMP_BLAME: ClampBlames = { x: null, y: null };
+
+/** How close to a bound counts as resting on it, in scene units. Far above
+ * float error, far below anything visible. */
+const CLAMP_BLAME_EPSILON = 1e-6;
+
+/** Identity for comparing blame across frames: each clamp builds a fresh one. */
+export const clampBlameKey = (blame: ClampBlame | null): string =>
+  !blame
+    ? ""
+    : blame.kind === "gap"
+    ? `gap:${blame.axis}:${blame.ids.join(",")}:${blame.at}`
+    : `extent:${blame.axis}:${blame.elementId}`;
+
 export const clampDragToGapAlignments = (
   directlyMovedIds: ReadonlySet<string>,
   offset: { x: number; y: number },
@@ -670,7 +691,7 @@ export const clampDragToGapAlignments = (
   x: number;
   y: number;
   /** what each axis was stopped by, where it was stopped at all */
-  blame: { x: ClampBlame | null; y: ClampBlame | null };
+  blame: ClampBlames;
 } => {
   const clampAxis = (
     axis: Axis,
@@ -759,10 +780,18 @@ export const clampDragToGapAlignments = (
       }
     }
 
-    const value = Math.min(Math.max(t, lo), hi);
+    // Blamed at the bound as well as past it: snapping clamps the offset
+    // before the drag does, so by the time the drag asks, a held gesture
+    // arrives sitting on its contact point — give or take the float error
+    // of the drag rebuilding the offset from absolute coordinates.
     return {
-      value,
-      blame: value === t ? null : value === hi ? hiBlame : loBlame,
+      value: Math.min(Math.max(t, lo), hi),
+      blame:
+        t >= hi - CLAMP_BLAME_EPSILON
+          ? hiBlame
+          : t <= lo + CLAMP_BLAME_EPSILON
+          ? loBlame
+          : null,
     };
   };
 
@@ -810,11 +839,11 @@ export const clampSizeToAlignments = (
   nextWidth: number;
   nextHeight: number;
   /** what each axis was stopped by — see {@link ClampBlame} */
-  blame: { x: ClampBlame | null; y: ClampBlame | null };
+  blame: ClampBlames;
 } => {
   const handle = opts.handle;
   if (driver.angle !== 0 || !handle) {
-    return { ...size, blame: { x: null, y: null } };
+    return { ...size, blame: NO_CLAMP_BLAME };
   }
 
   const chains = collectHardChains(elementsMap);
@@ -939,10 +968,15 @@ export const clampSizeToAlignments = (
         loBlame = atOriginal[i].blame;
       }
     }
-    const value = clamp(length, lo, hi);
+    // at the bound as well as past it, as the drag clamp does
     return {
-      value,
-      blame: value === length ? null : value === hi ? hiBlame : loBlame,
+      value: clamp(length, lo, hi),
+      blame:
+        length >= hi - CLAMP_BLAME_EPSILON
+          ? hiBlame
+          : length <= lo + CLAMP_BLAME_EPSILON
+          ? loBlame
+          : null,
     };
   };
 

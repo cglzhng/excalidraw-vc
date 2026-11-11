@@ -9,6 +9,7 @@ import {
 
 import {
   BADGE_CLUSTER_DISTANCE,
+  COLLAPSE_CROWDED_BADGES,
   drawAlignmentBadge,
   drawAlignmentClusterBadge,
   drawAlignmentHighlight,
@@ -19,6 +20,7 @@ import {
   drawGapMidpointTicks,
   drawIndicatorCross,
   drawIndicatorLineHalo,
+  drawMinimumSizeWarning,
   getAlignmentIndicatorColor,
   getAnchorIconSize,
   getBadgeFanOffset,
@@ -33,6 +35,7 @@ import type { Bounds } from "@excalidraw/common";
 import type {
   AlignmentGuide,
   AlignmentMovers,
+  ClampBlames,
   ConstraintRef,
   GapAlignmentGuide,
 } from "@excalidraw/element";
@@ -281,7 +284,11 @@ const isHoveredIcon = (
  * point, so three passes asking separately would be three sweeps a frame
  * for one answer that cannot have changed between them.
  */
-export type AlignmentDragMovers = AlignmentMovers;
+export type AlignmentDragMovers = AlignmentMovers & {
+  /** what the gesture is resting against, published by the gesture code
+   * for both kinds — see `AppState.alignmentClampBlame` */
+  clampBlame: ClampBlames;
+};
 
 export const getAlignmentDragMovers = (
   elementsMap: NonDeletedSceneElementsMap,
@@ -289,10 +296,13 @@ export const getAlignmentDragMovers = (
   appState: InteractiveCanvasAppState,
 ): AlignmentDragMovers | null => {
   if (appState.selectedElementsAreBeingDragged) {
-    return getAlignmentMovers(
-      new Set(selectedElements.map((element) => element.id)),
-      elementsMap,
-    );
+    return {
+      ...getAlignmentMovers(
+        new Set(selectedElements.map((element) => element.id)),
+        elementsMap,
+      ),
+      clampBlame: appState.alignmentClampBlame,
+    };
   }
 
   if (appState.isResizing) {
@@ -306,6 +316,7 @@ export const getAlignmentDragMovers = (
       refusedBy: appState.alignmentResizeConstraints.refusedBy,
       active: appState.alignmentResizeConstraints.active,
       releasedBy: appState.alignmentResizeConstraints.releasedBy,
+      clampBlame: appState.alignmentClampBlame,
     };
   }
 
@@ -371,12 +382,81 @@ const namesChain = (
       ref.ids.every((id, index) => id === guide.ids[index]),
   );
 
+/** Whether the gesture is resting against one of this chain's gaps, closed
+ * to contact. Not a refusal — the gesture got as far as it could — but the
+ * same answer to "why has it stopped following the pointer", so it flashes
+ * the same way. */
+const isClampedChain = (
+  movers: AlignmentDragMovers,
+  guide: GapAlignmentGuide,
+): boolean => {
+  const blame = movers.clampBlame[guide.axis];
+  return (
+    blame?.kind === "gap" &&
+    blame.ids.length === guide.ids.length &&
+    blame.ids.every((id, index) => id === guide.ids[index])
+  );
+};
+
 const isRefusedChain = (
   movers: AlignmentDragMovers,
   guide: GapAlignmentGuide,
 ): boolean =>
   namesChain(movers.refusedBy[guide.axis], guide) ||
-  namesChain(movers.releasedBy[guide.axis], guide);
+  namesChain(movers.releasedBy[guide.axis], guide) ||
+  isClampedChain(movers, guide);
+
+/** The elements a gesture has squeezed to their minimum size. */
+export const getClampedExtentIds = (
+  movers: AlignmentDragMovers | null,
+): Set<string> => {
+  const ids = new Set<string>();
+  for (const blame of [movers?.clampBlame.x, movers?.clampBlame.y]) {
+    if (blame?.kind === "extent") {
+      ids.add(blame.elementId);
+    }
+  }
+  return ids;
+};
+
+/**
+ * Cover every element the gesture has squeezed to its minimum size with a
+ * flashing block: the element itself is what the gesture is resting
+ * against, so it is the element that says so.
+ */
+export const renderClampedExtents = (
+  context: CanvasRenderingContext2D,
+  appState: InteractiveCanvasAppState,
+  elementsMap: NonDeletedSceneElementsMap,
+  ids: ReadonlySet<string>,
+  /** see {@link renderAlignmentLockIcons} */
+  flashRuntime: number | null,
+) => {
+  if (ids.size === 0 || flashRuntime === null) {
+    return;
+  }
+  context.save();
+  context.translate(appState.scrollX, appState.scrollY);
+  for (const id of ids) {
+    const element = elementsMap.get(id);
+    if (!element) {
+      continue;
+    }
+    const b = getElementBounds(element, elementsMap);
+    drawMinimumSizeWarning(
+      context,
+      b[0],
+      b[1],
+      b[2],
+      b[3],
+      appState.zoom.value,
+      appState.theme,
+      appState.zenModeEnabled,
+      flashRuntime,
+    );
+  }
+  context.restore();
+};
 
 /**
  * The elements to build guides from during a gesture: everything moving,
@@ -398,6 +478,12 @@ const getGuideSourceElements = (
   // Everything moving, plus everything named in a refusal — a refused
   // gesture moves nothing, and its guides have to come from somewhere.
   const named = new Set<string>([...movers.x, ...movers.y]);
+  // and the chain a gesture is resting against, which may sit outside both
+  for (const blame of [movers.clampBlame.x, movers.clampBlame.y]) {
+    if (blame?.kind === "gap") {
+      blame.ids.forEach((id) => named.add(id));
+    }
+  }
   for (const refs of [movers.refusedBy.x, movers.refusedBy.y]) {
     for (const ref of refs) {
       if (ref.kind === "link") {
@@ -931,6 +1017,7 @@ export const layOutAlignmentBadges = (
     // A cluster holding a refusal opens as though hovered: a counted badge
     // can say *that* something in it refused, but not which one.
     const opened =
+      !COLLAPSE_CROWDED_BADGES ||
       members.some((index) => slots[index].blocked) ||
       (expanded !== null &&
         Math.abs(expanded[0] - center[0]) < HOVER_MATCH_EPSILON &&

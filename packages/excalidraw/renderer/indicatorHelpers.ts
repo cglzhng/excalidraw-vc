@@ -140,6 +140,11 @@ const BADGE_HOVER_HALO_OPACITY = 0.35;
  * touch, which are just as hard to aim between. */
 export const BADGE_CLUSTER_DISTANCE = 18;
 
+/** Whether such a cluster collapses into one counted badge until the
+ * pointer opens it. Off, every cluster is drawn already fanned out along
+ * its badges' own lines — nothing to open, and nothing overlapping. */
+export const COLLAPSE_CROWDED_BADGES = false;
+
 /** How far apart consecutive badges sit when a cluster is opened, as a
  * multiple of the badge radius. Comfortably over the 2 that would merely
  * stop them touching, so the gaps read as deliberate. */
@@ -164,6 +169,18 @@ const BADGE_COUNT_FONT_RATIO = 1.25;
 const ALIGNMENT_HIGHLIGHT_LINE_WIDTH = 6;
 const ALIGNMENT_HIGHLIGHT_OPACITY = 0.4;
 const ALIGNMENT_HIGHLIGHT_CORNER_RADIUS = 4;
+
+/** The block drawn over an element a gesture has squeezed to its minimum
+ * size. Held clear of the bounds so an element already down to a couple
+ * of pixels still gets a box someone can see. Screen pixels, except the
+ * opacity. */
+const MIN_SIZE_WARNING_PADDING = 2;
+const MIN_SIZE_WARNING_FILL_OPACITY = 0.5;
+/** How far the block swells past its padding at the peak of its pulse.
+ * A fixed distance rather than a multiple of its size, as the badges'
+ * pulse is: the element is squeezed on one axis only, and a proportional
+ * swell would balloon its long side while barely moving the short one. */
+const MIN_SIZE_WARNING_PULSE = 2;
 
 /** The padlock silhouette, in fractions of the badge radius (or, where
  * noted, of another part of the lock). */
@@ -840,6 +857,40 @@ export const drawAlignmentHighlight = (
     context.rect(x1, y1, w, h);
   }
   context.stroke();
+  context.restore();
+};
+
+/**
+ * The warning drawn over an element the gesture in progress has squeezed
+ * to its minimum size: the reason the pointer is no longer being followed.
+ * A translucent red block that flashes and swells on the refusal beat, in
+ * the same colours as a refusing line, so every "this is why" mark on
+ * screen pulses together.
+ *
+ * Axis-aligned bounds even for a rotated element, as with
+ * {@link drawAlignmentHighlight} — that is the box the clamp measures.
+ */
+export const drawMinimumSizeWarning = (
+  context: CanvasRenderingContext2D,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  zoom: number,
+  theme: AppState["theme"],
+  zenModeEnabled: boolean,
+  flashRuntime: number,
+) => {
+  const pad =
+    (MIN_SIZE_WARNING_PADDING +
+      MIN_SIZE_WARNING_PULSE * flashPhase(flashRuntime)) /
+    zoom;
+  const color = getRefusalFlashColor(theme, zenModeEnabled, flashRuntime);
+
+  context.save();
+  context.fillStyle = color;
+  context.globalAlpha = MIN_SIZE_WARNING_FILL_OPACITY;
+  context.fillRect(x1 - pad, y1 - pad, x2 - x1 + pad * 2, y2 - y1 + pad * 2);
   context.restore();
 };
 
