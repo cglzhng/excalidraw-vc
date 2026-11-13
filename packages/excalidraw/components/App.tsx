@@ -5133,6 +5133,29 @@ class App extends React.Component<AppProps, AppState> {
   };
 
   /**
+   * Undo and redo as skips in the version log, rather than Excalidraw's
+   * own history: a change made outside the log would be lost on the
+   * next replay. Same path as a toggle, conflict modal included.
+   */
+  public undoVersionLogMoment = (): boolean => {
+    const momentId = this.versionLog.undo();
+    if (momentId == null) {
+      return false;
+    }
+    this.runReplayAfterToggle(momentId);
+    return true;
+  };
+
+  public redoVersionLogMoment = (): boolean => {
+    const momentId = this.versionLog.redo();
+    if (momentId == null) {
+      return false;
+    }
+    this.runReplayAfterToggle(momentId);
+    return true;
+  };
+
+  /**
    * Run a replay after a toggle or after the user resolves a previous conflict. 
    * 
    * If the replay produces unresolved hard conflicts, open the modal;

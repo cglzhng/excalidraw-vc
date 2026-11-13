@@ -439,9 +439,14 @@ export const renderOpContent = (
     case "restyle":
       return (
         <>
-          <strong>Restyled</strong> {formatElementLabel(op.elementType, shortId)}{" "}
-          {op.property}: <code>{formatValue(op.from)}</code> →{" "}
-          <code>{formatValue(op.to)}</code>
+          <strong>Restyled</strong> {formatElementLabel(op.elementType, shortId)}
+          {op.changes.map((change) => (
+            <React.Fragment key={change.property}>
+              <br />
+              {change.property}: <code>{formatValue(change.from)}</code> →{" "}
+              <code>{formatValue(change.to)}</code>
+            </React.Fragment>
+          ))}
         </>
       );
     case "arrow-edit-points": {

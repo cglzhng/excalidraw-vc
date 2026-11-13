@@ -5,6 +5,7 @@ import type { ExcalidrawElement } from "@excalidraw/element/types";
 
 import { applyOpsToScene } from "./applyOps";
 import { classifyEntries } from "./classify";
+import { getOperationElementIds } from "./types";
 
 import type {
   LogEntry,
@@ -15,6 +16,18 @@ import type {
 } from "./types";
 
 type DurableIncrementEmitter = Emitter<[DurableIncrement]>;
+
+/**
+ * What the panel narrows the log to. `ops` is what is shown; the rest
+ * says why, for the banner:
+ *   - `focus`: an op's dependency neighbourhood (click-to-filter), with
+ *     the op styled as the anchor.
+ *   - `elementIds`: every op that touched these elements
+ *     (`filterByElements`).
+ */
+export type LogFilter =
+  | { focus: LogOperation; ops: Set<LogOperation> }
+  | { elementIds: ReadonlySet<string>; ops: Set<LogOperation> };
 
 /**
  * Minimal scene access the log needs at ingest time. Kept narrow so
@@ -75,23 +88,31 @@ export class VersionLog {
     soft: Set<LogOperation>;
   } | null = null;
   /**
-   * Click-to-filter focus. When set, the panel collapses to just the
-   * ops in `ops` (the dependency neighbourhood of `focus`), with
-   * `focus` styled as the anchor. 
-   * 
+   * The panel's filter. When set, the panel collapses to just the
+   * ops in `filter.ops`.
+   *
    * `null` means no filter, so show the whole log.
-   * 
+   *
    * A UI affordance, so not actually part of the data model.
    */
-  private filter: {
-    focus: LogOperation;
-    ops: Set<LogOperation>;
-  } | null = null;
+  private filter: LogFilter | null = null;
   /**
    * Ids of moments the user has selectively deactivated. They
    * remain visible but are not applied to the current scene.
    */
   private inactiveMomentIds: Set<string> = new Set();
+  /**
+   * Moments skipped by undo, most recent last — the redo stack. Undo
+   * and redo are linear walks over the log expressed as skips: undo
+   * deactivates the newest active moment at or before the cursor, redo
+   * reactivates the most recently undone one.
+   *
+   * Entries are validated lazily (`pruneUndone`) rather than kept in sync
+   * with every toggle, so a moment the user reactivated by hand is just
+   * passed over. A new moment clears the stack, as a new action clears
+   * any redo stack.
+   */
+  private undoneMomentIds: string[] = [];
   /**
    * Scene state captured immediately BEFORE the first moment was
    * ingested. 
@@ -194,6 +215,74 @@ export class VersionLog {
     this.onChangeEmitter.trigger();
   }
 
+  /** The moment undo would skip: the newest active one at or before the cursor. */
+  public getUndoTarget(): string | null {
+    const cursorIdx = this.moments.findIndex(
+      (m) => m.id === this.currentMomentId,
+    );
+    if (cursorIdx < 0) {
+      return null;
+    }
+    for (let i = cursorIdx; i < this.moments.length; i++) {
+      if (!this.inactiveMomentIds.has(this.moments[i].id)) {
+        return this.moments[i].id;
+      }
+    }
+    return null;
+  }
+
+  /** The moment redo would restore: the most recently undone one still skipped. */
+  public getRedoTarget(): string | null {
+    this.pruneUndone();
+    return this.undoneMomentIds[this.undoneMomentIds.length - 1] ?? null;
+  }
+
+  /**
+   * Skip the undo target and push it onto the redo stack. Returns its
+   * id, or `null` if there was nothing to undo. As with
+   * `toggleMomentActive`, the replay is the caller's responsibility.
+   */
+  public undo(): string | null {
+    const id = this.getUndoTarget();
+    if (id == null) {
+      return null;
+    }
+    this.pruneUndone();
+    this.undoneMomentIds.push(id);
+    this.inactiveMomentIds.add(id);
+    this.onChangeEmitter.trigger();
+    return id;
+  }
+
+  /**
+   * Restore the redo target. It stays on the stack, now active, and is
+   * pruned on the next look — so a redo the conflict modal cancels
+   * (which skips the moment again) leaves it there to retry.
+   */
+  public redo(): string | null {
+    const id = this.getRedoTarget();
+    if (id == null) {
+      return null;
+    }
+    this.inactiveMomentIds.delete(id);
+    this.onChangeEmitter.trigger();
+    return id;
+  }
+
+  /** Pop redo entries that are active again or have left the log. */
+  private pruneUndone() {
+    while (this.undoneMomentIds.length > 0) {
+      const top = this.undoneMomentIds[this.undoneMomentIds.length - 1];
+      if (
+        this.inactiveMomentIds.has(top) &&
+        this.moments.some((m) => m.id === top)
+      ) {
+        return;
+      }
+      this.undoneMomentIds.pop();
+    }
+  }
+
   public getBaselineScene(): ReadonlyMap<string, ExcalidrawElement> | null {
     return this.baselineScene;
   }
@@ -247,21 +336,41 @@ export class VersionLog {
     this.onChangeEmitter.trigger();
   }
 
-  public getFilter(): {
-    focus: LogOperation;
-    ops: Set<LogOperation>;
-  } | null {
+  public getFilter(): LogFilter | null {
     return this.filter;
   }
 
-  public setFilter(
-    filter: { focus: LogOperation; ops: Set<LogOperation> } | null,
-  ) {
+  public setFilter(filter: LogFilter | null) {
     if (this.filter === filter) {
       return;
     }
     this.filter = filter;
     this.onChangeEmitter.trigger();
+  }
+
+  /**
+   * Narrow the log to the ops that touched any of `elementIds` —
+   * including ops that touched them as a *consequence*, since
+   * `getOperationElementIds` folds each op's `consequentOps` in. That
+   * is the point of filtering by an element: an arrow dragged along by
+   * its binding, or a partner an alignment moved, changed because of
+   * the op that caused it, and the causing op is where the log records
+   * that change. An empty set clears the filter.
+   */
+  public filterByElements(elementIds: ReadonlySet<string>) {
+    if (elementIds.size === 0) {
+      this.setFilter(null);
+      return;
+    }
+    const ops = new Set<LogOperation>();
+    for (const moment of this.moments) {
+      for (const op of moment.operations) {
+        if (getOperationElementIds(op).some((id) => elementIds.has(id))) {
+          ops.add(op);
+        }
+      }
+    }
+    this.setFilter({ elementIds, ops });
   }
 
   public getRemaps(): ReadonlyMap<string, Remap> {
@@ -304,6 +413,7 @@ export class VersionLog {
     this.moments = [];
     this.currentMomentId = null;
     this.inactiveMomentIds = new Set();
+    this.undoneMomentIds = [];
     this.baselineScene = null;
     this.skippedByReplay = new Set();
     this.remaps = new Map();
@@ -444,7 +554,10 @@ export class VersionLog {
     if (this.baselineScene == null) {
       const baseline = new Map<string, ExcalidrawElement>();
       for (const el of scene.getAllElements()) {
-        baseline.set(el.id, el);
+        // A copy, not the live element: Excalidraw's `mutateElement`
+        // writes in place, so a shared object would move the baseline
+        // along with every later drag of it.
+        baseline.set(el.id, { ...el });
         // Seed the high-water mark from pre-existing elements too, so a
         // replay stamp dominates elements that were never edited after
         // the log started (whose only recorded version is the baseline's).
@@ -481,6 +594,7 @@ export class VersionLog {
       this.moments.length = this.maxMoments;
     }
     this.currentMomentId = logMoment.id;
+    this.undoneMomentIds = [];
 
     // Clear the filter
     this.filter = null;

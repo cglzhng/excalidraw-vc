@@ -48,10 +48,15 @@ export const replayActiveOps = (log: VersionLog): ReplayResult | null => {
     return null;
   }
 
-  // Deep-enough clone: a fresh Map is sufficient because `applyOps`
-  // never mutates element objects in place — it replaces map entries
-  // with `{ ...el, ...updates }`.
-  const snapshot: SceneSnapshot = new Map(baseline) as unknown as SceneSnapshot;
+  // Each element is copied, not just the Map: `applyOps` replaces
+  // entries rather than mutating them, but the snapshot is handed to the
+  // scene, where `mutateElement` writes in place — an element no op
+  // touches would otherwise *be* the baseline's object, and the next drag
+  // of it would move the baseline too. One level is enough, since
+  // `mutateElement` replaces fields rather than editing nested arrays.
+  const snapshot: SceneSnapshot = new Map(
+    Array.from(baseline, ([id, el]) => [id, { ...el }]),
+  ) as unknown as SceneSnapshot;
 
   const moments = log.getMoments();
   const inactive = log.getInactiveMomentIds();

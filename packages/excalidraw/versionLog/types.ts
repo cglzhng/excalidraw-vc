@@ -98,6 +98,13 @@ export interface LogEntry {
   after: LogPropertyMap;
 }
 
+/** One style property's change inside a `restyle` op (e.g. "strokeColor"). */
+export interface StyleChange {
+  property: string;
+  from: unknown;
+  to: unknown;
+}
+
 /**
  * Semantic operations derived from raw element deltas. Each variant
  * carries just the data needed to describe that operation.
@@ -230,10 +237,11 @@ export type LogOperation =
       kind: "restyle";
       elementId: string;
       elementType?: string;
-      /** Which style property changed (e.g. "strokeColor"). */
-      property: string;
-      from: unknown;
-      to: unknown;
+      /**
+       * Every style property the increment changed, in `STYLE_PROPS`
+       * order. One action can change several at once (paste styles).
+       */
+      changes: readonly StyleChange[];
     }
   // Arrow-specific ---------------------------------------------------
   //

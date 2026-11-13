@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+
 import {
   KEYS,
   matchKey,
@@ -64,6 +66,49 @@ const executeHistoryAction = (
   return { captureUpdate: CaptureUpdateAction.EVENTUALLY };
 };
 
+/**
+ * Whether undo / redo walk the version log (`App.undoVersionLogMoment`)
+ * or Excalidraw's own history. Excalidraw's commits with
+ * `CaptureUpdateAction.NEVER` and so never reaches the log — the next
+ * replay brings an undone change back.
+ */
+export const UNDO_THROUGH_VERSION_LOG = true;
+
+/**
+ * The version-log step, behind the same in-progress-interaction guard.
+ * The App method updates the scene itself, so the updater returns
+ * nothing and the action reports no change.
+ */
+const executeVersionLogStep = (
+  app: AppClassProperties,
+  appState: Readonly<AppState>,
+  step: () => void,
+): ActionResult =>
+  executeHistoryAction(app, appState, () => {
+    // a toggle is already waiting on the conflict modal
+    if (!appState.versionLogPendingConflicts) {
+      step();
+    }
+  });
+
+/** Whether the version log has a moment to undo / redo, kept current. */
+const useVersionLogHasTarget = (
+  app: AppClassProperties,
+  direction: "undo" | "redo",
+): boolean => {
+  const log = app.versionLog;
+  const read = () =>
+    (direction === "undo" ? log.getUndoTarget() : log.getRedoTarget()) !=
+    null;
+  const [hasTarget, setHasTarget] = useState(read);
+  useEffect(() => {
+    setHasTarget(read());
+    return log.onChangeEmitter.on(() => setHasTarget(read()));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [log, direction]);
+  return hasTarget;
+};
+
 type ActionCreator = (history: History) => Action;
 
 export const createUndoAction: ActionCreator = (history) => ({
@@ -73,13 +118,15 @@ export const createUndoAction: ActionCreator = (history) => ({
   trackEvent: { category: "history" },
   viewMode: false,
   perform: (elements, appState, value, app) =>
-    executeHistoryAction(app, appState, () =>
-      history.undo(
-        arrayToMap(elements) as SceneElementsMap,
-        appState,
-        app.renderEnvironment,
-      ),
-    ),
+    UNDO_THROUGH_VERSION_LOG
+      ? executeVersionLogStep(app, appState, app.undoVersionLogMoment)
+      : executeHistoryAction(app, appState, () =>
+          history.undo(
+            arrayToMap(elements) as SceneElementsMap,
+            appState,
+            app.renderEnvironment,
+          ),
+        ),
   keyTest: (event) =>
     event[KEYS.CTRL_OR_CMD] && matchKey(event, KEYS.Z) && !event.shiftKey,
   PanelComponent: ({ appState, updateData, data, app }) => {
@@ -90,6 +137,8 @@ export const createUndoAction: ActionCreator = (history) => ({
         history.isRedoStackEmpty,
       ),
     );
+    const logCanUndo = useVersionLogHasTarget(app, "undo");
+    const disabled = UNDO_THROUGH_VERSION_LOG ? !logCanUndo : isUndoStackEmpty;
     const isMobile = useStylesPanelMode() === "mobile";
 
     return (
@@ -99,7 +148,7 @@ export const createUndoAction: ActionCreator = (history) => ({
         aria-label={t("buttons.undo")}
         onClick={updateData}
         size={data?.size || "medium"}
-        disabled={isUndoStackEmpty}
+        disabled={disabled}
         data-testid="button-undo"
         style={{
           ...(isMobile ? MOBILE_ACTION_BUTTON_BG : {}),
@@ -116,13 +165,15 @@ export const createRedoAction: ActionCreator = (history) => ({
   trackEvent: { category: "history" },
   viewMode: false,
   perform: (elements, appState, __, app) =>
-    executeHistoryAction(app, appState, () =>
-      history.redo(
-        arrayToMap(elements) as SceneElementsMap,
-        appState,
-        app.renderEnvironment,
-      ),
-    ),
+    UNDO_THROUGH_VERSION_LOG
+      ? executeVersionLogStep(app, appState, app.redoVersionLogMoment)
+      : executeHistoryAction(app, appState, () =>
+          history.redo(
+            arrayToMap(elements) as SceneElementsMap,
+            appState,
+            app.renderEnvironment,
+          ),
+        ),
   keyTest: (event) =>
     (event[KEYS.CTRL_OR_CMD] && event.shiftKey && matchKey(event, KEYS.Z)) ||
     (event[KEYS.CTRL_OR_CMD] && !event.shiftKey && matchKey(event, KEYS.Y)),
@@ -134,6 +185,8 @@ export const createRedoAction: ActionCreator = (history) => ({
         history.isRedoStackEmpty,
       ),
     );
+    const logCanRedo = useVersionLogHasTarget(app, "redo");
+    const disabled = UNDO_THROUGH_VERSION_LOG ? !logCanRedo : isRedoStackEmpty;
     const isMobile = useStylesPanelMode() === "mobile";
 
     return (
@@ -143,7 +196,7 @@ export const createRedoAction: ActionCreator = (history) => ({
         aria-label={t("buttons.redo")}
         onClick={updateData}
         size={data?.size || "medium"}
-        disabled={isRedoStackEmpty}
+        disabled={disabled}
         data-testid="button-redo"
         style={{
           ...(isMobile ? MOBILE_ACTION_BUTTON_BG : {}),

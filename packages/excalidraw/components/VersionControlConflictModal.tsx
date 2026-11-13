@@ -210,7 +210,9 @@ const describeOp = (op: LogOperation): string => {
     case "rotate-group":
       return `Rotate group by ${round((op.angle * 180) / Math.PI)}°`;
     case "restyle":
-      return `Restyle ${op.property} of ${ids}`;
+      return `Restyle ${op.changes
+        .map((change) => change.property)
+        .join(", ")} of ${ids}`;
     case "delete":
       return `Delete ${ids}`;
     case "ungroup":

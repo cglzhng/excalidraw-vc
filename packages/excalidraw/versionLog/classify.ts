@@ -498,17 +498,20 @@ const classifyEntry = (
     };
   }
 
-  for (const prop of STYLE_PROPS) {
-    if (changed.has(prop)) {
-      return {
-        kind: "restyle",
-        elementId: entry.elementId,
-        elementType: current?.type,
-        property: prop,
-        from: entry.before[prop],
-        to: entry.after[prop],
-      };
-    }
+  const styleChanges = STYLE_PROPS.filter((prop) => changed.has(prop)).map(
+    (prop) => ({
+      property: prop,
+      from: entry.before[prop],
+      to: entry.after[prop],
+    }),
+  );
+  if (styleChanges.length > 0) {
+    return {
+      kind: "restyle",
+      elementId: entry.elementId,
+      elementType: current?.type,
+      changes: styleChanges,
+    };
   }
 
   // Fallback for anything we haven't classified yet

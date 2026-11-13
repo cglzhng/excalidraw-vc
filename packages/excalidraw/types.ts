@@ -1435,6 +1435,8 @@ export type AppClassProperties = {
   versionLog: App["versionLog"];
   jumpToVersionLogMoment: App["jumpToVersionLogMoment"];
   toggleVersionLogMoment: App["toggleVersionLogMoment"];
+  undoVersionLogMoment: App["undoVersionLogMoment"];
+  redoVersionLogMoment: App["redoVersionLogMoment"];
 };
 
 export type PointerDownState = Readonly<{

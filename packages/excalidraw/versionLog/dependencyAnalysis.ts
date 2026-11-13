@@ -340,7 +340,10 @@ const getReadProperties = (
         { elementId: op.elementId, property: "height" },
       ];
     case "restyle":
-      return [{ elementId: op.elementId, property: op.property }];
+      return op.changes.map(({ property }) => ({
+        elementId: op.elementId,
+        property,
+      }));
     case "arrow-edit-points":
       return [{ elementId: op.elementId, property: "points" }];
     case "delete":
@@ -422,7 +425,10 @@ const getWrittenProperties = (
         { elementId: id, property: "height" },
       ]);
     case "restyle":
-      return [{ elementId: op.elementId, property: op.property }];
+      return op.changes.map(({ property }) => ({
+        elementId: op.elementId,
+        property,
+      }));
     case "arrow-edit-points":
       return [
         { elementId: op.elementId, property: "points" },

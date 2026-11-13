@@ -13,8 +13,10 @@
 import type { OrderedExcalidrawElement } from "@excalidraw/element/types";
 import type { Radians } from "@excalidraw/math";
 
+import { applyMatrixToPoint, inverseMatrix } from "./transform";
 import { collectElementIdsFromGroupNode } from "./types";
 
+import type { TransformMatrix } from "./transform";
 import type { LogOperation } from "./types";
 
 /**
@@ -142,6 +144,45 @@ const rotateAround = (
   const dx = px - cx;
   const dy = py - cy;
   return [cx + dx * cos - dy * sin, cy + dx * sin + dy * cos];
+};
+
+/**
+ * A resize's change matrix in the requested direction, or `null` when
+ * going backward through one that can't be inverted (a scale to zero).
+ */
+const directedTransform = (
+  transform: TransformMatrix,
+  forward: boolean,
+): TransformMatrix | null => (forward ? transform : inverseMatrix(transform));
+
+/**
+ * Where a resize puts an element of the given new size. The change
+ * matrix maps the old box onto the new one, so it carries the centre to
+ * the new centre, and `x`/`y` follow from that and the new size —
+ * rotation included, since Excalidraw rotates about the centre.
+ *
+ * Not the recorded `center` (the matrix's fixed point): that exists only
+ * when *both* axes scale. A resize along one axis fixes a whole line, so
+ * `fixedPoint` returns `null`, and placing from it would leave the
+ * element where it was, which is wrong whenever the stretch also moved
+ * its near edge (a partner alignment stretched from the far side).
+ */
+const resizedPosition = (
+  el: OrderedExcalidrawElement,
+  transform: TransformMatrix,
+  forward: boolean,
+  width: number,
+  height: number,
+): { x: number; y: number } => {
+  const m = directedTransform(transform, forward);
+  if (!m) {
+    return { x: el.x, y: el.y };
+  }
+  const [cx, cy] = applyMatrixToPoint(m, [
+    el.x + el.width / 2,
+    el.y + el.height / 2,
+  ]);
+  return { x: cx - width / 2, y: cy - height / 2 };
 };
 
 // ---------------------------------------------------------------------
@@ -281,21 +322,30 @@ const applyOpToScene = (
       const dims = forward ? op.to : op.from;
       const el = scene.get(op.elementId);
       if (el) {
-        if (op.center) {
-          const sx = forward ? op.scaleX : 1 / op.scaleX;
-          const sy = forward ? op.scaleY : 1 / op.scaleY;
-          updateElement(scene, op.elementId, {
-            x: op.center[0] + (el.x - op.center[0]) * sx,
-            y: op.center[1] + (el.y - op.center[1]) * sy,
-            width: dims.width,
-            height: dims.height,
-          });
+        let position: { x: number; y: number };
+        if (op.kind === "arrow-resize") {
+          // An arrow's `x`/`y` is its points' origin, not the corner of
+          // its box, so it's mapped as a point rather than placed from
+          // the box's centre.
+          const m = directedTransform(op.transform, forward);
+          const [x, y] = m
+            ? applyMatrixToPoint(m, [el.x, el.y])
+            : [el.x, el.y];
+          position = { x, y };
         } else {
-          updateElement(scene, op.elementId, {
-            width: dims.width,
-            height: dims.height,
-          });
+          position = resizedPosition(
+            el,
+            op.transform,
+            forward,
+            dims.width,
+            dims.height,
+          );
         }
+        updateElement(scene, op.elementId, {
+          ...position,
+          width: dims.width,
+          height: dims.height,
+        });
       }
       if (op.kind === "resize") {
         applyConsequentOps(op, scene, direction);
@@ -305,17 +355,17 @@ const applyOpToScene = (
     case "resize-group": {
       const sx = forward ? op.scaleX : 1 / op.scaleX;
       const sy = forward ? op.scaleY : 1 / op.scaleY;
-      const [cx, cy] = op.center ?? [0, 0];
       for (const id of op.elementIds) {
         const el = scene.get(id);
         if (!el) {
           continue;
         }
+        const width = el.width * sx;
+        const height = el.height * sy;
         updateElement(scene, id, {
-          x: cx + (el.x - cx) * sx,
-          y: cy + (el.y - cy) * sy,
-          width: el.width * sx,
-          height: el.height * sy,
+          ...resizedPosition(el, op.transform, forward, width, height),
+          width,
+          height,
         });
       }
       applyConsequentOps(op, scene, direction);
@@ -324,10 +374,15 @@ const applyOpToScene = (
 
     // -------------------- style --------------------
     case "restyle": {
-      const value = forward ? op.to : op.from;
-      updateElement(scene, op.elementId, {
-        [op.property]: value,
-      } as Partial<OrderedExcalidrawElement>);
+      const updates: Record<string, unknown> = {};
+      for (const change of op.changes) {
+        updates[change.property] = forward ? change.to : change.from;
+      }
+      updateElement(
+        scene,
+        op.elementId,
+        updates as Partial<OrderedExcalidrawElement>,
+      );
       break;
     }
 
