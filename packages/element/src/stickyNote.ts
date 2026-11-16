@@ -23,7 +23,11 @@ import { clamp } from "@excalidraw/math";
 import { updateBoundElements } from "./binding";
 import { newElementWith } from "./mutateElement";
 import { getPositionAfterHeightChange } from "./sizeHelpers";
-import { computeBoundTextPosition, getBoundTextElement } from "./textElement";
+import {
+  computeBoundTextPosition,
+  getBoundTextElement,
+  isAutoFitBoundText,
+} from "./textElement";
 import { measureText } from "./textMeasurements";
 import { wrapText } from "./textWrapping";
 import { isStickyNoteElement, isTextElement } from "./typeChecks";
@@ -409,6 +413,9 @@ export const getBaseFontSize = (
 ) => {
   return isStickyNoteBoundText(textElement, elementsMap)
     ? textElement.baseFontSize ?? textElement.fontSize
+    : // VERSION-LOG: the fork's auto-fit keeps its own picked size
+    isAutoFitBoundText(textElement, elementsMap)
+    ? textElement.baseFontSizeVC ?? textElement.fontSize
     : textElement.fontSize;
 };
 
@@ -417,9 +424,16 @@ export const getBaseFontSizeUpdate = (
   textElement: ExcalidrawTextElement,
   fontSize: number,
   elementsMap: ElementsMap,
-): { fontSize: number } | { baseFontSize: number } => {
+):
+  | { fontSize: number; baseFontSizeVC?: number }
+  | { baseFontSize: number } => {
   return isStickyNoteBoundText(textElement, elementsMap)
     ? { baseFontSize: normalizeStickyNoteFontSize(fontSize) }
+    : // VERSION-LOG: picking a size *is* authoring one. Writing only
+    // `fontSize` would be undone by the next fit, which measures from
+    // `baseFontSizeVC`; the fit may still shrink `fontSize` right after.
+    isAutoFitBoundText(textElement, elementsMap)
+    ? { fontSize, baseFontSizeVC: fontSize }
     : { fontSize };
 };
 

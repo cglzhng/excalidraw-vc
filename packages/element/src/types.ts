@@ -336,9 +336,12 @@ export type ExcalidrawTextElement = _ExcalidrawElementBase &
      * `fitBoundTextToContainer`). Recorded on bound text from the first
      * fit onward and never cleared — it's what the text returns to when
      * there's room, and the only one of the two the user meant. Setting
-     * the font size by hand replaces it.
+     * the font size by hand replaces it. The fork's counterpart to
+     * `baseFontSize`, which does the same for sticky note labels only —
+     * read and write either through `getBaseFontSize` /
+     * `getBaseFontSizeUpdate`, which pick the right one.
      */
-    authoredFontSize?: number;
+    baseFontSizeVC?: number;
     fontFamily: FontFamilyValues;
     /**
      * The font size the user picked, from which the layout derives `fontSize`.

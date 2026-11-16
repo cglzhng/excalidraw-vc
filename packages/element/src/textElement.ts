@@ -87,7 +87,7 @@ export const redrawTextBoundingBox = (
     width: textElement.width,
     height: textElement.height,
     fontSize: textElement.fontSize,
-    authoredFontSize: textElement.authoredFontSize,
+    baseFontSizeVC: textElement.baseFontSizeVC,
     angle: (container
       ? isArrowElement(container)
         ? 0
@@ -141,7 +141,7 @@ export const redrawTextBoundingBox = (
       );
       if (fit.kind === "refit") {
         boundTextUpdates.fontSize = fit.fontSize;
-        boundTextUpdates.authoredFontSize = fit.authoredFontSize;
+        boundTextUpdates.baseFontSizeVC = fit.baseFontSizeVC;
         boundTextUpdates.text = fit.text;
         boundTextUpdates.height = fit.height;
         if (textElement.autoResize) {
@@ -200,7 +200,7 @@ export type BoundTextFit =
       kind: "refit";
       fontSize: number;
       /** the author's size, kept whether or not it's in force */
-      authoredFontSize: number;
+      baseFontSizeVC: number;
       text: string;
       width: number;
       height: number;
@@ -209,9 +209,27 @@ export type BoundTextFit =
   | { kind: "overflows" };
 
 /**
+ * Whether `fitBoundTextToContainer` owns this text's font size, so that the
+ * size the user picked lives in `baseFontSizeVC`. Bound text only, and not
+ * an arrow's label (its box is a fraction of the arrow, not a size anyone
+ * set) or a sticky note's (upstream fits those, against `baseFontSize`).
+ */
+export const isAutoFitBoundText = (
+  textElement: ExcalidrawTextElement,
+  elementsMap: ElementsMap,
+) => {
+  const container = textElement.containerId
+    ? elementsMap.get(textElement.containerId)
+    : undefined;
+  return (
+    !!container && !isArrowElement(container) && !isStickyNoteElement(container)
+  );
+};
+
+/**
  * Fit a bound text to its container by font size: shrink it when the box
  * is too small for it, and grow it back — up to the size its author
- * chose, held in `authoredFontSize` — when there's room again.
+ * chose, held in `baseFontSizeVC` — when there's room again.
  *
  * Excalidraw's default is the opposite: a bound text that outgrows its
  * container makes the *container* bigger, whether the text grew because
@@ -256,13 +274,13 @@ export const fitBoundTextToContainer = (
   // It is recorded permanently, not just while a shrink is in force: it
   // is the size the user actually chose, and `fontSize` is a derived
   // value that any container edit may overwrite.
-  const authored = textElement.authoredFontSize ?? textElement.fontSize;
+  const authored = textElement.baseFontSizeVC ?? textElement.fontSize;
   const atAuthored = layoutAt(authored);
   if (fits(atAuthored)) {
     return textElement.fontSize === authored &&
-      textElement.authoredFontSize === authored
+      textElement.baseFontSizeVC === authored
       ? { kind: "fits" }
-      : { kind: "refit", authoredFontSize: authored, ...atAuthored };
+      : { kind: "refit", baseFontSizeVC: authored, ...atAuthored };
   }
 
   // Even the smallest font we allow can overflow — a container narrower
@@ -288,7 +306,7 @@ export const fitBoundTextToContainer = (
       high = mid;
     }
   }
-  return { kind: "refit", authoredFontSize: authored, ...best };
+  return { kind: "refit", baseFontSizeVC: authored, ...best };
 };
 
 export const handleBindTextResize = (
@@ -325,7 +343,7 @@ export const handleBindTextResize = (
     let nextHeight = textElement.height;
     let nextWidth = textElement.width;
     let nextFontSize = textElement.fontSize;
-    let nextAuthoredFontSize = textElement.authoredFontSize;
+    let nextBaseFontSizeVC = textElement.baseFontSizeVC;
     const maxWidth = getBoundTextMaxWidth(container, textElement);
     const maxHeight = getBoundTextMaxHeight(container, textElement);
     let containerHeight = container.height;
@@ -364,7 +382,7 @@ export const handleBindTextResize = (
       );
       if (fit.kind === "refit") {
         nextFontSize = fit.fontSize;
-        nextAuthoredFontSize = fit.authoredFontSize;
+        nextBaseFontSizeVC = fit.baseFontSizeVC;
         text = fit.text;
         nextWidth = fit.width;
         nextHeight = fit.height;
@@ -404,7 +422,7 @@ export const handleBindTextResize = (
       width: nextWidth,
       height: nextHeight,
       fontSize: nextFontSize,
-      authoredFontSize: nextAuthoredFontSize,
+      baseFontSizeVC: nextBaseFontSizeVC,
     });
 
     if (!isArrowElement(container)) {

@@ -590,7 +590,7 @@ export const refreshTextDimensions = (
   // it. Arrow labels keep the old behaviour: their box is a fraction of
   // the arrow, not a size the user set. Sticky notes run their own fit
   // (`updateStickyNoteLayout`, against `baseFontSize`).
-  let { fontSize, authoredFontSize } = textElement;
+  let { fontSize, baseFontSizeVC } = textElement;
   if (
     container &&
     !isArrowElement(container) &&
@@ -603,7 +603,7 @@ export const refreshTextDimensions = (
     );
     if (fit.kind === "refit") {
       fontSize = fit.fontSize;
-      authoredFontSize = fit.authoredFontSize;
+      baseFontSizeVC = fit.baseFontSizeVC;
     }
   }
   const refitted = { ...textElement, fontSize };
@@ -623,7 +623,7 @@ export const refreshTextDimensions = (
     undefined,
     renderEnvironment,
   );
-  return { text, fontSize, authoredFontSize, ...dimensions };
+  return { text, fontSize, baseFontSizeVC, ...dimensions };
 };
 
 export const newFreeDrawElement = (

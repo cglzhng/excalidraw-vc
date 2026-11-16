@@ -571,21 +571,21 @@ const hasRealProperties = (map: LogPropertyMap): boolean =>
  *
  * `fontSize` on a bound text is derived: auto-fitting rewrites it
  * whenever the container is resized or the text is typed into, so on its
- * own it reports a size nobody picked. `authoredFontSize` is the size
+ * own it reports a size nobody picked. `baseFontSizeVC` is the size
  * that was picked. Reporting the authored value *under the name*
  * `fontSize` keeps one font-size row in the panel, reading in the units
  * the user thinks in, and leaves the derived value out entirely.
  *
  * A change to `fontSize` alone is pure auto-fit and disappears.
  */
-const foldAuthoredFontSize = (
+const foldBaseFontSizeVC = (
   before: LogPropertyMap,
   after: LogPropertyMap,
 ) => {
-  const authoredBefore = before.authoredFontSize;
-  const authoredAfter = after.authoredFontSize;
-  delete before.authoredFontSize;
-  delete after.authoredFontSize;
+  const authoredBefore = before.baseFontSizeVC;
+  const authoredAfter = after.baseFontSizeVC;
+  delete before.baseFontSizeVC;
+  delete after.baseFontSizeVC;
 
   if (authoredBefore === authoredAfter) {
     // the authored size held; whatever `fontSize` did was auto-fit
@@ -630,15 +630,15 @@ const stripPhantomLinkChanges = (
     // Only bound text has an authored size to fold to; a plain text's
     // `fontSize` is the authored one and passes through untouched.
     const element = changedElements[entry.elementId] as
-      | { authoredFontSize?: number }
+      | { baseFontSizeVC?: number }
       | undefined;
     const fontSizeFolded =
       entry.type === "update" &&
-      element?.authoredFontSize !== undefined &&
+      element?.baseFontSizeVC !== undefined &&
       ("fontSize" in entry.before ||
         "fontSize" in entry.after ||
-        "authoredFontSize" in entry.before ||
-        "authoredFontSize" in entry.after);
+        "baseFontSizeVC" in entry.before ||
+        "baseFontSizeVC" in entry.after);
 
     if (phantom.length === 0 && !fontSizeFolded) {
       out.push(entry);
@@ -652,7 +652,7 @@ const stripPhantomLinkChanges = (
       delete after[field];
     }
     if (fontSizeFolded) {
-      foldAuthoredFontSize(before, after);
+      foldBaseFontSizeVC(before, after);
     }
     if (hasRealProperties(before) || hasRealProperties(after)) {
       out.push({ ...entry, before, after });
