@@ -103,6 +103,18 @@ export const classifyEntries = (
   const extracted = extractReorder(entries);
   entries = extracted.entries;
 
+  // Pre-pass 0c: drop updates left carrying only bookkeeping. The usual
+  // one is a bindable's `boundElements`, rewritten because an arrow bound
+  // to it or a label was put in it — the arrow's or the label's own entry
+  // is the change, and replay derives the list back from those
+  // (`syncBoundElements` in `replay.ts`).
+  entries = entries.filter(
+    (entry) =>
+      entry.type !== "update" ||
+      hasRealProperties(entry.before) ||
+      hasRealProperties(entry.after),
+  );
+
   // Pre-pass A: identify entries whose geometric change is purely a
   // consequence of something else being transformed in the same moment
   // — a bound arrow following its bindable (arrow consequences), or a

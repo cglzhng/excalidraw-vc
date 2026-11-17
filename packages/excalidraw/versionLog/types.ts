@@ -680,6 +680,11 @@ export interface PendingConflict {
   elementType?: string;
   /** Ops that couldn't apply because `referentId` is missing. */
   affectedOps: LogOperation[];
-  /** Live target ids the user can remap to (same kind). */
+  /**
+   * Live target ids the user can remap to: groups for a group, and for
+   * an element whatever every affected op can carry over to — of any
+   * type, unless an op's payload only describes one kind of geometry
+   * (`canStandIn` in `replay.ts`).
+   */
   candidates: string[];
 }

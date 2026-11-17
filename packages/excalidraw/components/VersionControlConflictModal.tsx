@@ -5,7 +5,7 @@
  * ops pointing at a now-missing element or group. The user resolves
  * each missing referent independently — Skip (drop every op that
  * touched it) or Remap (apply those ops to a different live referent
- * of the same kind).
+ * that can carry them — see `PendingConflict.candidates`).
  *
  * Submitting writes one `Remap` per resolved referent into
  * `versionLog.remaps` and asks the host to re-run the replay.
@@ -15,6 +15,7 @@
 import React, { useMemo, useState } from "react";
 
 import { Dialog } from "./Dialog";
+import { useShortIdOf } from "./VersionLogMomentCard";
 import {
   getOperationElementIds,
   isCenteringAlignmentOp,
@@ -41,6 +42,11 @@ export interface ConflictResolutionModalProps {
 export const ConflictResolutionModal: React.FC<
   ConflictResolutionModalProps
 > = ({ conflicts, onSubmit, onCancel }) => {
+  // The names the panel and the canvas use ("R3"), so a candidate here
+  // can be found there. Elements only — groups have no short id.
+  const shortIdOf = useShortIdOf();
+  const nameOf = (id: string) => shortIdOf(id) ?? truncateId(id);
+
   // Default every referent to "skip" — matches the prior behaviour
   // (silent skip on conflict). Submit forwards each decision verbatim.
   const [decisions, setDecisions] = useState<Map<string, ConflictDecision>>(
@@ -88,6 +94,8 @@ export const ConflictResolutionModal: React.FC<
         {conflicts.map((c) => (
           <ConflictSection
             key={c.referentId}
+            shortIdOf={shortIdOf}
+            nameOf={nameOf}
             conflict={c}
             decision={decisions.get(c.referentId) ?? { kind: "skip" }}
             onChange={(d) => setDecision(c.referentId, d)}
@@ -116,11 +124,18 @@ const ConflictSection: React.FC<{
   conflict: PendingConflict;
   decision: ConflictDecision;
   onChange: (decision: ConflictDecision) => void;
-}> = ({ conflict, decision, onChange }) => {
+  shortIdOf: (id: string) => string | undefined;
+  nameOf: (id: string) => string;
+}> = ({ conflict, decision, onChange, shortIdOf, nameOf }) => {
+  // A short id already says what kind of element it is ("R3"); only a
+  // truncated raw id needs the type beside it.
   const referentLabel =
     conflict.referentKind === "group"
-      ? `group ${shortId(conflict.referentId)}`
-      : `${conflict.elementType ?? "element"} ${shortId(conflict.referentId)}`;
+      ? `group ${truncateId(conflict.referentId)}`
+      : shortIdOf(conflict.referentId) ??
+        `${conflict.elementType ?? "element"} ${truncateId(
+          conflict.referentId,
+        )}`;
 
   // If the user selects Remap but no candidate is chosen yet, default
   // to the first candidate so submit always has a target.
@@ -136,7 +151,7 @@ const ConflictSection: React.FC<{
       </div>
       <ul className="ConflictResolutionModal__ops">
         {conflict.affectedOps.map((op, i) => (
-          <li key={i}>{describeOp(op)}</li>
+          <li key={i}>{describeOp(op, nameOf)}</li>
         ))}
       </ul>
       <div className="ConflictResolutionModal__choice">
@@ -178,7 +193,7 @@ const ConflictSection: React.FC<{
             ) : (
               conflict.candidates.map((id) => (
                 <option key={id} value={id}>
-                  {shortId(id)}
+                  {nameOf(id)}
                 </option>
               ))
             )}
@@ -189,11 +204,14 @@ const ConflictSection: React.FC<{
   );
 };
 
-const shortId = (id: string): string =>
+const truncateId = (id: string): string =>
   id.length <= 10 ? id : `${id.slice(0, 8)}…`;
 
-const describeOp = (op: LogOperation): string => {
-  const ids = getOperationElementIds(op).map(shortId).join(", ");
+const describeOp = (
+  op: LogOperation,
+  nameOf: (id: string) => string,
+): string => {
+  const ids = getOperationElementIds(op).map(nameOf).join(", ");
   switch (op.kind) {
     case "move":
       return `Move ${ids} by (${round(op.dx)}, ${round(op.dy)})`;
@@ -216,7 +234,7 @@ const describeOp = (op: LogOperation): string => {
     case "delete":
       return `Delete ${ids}`;
     case "ungroup":
-      return `Ungroup ${shortId(op.group.id)}`;
+      return `Ungroup ${truncateId(op.group.id)}`;
     case "arrow-edit-points":
       return `Edit arrow ${ids} points`;
     case "arrow-bind":

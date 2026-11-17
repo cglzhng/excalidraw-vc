@@ -10,11 +10,17 @@
  *
  */
 
+import { isElbowArrow } from "@excalidraw/element";
+
 import type { OrderedExcalidrawElement } from "@excalidraw/element/types";
 import type { Radians } from "@excalidraw/math";
 
+import { followBindings } from "./followBindings";
 import { applyMatrixToPoint, inverseMatrix } from "./transform";
-import { collectElementIdsFromGroupNode } from "./types";
+import {
+  collectElementIdsFromGroupNode,
+  getOperationElementIds,
+} from "./types";
 
 import type { TransformMatrix } from "./transform";
 import type { ArrowGeometryChange, LogOperation } from "./types";
@@ -30,16 +36,27 @@ export type ApplyDirection = "forward" | "backward";
 /**
  * Apply every op in `ops` to `scene` in the given direction.
  * Mutates `scene` in place.
+ *
+ * After each op, the arrows bound to whatever it changed are re-placed
+ * from their bindings (`followBindings`). Returns the ids of the arrows
+ * that moved that way — no op names an arrow whose end only follows a
+ * remapped or skipped change, so a caller tracking what it touched has
+ * to be told.
  */
 export const applyOpsToScene = (
   ops: readonly LogOperation[],
   scene: SceneSnapshot,
   direction: ApplyDirection,
-): void => {
+): string[] => {
   const iter = direction === "backward" ? [...ops].reverse() : ops;
+  const followed: string[] = [];
   for (const op of iter) {
     applyOpToScene(op, scene, direction);
+    followed.push(
+      ...followBindings(scene, new Set(getOperationElementIds(op))),
+    );
   }
+  return followed;
 };
 
 // ---------------------------------------------------------------------
@@ -235,7 +252,23 @@ const applyConsequentOps = (
   // the same moment's arrow entries — typically `arrow-edit-points`
   // / `move`). Replay them through the shared engine so they invert
   // correctly for `backward` and never drift from the arrow handlers.
-  applyOpsToScene(op.consequentOps, scene, direction);
+  //
+  // Except a bound arrow's reshape, which recorded absolute points:
+  // `followBindings` derives those from where the element now is. A
+  // `move` stays — the arrow translating whole is a delta, and it is what
+  // carries the midpoints of an arrow whose two ends both moved.
+  //
+  // Applied without a follow pass of their own: their ids are part of the
+  // parent's, so the pass after the parent covers them.
+  const replayed = op.consequentOps.filter(
+    (c) =>
+      c.consequenceReason?.kind !== "binding" ||
+      c.kind === "move" ||
+      getOperationElementIds(c).some((id) => isElbowArrow(scene.get(id))),
+  );
+  for (const c of direction === "backward" ? replayed.reverse() : replayed) {
+    applyOpToScene(c, scene, direction);
+  }
 };
 
 const applyOpToScene = (
@@ -342,6 +375,7 @@ const applyOpToScene = (
       const el = scene.get(op.elementId);
       if (el) {
         let position: { x: number; y: number };
+        let points: { points: [number, number][] } | undefined;
         if (op.kind === "arrow-resize") {
           // An arrow's `x`/`y` is its points' origin, not the corner of
           // its box, so it's mapped as a point rather than placed from
@@ -351,6 +385,18 @@ const applyOpToScene = (
             ? applyMatrixToPoint(m, [el.x, el.y])
             : [el.x, el.y];
           position = { x, y };
+          // The points are the shape and width / height only their
+          // extent, so they scale by as much as the extent changes —
+          // about the origin, which is where the matrix just put it.
+          // Measured off the element rather than the op's factors, so a
+          // stand-in of another size ends up consistent too.
+          if ("points" in el) {
+            const sx = el.width === 0 ? 1 : dims.width / el.width;
+            const sy = el.height === 0 ? 1 : dims.height / el.height;
+            points = {
+              points: el.points.map(([px, py]) => [px * sx, py * sy]),
+            };
+          }
         } else {
           position = resizedPosition(
             el,
@@ -362,9 +408,10 @@ const applyOpToScene = (
         }
         updateElement(scene, op.elementId, {
           ...position,
+          ...points,
           width: dims.width,
           height: dims.height,
-        });
+        } as Partial<OrderedExcalidrawElement>);
       }
       if (op.kind === "resize") {
         applyConsequentOps(op, scene, direction);

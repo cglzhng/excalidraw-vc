@@ -155,8 +155,13 @@ runs once, after the solve, so that second hop no longer happens.
 
 ## Version control
 
-**Replay does not run the solvers.** `applyOps.ts` replays operations against
-a scene snapshot without invoking Excalidraw's binding or alignment
-propagators; dependent geometry is reproduced by the recorded
-`consequentOps` instead. An op whose consequences weren't captured at record
-time will not grow them at replay time.
+**Replay does not run the alignment solver.** Alignment followers are
+reproduced by the recorded `consequentOps`, so a follow recorded while a link
+held still replays after the Moment that locked it is skipped, and an op whose
+followers weren't captured at record time will not grow them at replay time.
+Bound arrow ends are the exception: they are re-placed from their bindings
+after every op (`followBindings.ts`), with upstream's `updateBoundPoint`, so
+they land wherever the element ended up — a skip or a remap included. Elbow
+arrows are left out, since moving one needs the router, and replay their
+recorded follows; after a skip or remap those end where the element was when
+the follow was recorded.

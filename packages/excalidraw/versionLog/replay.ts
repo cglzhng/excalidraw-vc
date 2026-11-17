@@ -22,7 +22,18 @@
  * INSTEAD of committing the snapshot.
  */
 
-import { orderByFractionalIndex } from "@excalidraw/element";
+import {
+  isAlignable,
+  isArrowElement,
+  isBindableElement,
+  isBoundToContainer,
+  isFreeDrawElement,
+  isLinearElement,
+  isTextElement,
+  orderByFractionalIndex,
+} from "@excalidraw/element";
+
+import type { BoundElement, ExcalidrawElement } from "@excalidraw/element/types";
 
 import { applyOpsToScene } from "./applyOps";
 import { applyRemapsToOp } from "./remap";
@@ -104,7 +115,18 @@ export const replayActiveOps = (log: VersionLog): ReplayResult | null => {
       // happen.
       continue;
     }
-    applyMomentTracked(moment, snapshot, remaps, skipped, conflictMap);
+    applyMomentTracked(
+      moment,
+      snapshot,
+      remaps,
+      skipped,
+      conflictMap,
+      inPlay,
+    );
+  }
+
+  for (const id of syncBoundElements(snapshot)) {
+    inPlay.add(id);
   }
 
   // Stamp the in-play elements with a version that dominates the store's
@@ -143,12 +165,72 @@ export const replayActiveOps = (log: VersionLog): ReplayResult | null => {
 
 // ---------------------------------------------------------------------
 
+/**
+ * Rebuild every element's `boundElements` from the relations it is the
+ * reverse of: each live arrow's `startBinding` / `endBinding`, and each
+ * live label's `containerId`. The log never records the list — an entry
+ * carrying only it is bookkeeping (`classify.ts`), since the arrow's or
+ * the label's own change is what the user did — so after a replay it
+ * would say whatever the baseline or an element's creation left in it.
+ * Upstream reads it to find a container's label and the arrows to drag
+ * along with an element, so a stale list detaches both.
+ *
+ * Rewrites only lists whose membership differs, keeping the existing
+ * order where it does, and returns their ids so the replay stamps them.
+ */
+const syncBoundElements = (snapshot: SceneSnapshot): string[] => {
+  const derived = new Map<string, BoundElement[]>();
+  const add = (ownerId: string, bound: BoundElement) => {
+    const list = derived.get(ownerId) ?? [];
+    if (!list.some((b) => b.id === bound.id)) {
+      list.push(bound);
+    }
+    derived.set(ownerId, list);
+  };
+  for (const el of snapshot.values()) {
+    if (el.isDeleted) {
+      continue;
+    }
+    if (isArrowElement(el)) {
+      for (const binding of [el.startBinding, el.endBinding]) {
+        if (binding) {
+          add(binding.elementId, { id: el.id, type: "arrow" });
+        }
+      }
+    } else if (isTextElement(el) && el.containerId) {
+      add(el.containerId, { id: el.id, type: "text" });
+    }
+  }
+
+  const changed: string[] = [];
+  for (const el of snapshot.values()) {
+    const current = el.boundElements ?? [];
+    const next = derived.get(el.id) ?? [];
+    const same =
+      current.length === next.length &&
+      next.every((b) => current.some((c) => c.id === b.id && c.type === b.type));
+    if (same) {
+      continue;
+    }
+    const kept = current.filter((c) => next.some((b) => b.id === c.id));
+    const added = next.filter((b) => !current.some((c) => c.id === b.id));
+    const merged = [...kept, ...added];
+    snapshot.set(el.id, {
+      ...el,
+      boundElements: merged.length > 0 ? merged : null,
+    });
+    changed.push(el.id);
+  }
+  return changed;
+};
+
 const applyMomentTracked = (
   moment: LogMoment,
   snapshot: SceneSnapshot,
   remaps: ReadonlyMap<string, import("./types").Remap>,
   skipped: Set<LogOperation>,
   conflictMap: Map<string, PendingConflict>,
+  inPlay: Set<string>,
 ): void => {
   for (const op of moment.operations) {
     const remap = applyRemapsToOp(op, remaps);
@@ -177,8 +259,13 @@ const applyMomentTracked = (
       continue;
     }
     // `applyOpsToScene` reverses ops for "backward" but applies in
-    // order for "forward"; single-op call is the same either way.
-    applyOpsToScene([finalOp], snapshot, "forward");
+    // order for "forward"; single-op call is the same either way. A
+    // remapped bind needs nothing extra: its recorded geometry ends where
+    // the original element was, and the follow pass re-places it on the
+    // new one.
+    for (const id of applyOpsToScene([finalOp], snapshot, "forward")) {
+      inPlay.add(id);
+    }
   }
 };
 
@@ -233,53 +320,90 @@ const recordConflict = (
     // distinct missing bound-to elements would otherwise double-list).
     if (!existing.affectedOps.includes(op)) {
       existing.affectedOps.push(op);
+      // one stand-in takes every op in the bucket, so it has to suit
+      // each of them
+      if (ref.kind === "element") {
+        existing.candidates = existing.candidates.filter((id) =>
+          canStandIn(op, ref.id, snapshot.get(id)),
+        );
+      }
     }
     return;
   }
-  // Suppress remap candidates when the missing referent is an arrow's
-  // BOUND-TO element (not the arrow itself). Arrow-binding rebinds
-  // aren't yet supported by `applyRemapsToOp`, so offering a target
-  // here would store a remap that never actually rewrites the
-  // binding — the conflict would re-fire on every replay. Forcing
-  // Skip-only avoids the loop; proper rebind support is tracked
-  // separately.
-  const isArrowBoundToConflict =
-    (op.kind === "arrow-bind" || op.kind === "arrow-move-binding") &&
-    ref.kind === "element" &&
-    ref.id !== op.elementId;
 
   conflictMap.set(ref.id, {
     referentKind: ref.kind,
     referentId: ref.id,
     elementType: ref.elementType,
     affectedOps: [op],
-    candidates: isArrowBoundToConflict
-      ? []
-      : collectCandidates(ref.kind, ref.id, ref.elementType, snapshot),
+    candidates:
+      ref.kind === "element"
+        ? Array.from(snapshot.values())
+            .filter((el) => canStandIn(op, ref.id, el))
+            .map((el) => el.id)
+        : collectGroupCandidates(ref.id, snapshot),
   });
 };
 
-const collectCandidates = (
-  kind: "element" | "group",
+/**
+ * Whether `el` could take the place of the missing element `refId` in
+ * `op`. Only what exists at this point in the replay is asked: an
+ * element drawn later in the log isn't there yet to stand in.
+ *
+ * Most ops carry over to any kind of element — a move is a
+ * displacement, a restyle a set of style values, a rotation an angle.
+ * The exceptions are payloads that only describe one kind of geometry.
+ */
+const canStandIn = (
+  op: LogOperation,
+  refId: string,
+  el: ExcalidrawElement | undefined,
+): boolean => {
+  if (!el || el.isDeleted || el.id === refId) {
+    return false;
+  }
+  switch (op.kind) {
+    case "arrow-bind":
+    case "arrow-move-binding":
+      // the binding lives on the arrow; what it binds to only has to be
+      // something an arrow can bind to, of any type
+      return refId === op.elementId
+        ? isArrowElement(el)
+        : el.id !== op.elementId &&
+            isBindableElement(el) &&
+            !isBoundToContainer(el);
+    case "resize":
+      // Writes width and height alone. That is the whole shape only for
+      // a box: a line's or a freedraw's points, or a text's wrapped
+      // content, would be left disagreeing with its new size.
+      return (
+        !isLinearElement(el) &&
+        !isFreeDrawElement(el) &&
+        !isTextElement(el)
+      );
+    case "arrow-resize":
+    case "arrow-edit-points":
+      // points are the shape, so only something made of points
+      return isLinearElement(el);
+    case "alignment":
+      // a link is between two boxes' edges; the engine's own rule
+      return isAlignable(el);
+    case "raw":
+      // an arbitrary property map is only safe on its own kind
+      return el.type === op.entry.elementType;
+    default:
+      // A container's label is never placed or styled on its own: it
+      // follows its container, which would undo anything written to it.
+      return !isBoundToContainer(el);
+  }
+};
+
+const collectGroupCandidates = (
   missingId: string,
-  elementType: string | undefined,
   snapshot: SceneSnapshot,
 ): string[] => {
-  if (kind === "element") {
-    const ids: string[] = [];
-    for (const el of snapshot.values()) {
-      if (el.isDeleted || el.id === missingId) {
-        continue;
-      }
-      if (elementType && el.type !== elementType) {
-        continue;
-      }
-      ids.push(el.id);
-    }
-    return ids;
-  }
-  // group: collect every unique gid currently borne by some live
-  // element, minus the missing one.
+  // every unique gid currently borne by some live element, minus the
+  // missing one
   const gids = new Set<string>();
   for (const el of snapshot.values()) {
     if (el.isDeleted) {

@@ -12,10 +12,9 @@
  *   - `{ status: "ok", op }`        — apply the (possibly-rewritten) op
  *   - `{ status: "skip" }`          — explicitly skipped by the user
  *
- * v1 supports element and group remaps. Arrow-binding rebinds (which
- * would rewrite `startBinding.elementId` / `endBinding.elementId`)
- * are NOT handled yet — arrow ops have other open bugs and we'd want
- * to land those first.
+ * v1 supports element and group remaps, including the element an
+ * arrow's end is bound to (`startBinding.elementId` /
+ * `endBinding.elementId`).
  */
 
 import type {
@@ -36,8 +35,9 @@ export type RemapResult =
  * `ungroup` whose target group has been remapped switches to the
  * remapped group too. `alignment` rewrites both its members and the
  * partner ids inside its links, dropping (rather than skipping the whole
- * op) any referent the user chose to skip. `group` (create),
- * `reorder` and `arrow-*` are left unchanged in v1.
+ * op) any referent the user chose to skip. `arrow-bind` and
+ * `arrow-move-binding` rewrite the arrow and the element each end is
+ * bound to. `group` (create) and `reorder` are left unchanged in v1.
  */
 export const applyRemapsToOp = (
   op: LogOperation,
@@ -51,8 +51,6 @@ export const applyRemapsToOp = (
     case "rotate":
     case "restyle":
     case "arrow-edit-points":
-    case "arrow-bind":
-    case "arrow-move-binding":
     case "arrow-resize":
     case "arrow-rotate":
     case "alignment-anchor":
@@ -73,6 +71,80 @@ export const applyRemapsToOp = (
         };
       }
       return { status: "ok", op: { ...op, elementId: remap.to } };
+    }
+
+    case "arrow-bind":
+    case "arrow-move-binding": {
+      // Two kinds of referent: the arrow itself, and the element each end
+      // is bound to. Only the binding's `elementId` changes; the replay
+      // re-places a rebound end on its new element (`reanchorReboundEnds`),
+      // since the recorded geometry ends at the old one.
+      const resolve = (id: string): string | null | undefined => {
+        const remap = remaps.get(id);
+        return remap?.kind === "element" ? remap.to : undefined;
+      };
+      const sides = [op.start, op.end];
+      const touched =
+        remaps.has(op.elementId) ||
+        sides.some(
+          (side) =>
+            (side?.before && remaps.has(side.before.elementId)) ||
+            (side?.after && remaps.has(side.after.elementId)),
+        );
+      if (!touched) {
+        return { status: "ok", op };
+      }
+
+      const arrowId = resolve(op.elementId);
+      if (arrowId === null) {
+        return { status: "skip" };
+      }
+      // A skipped element the forward apply would bind to skips the op,
+      // as for any single-element op: an end bound to nothing the user
+      // chose is not the bind that was recorded. One it would only
+      // *unbind from* doesn't matter — `before` is never written forward.
+      if (
+        sides.some((side) => side?.after && resolve(side.after.elementId) === null)
+      ) {
+        return { status: "skip" };
+      }
+      const rebind = <B extends { elementId: string } | null>(binding: B): B => {
+        const to = binding && resolve(binding.elementId);
+        return to ? ({ ...binding, elementId: to } as B) : binding;
+      };
+
+      const next: LogOperation =
+        op.kind === "arrow-bind"
+          ? {
+              ...op,
+              start: op.start && {
+                before: rebind(op.start.before),
+                after: rebind(op.start.after),
+              },
+              end: op.end && {
+                before: rebind(op.end.before),
+                after: rebind(op.end.after),
+              },
+            }
+          : {
+              ...op,
+              start: op.start && {
+                boundElementId:
+                  resolve(op.start.boundElementId) ?? op.start.boundElementId,
+                before: rebind(op.start.before),
+                after: rebind(op.start.after),
+              },
+              end: op.end && {
+                boundElementId:
+                  resolve(op.end.boundElementId) ?? op.end.boundElementId,
+                before: rebind(op.end.before),
+                after: rebind(op.end.after),
+              },
+            };
+      return {
+        status: "ok",
+        op: arrowId ? { ...next, elementId: arrowId } : next,
+      };
     }
 
     case "move-group":

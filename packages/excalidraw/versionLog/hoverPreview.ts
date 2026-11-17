@@ -125,8 +125,8 @@ export const computeHoverPreview = (
       // consequence ops (e.g. a bound arrow that followed this move), so
       // the ghost shows the arrow alongside the element it's bound to.
       // The opposite-side geometry for those arrows is already in the
-      // snapshot — `applyOps` replays `consequentOps` when it applies the
-      // parent op.
+      // snapshot — `applyOps` re-places bound arrows after each op it
+      // applies.
       const ids = getOperationElementIds(op);
       const ghosts: OrderedExcalidrawElement[] = [];
       for (const id of ids) {
