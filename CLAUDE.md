@@ -58,6 +58,12 @@ Key files:
 
 **Adding a `LogOperation` kind** requires updating every exhaustive `switch (op.kind)` / `Record<LogOperation["kind"], …>`: `getOperationElementIds` + `OP_COLOR` map, `applyOpToScene`, `getWrittenProperties`, `applyRemapsToOp`, `findMissingReferents`, `computeHoverPreview`, `renderOpContent`, and the conflict modal's `describeOp`.
 
+## Overlap-aware move up / down
+
+Upstream's "move up" / "move down" step one element (or group, frame, container-with-text) at a time whether or not it overlaps, so most presses change the stacking order without changing anything on screen — and the log would record each one. The fork's `getOverlappingTargetIndex` (`packages/element/src/zindex.ts`) keeps stepping past units the selection doesn't overlap and lands just past the first one it does; with nothing overlapping in that direction the press does nothing, so no increment and no Moment. Overlap is axis-aligned bounds, so boxes that cross with nothing drawn in the crossing (two diagonal lines) still count. Bring to front / send to back are unchanged: "front" means above everything, including what the element may overlap later.
+
+The log records stacking order as a `reorder` op holding each moved element's fractional `index` before and after. `extractReorder` (`classify.ts`) lifts every `index` change in an increment into one, whatever gesture made it; one that rides along with another op — binding lifts an arrow above its element, grouping gathers the members — is `incidental` and gets no row of its own. Ops write the key only, and `replayActiveOps` orders the snapshot by `index` before returning it, since the commit's `syncInvalidIndices` treats array order as the truth.
+
 ## Bound-text auto-fit
 
 Upstream grows a *container* when its bound text no longer fits — whether the text grew (typing) or the box shrank (resize). That turns a one-axis resize into a two-axis one and lets a label overrule a size the user set. This fork inverts it: the **text** is refitted instead, by font size.

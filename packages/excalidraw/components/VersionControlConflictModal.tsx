@@ -237,6 +237,7 @@ const describeOp = (op: LogOperation): string => {
       return `${op.anchored ? "Anchor" : "Un-Anchor"} ${ids}`;
     case "create":
     case "group":
+    case "reorder":
       // Shouldn't appear in conflicts (no missing referent), but
       // included for exhaustiveness.
       return op.kind;

@@ -2,6 +2,7 @@ import type {
   ElementAlignment,
   ElementGapAlignment,
   ExcalidrawElement,
+  FractionalIndex,
   OrderedExcalidrawElement,
 } from "@excalidraw/element/types";
 
@@ -20,6 +21,7 @@ import { buildGroupNodeFromEntries, getParentGroupId } from "./groupTree";
 
 import type {
   ArrowBinding,
+  ArrowGeometryChange,
   ConsequenceReason,
   ConsequentOp,
   LogEntry,
@@ -36,6 +38,9 @@ import type { TransformMatrix } from "./transform";
  * `boundElements` is included here because upstream's emit of this
  * field is unreliable. Instead, we use the `endBinding / startBinding` fields
  * from the arrow element itself to determine if it was changed.
+ *
+ * `index` is read exactly once, by `extractReorder`, which lifts every
+ * stacking-order change into its own op before the rest run.
  *
  * `shortId` is a name the scene hands the element on the way in (see
  * `shortId.ts`), not something the user did — an increment carrying only
@@ -92,6 +97,11 @@ export const classifyEntries = (
   // than per-classifier, so nothing downstream — including the `raw`
   // op's property list in the panel — ever sees them.
   entries = stripPhantomLinkChanges(entries, changedElements);
+
+  // Pre-pass 0b: take every stacking-order change out into one
+  // `reorder` op, whatever else its entry changed (see `extractReorder`).
+  const extracted = extractReorder(entries);
+  entries = extracted.entries;
 
   // Pre-pass A: identify entries whose geometric change is purely a
   // consequence of something else being transformed in the same moment
@@ -214,6 +224,16 @@ export const classifyEntries = (
     changedElements,
     consequenceReasons,
   );
+
+  // Last, so it replays after whatever it rode along with, and so
+  // "anything else in this Moment?" has its answer.
+  if (extracted.reorder) {
+    finalOps.push({
+      kind: "reorder",
+      ...extracted.reorder,
+      incidental: finalOps.length > 0,
+    });
+  }
 
   // [version-log] debug: dump the classified operations so the shape of
   // each classification can be inspected alongside the raw delta log.
@@ -659,6 +679,52 @@ const stripPhantomLinkChanges = (
     }
   }
   return out;
+};
+
+/**
+ * Take every update entry's `index` change out into one `reorder`
+ * payload, and drop the entries left with nothing else. To every other
+ * classifier `index` is bookkeeping (`TRACKING_PROPS`), so the gesture
+ * the rest of an entry describes classifies exactly as it would have;
+ * this is the one place the stacking order is read.
+ *
+ * `create` entries keep theirs: there it is the new element's starting
+ * position, part of the values `create` replays.
+ */
+const extractReorder = (
+  entries: readonly LogEntry[],
+): {
+  entries: readonly LogEntry[];
+  reorder: Pick<
+    Extract<LogOperation, { kind: "reorder" }>,
+    "elementIds" | "from" | "to"
+  > | null;
+} => {
+  const out: LogEntry[] = [];
+  const elementIds: string[] = [];
+  const from: Record<string, FractionalIndex | null> = {};
+  const to: Record<string, FractionalIndex | null> = {};
+  for (const entry of entries) {
+    if (
+      entry.type !== "update" ||
+      (!("index" in entry.before) && !("index" in entry.after))
+    ) {
+      out.push(entry);
+      continue;
+    }
+    elementIds.push(entry.elementId);
+    from[entry.elementId] =
+      (entry.before.index as FractionalIndex | undefined) ?? null;
+    to[entry.elementId] =
+      (entry.after.index as FractionalIndex | undefined) ?? null;
+    if (hasRealProperties(entry.before) || hasRealProperties(entry.after)) {
+      out.push(entry);
+    }
+  }
+  return {
+    entries: out,
+    reorder: elementIds.length > 0 ? { elementIds, from, to } : null,
+  };
 };
 
 const linkArraysEqual = <T>(
@@ -1342,6 +1408,35 @@ const pointsAreScaledBy = (
 };
 
 /**
+ * An arrow entry's own geometry change. The store's delta carries only
+ * the keys that changed, so an unchanged `points` or origin axis is
+ * read off `current` (the post-increment element), where it holds on
+ * both sides.
+ */
+const arrowGeometryChange = (
+  entry: LogEntry,
+  current: OrderedExcalidrawElement,
+  hasPosChange: boolean,
+): ArrowGeometryChange => {
+  const currentPoints = (current as { points?: readonly ArrowPoint[] }).points;
+  const points = (side: LogPropertyMap) =>
+    (side.points as readonly ArrowPoint[] | undefined) ?? currentPoints ?? [];
+  const origin = (side: LogPropertyMap): [number, number] | null =>
+    hasPosChange
+      ? [
+          "x" in side ? (side.x as number) : current.x,
+          "y" in side ? (side.y as number) : current.y,
+        ]
+      : null;
+  return {
+    before: points(entry.before),
+    after: points(entry.after),
+    beforeOrigin: origin(entry.before),
+    afterOrigin: origin(entry.after),
+  };
+};
+
+/**
  * Try to classify an arrow-specific operation. Returns `null` to
  * indicate "fall back to generic classification" (e.g. a pure move of
  * the arrow body — translation only — which the standard `move` path
@@ -1378,7 +1473,8 @@ const classifyArrowEntry = (
   // ----- 1. arrow-bind: a binding actually changed value -----------
   //
   // Permits points + bbox residue (binding may shift an endpoint and
-  // thus the bbox). Rejected if any unrelated property also changed.
+  // thus the bbox), recorded on the op as `geometry`. Rejected if any
+  // unrelated property also changed.
 
   if (hasStartChange || hasEndChange) {
     if (changed.size === 0) {
@@ -1386,12 +1482,17 @@ const classifyArrowEntry = (
         hasStartChange && isStructuralBindingChange(beforeStart, afterStart);
       const endStructural =
         hasEndChange && isStructuralBindingChange(beforeEnd, afterEnd);
+      const geometry =
+        hasPointsChange || hasPosChange
+          ? arrowGeometryChange(entry, current, hasPosChange)
+          : undefined;
 
       if (startStructural || endStructural) {
         const op: Extract<LogOperation, { kind: "arrow-bind" }> = {
           kind: "arrow-bind",
           elementId: entry.elementId,
           elementType: current.type,
+          ...(geometry && { geometry }),
         };
         if (hasStartChange) {
           op.start = { before: beforeStart, after: afterStart };
@@ -1410,6 +1511,7 @@ const classifyArrowEntry = (
         kind: "arrow-move-binding",
         elementId: entry.elementId,
         elementType: current.type,
+        ...(geometry && { geometry }),
       };
       if (hasStartChange && beforeStart != null && afterStart != null) {
         op.start = {
@@ -1523,28 +1625,13 @@ const classifyArrowEntry = (
   //
   // Permitted residue: derived bbox geometry. Anything else is "edit
   // + something" and falls through.
-  if (hasPointsChange) {
-    const beforeOrigin = hasPosChange
-      ? ([entry.before.x, entry.before.y] as [number, number])
-      : null;
-    const afterOrigin = hasPosChange
-      ? ([entry.after.x, entry.after.y] as [number, number])
-      : null;
-    if (changed.size === 0) {
-      const before =
-        (entry.before.points as readonly ArrowPoint[] | undefined) ?? [];
-      const after =
-        (entry.after.points as readonly ArrowPoint[] | undefined) ?? [];
-      return {
-        kind: "arrow-edit-points",
-        elementId: entry.elementId,
-        elementType: current.type,
-        before,
-        after,
-        beforeOrigin,
-        afterOrigin,
-      };
-    }
+  if (hasPointsChange && changed.size === 0) {
+    return {
+      kind: "arrow-edit-points",
+      elementId: entry.elementId,
+      elementType: current.type,
+      ...arrowGeometryChange(entry, current, hasPosChange),
+    };
   }
 
   // Couldn't classify as arrow-specific — let the generic paths try.

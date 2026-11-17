@@ -39,6 +39,7 @@ const OP_COLOR: Record<LogOperation["kind"], string> = {
   ungroup: "var(--vlog-op-ungroup)",
   alignment: "var(--vlog-op-alignment)",
   "alignment-anchor": "var(--vlog-op-alignment)",
+  reorder: "var(--vlog-op-reorder)",
   raw: "var(--vlog-op-raw)",
 };
 
@@ -621,6 +622,31 @@ export const renderOpContent = (
           {formatElementLabel(op.elementType, shortId)}
         </>
       );
+    case "reorder": {
+      // Fractional indices order as plain strings, so the direction is
+      // just which side of the old key the new one landed. Upstream's
+      // own words, which cover both one step and all the way.
+      const directions = new Set(
+        op.elementIds.map((id) => {
+          const from = op.from[id];
+          const to = op.to[id];
+          return from == null || to == null ? "?" : to > from ? "up" : "down";
+        }),
+      );
+      const headline =
+        directions.size !== 1 || directions.has("?")
+          ? "Reordered"
+          : directions.has("up")
+          ? "Brought forward"
+          : "Sent backward";
+      const names = op.elementIds.map((id) => shortIdOf?.(id) ?? "element");
+      return (
+        <>
+          <strong>{headline}</strong>{" "}
+          {names.length <= 3 ? formatList(names) : `${names.length} elements`}
+        </>
+      );
+    }
     case "raw":
       return (
         <>
@@ -867,13 +893,18 @@ export const VersionLogMomentCard: React.FC<{
   // card open regardless of the local collapse state — the user is
   // focused on this dependency neighbourhood. An op whose *consequence*
   // matches is kept too, since that consequence is the thing to show.
+  // An incidental reorder belongs to the gesture beside it, which already
+  // has the row; it shows only when a filter asks for it by name.
+  const ownOps = moment.operations.filter(
+    (op) => !(op.kind === "reorder" && op.incidental) || filterOps?.has(op),
+  );
   const visibleOps = filterOps
-    ? moment.operations.filter(
+    ? ownOps.filter(
         (op) =>
           filterOps.has(op) ||
           consequentsOf(op).some((cop) => filterOps.has(cop)),
       )
-    : moment.operations;
+    : ownOps;
 
   // A moment is one user action, so its first op is what the card is
   // about; anything else it holds, and every consequence of any of them,

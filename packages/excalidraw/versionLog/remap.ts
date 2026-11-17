@@ -36,8 +36,8 @@ export type RemapResult =
  * `ungroup` whose target group has been remapped switches to the
  * remapped group too. `alignment` rewrites both its members and the
  * partner ids inside its links, dropping (rather than skipping the whole
- * op) any referent the user chose to skip. `group` (create) and
- * `arrow-*` are left unchanged in v1.
+ * op) any referent the user chose to skip. `group` (create),
+ * `reorder` and `arrow-*` are left unchanged in v1.
  */
 export const applyRemapsToOp = (
   op: LogOperation,
@@ -108,6 +108,13 @@ export const applyRemapsToOp = (
     case "group":
       // The gid being introduced is brand-new; remapping it doesn't
       // make sense. Children element-id remaps are out of scope for v1.
+      return { status: "ok", op };
+
+    case "reorder":
+      // A recorded index is the place the *original* element held among
+      // its neighbours then; handed to a stand-in it would just move
+      // that one somewhere arbitrary. Left as is, a key for a missing
+      // element is never written.
       return { status: "ok", op };
 
     case "alignment": {

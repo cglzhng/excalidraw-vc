@@ -27,10 +27,8 @@
  *
  * Ops skipped (no preview):
  *   - `restyle` (per the "ignore styles" decision)
- *   - `arrow-bind`, `arrow-move-binding`: applyOps' backward path
- *     restores the binding payload but leaves derived geometry
- *     stale, so the snapshot wouldn't show a faithful previous
- *     shape. TODO: enrich those ops with prev geometry.
+ *   - `reorder`: a ghost is drawn above the scene, so it can't show
+ *     where in the stack the element would sit
  *   - `raw` (uninterpretable in general)
  */
 
@@ -62,8 +60,7 @@ export const computeHoverPreview = (
   switch (op.kind) {
     // Skipped — no useful preview.
     case "restyle":
-    case "arrow-bind":
-    case "arrow-move-binding":
+    case "reorder":
     case "alignment":
     case "alignment-anchor":
     case "raw":
@@ -117,7 +114,9 @@ export const computeHoverPreview = (
     case "resize":
     case "resize-group":
     case "arrow-resize":
-    case "arrow-edit-points": {
+    case "arrow-edit-points":
+    case "arrow-bind":
+    case "arrow-move-binding": {
       const snapshot = buildOppositeSideSnapshot(op, log, currentScene);
       if (snapshot == null) {
         return null;

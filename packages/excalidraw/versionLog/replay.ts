@@ -22,6 +22,8 @@
  * INSTEAD of committing the snapshot.
  */
 
+import { orderByFractionalIndex } from "@excalidraw/element";
+
 import { applyOpsToScene } from "./applyOps";
 import { applyRemapsToOp } from "./remap";
 import { collectElementIdsFromGroupNode, getOperationElementIds } from "./types";
@@ -120,7 +122,23 @@ export const replayActiveOps = (log: VersionLog): ReplayResult | null => {
     }
   }
 
-  return { snapshot, skipped, conflicts: Array.from(conflictMap.values()) };
+  // Order the scene by `index`. Ops write the key and leave the map's
+  // insertion order alone, and the commit's `syncInvalidIndices` treats
+  // array order as the truth — so without this, every replay would put
+  // each element back where it was first inserted and quietly undo
+  // every reorder in the log.
+  const ordered: SceneSnapshot = new Map(
+    orderByFractionalIndex(Array.from(snapshot.values())).map((el) => [
+      el.id,
+      el,
+    ]),
+  );
+
+  return {
+    snapshot: ordered,
+    skipped,
+    conflicts: Array.from(conflictMap.values()),
+  };
 };
 
 // ---------------------------------------------------------------------
@@ -393,6 +411,11 @@ const enumerateMissingReferents = (
       // a conflict the user could resolve.
       return out;
     }
+    case "reorder":
+      // A key on a missing element is never written, and one on a
+      // deleted element orders nothing anyone sees — no conflict to
+      // resolve either way.
+      return out;
     case "ungroup": {
       // Dissolving an existing group: at least one captured member
       // must still bear the group id.

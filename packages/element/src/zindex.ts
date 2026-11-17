@@ -5,6 +5,7 @@ import { isFiniteNumber } from "@excalidraw/math";
 import type { AppState } from "@excalidraw/excalidraw/types";
 import type { GlobalPoint } from "@excalidraw/math";
 
+import { doBoundsIntersect, getElementBounds } from "./bounds";
 import { isFrameLikeElement, isTextElement } from "./typeChecks";
 import { getElementsInGroup } from "./groups";
 import { syncMovedIndices } from "./fractionalIndex";
@@ -13,6 +14,7 @@ import { getBoundTextElement, getContainerElement } from "./textElement";
 
 import type { Scene } from "./Scene";
 import type {
+  ElementsMap,
   ExcalidrawArrowElement,
   ExcalidrawElement,
   ExcalidrawFrameLikeElement,
@@ -201,9 +203,8 @@ const getTargetIndex = (
    */
   containingFrame: ExcalidrawFrameLikeElement["id"] | null,
   scene: Scene,
+  sourceElement: ExcalidrawElement | undefined = elements[boundaryIndex],
 ) => {
-  const sourceElement = elements[boundaryIndex];
-
   const indexFilter = (element: ExcalidrawElement) => {
     if (element.isDeleted) {
       return false;
@@ -298,6 +299,66 @@ const getTargetIndex = (
   return candidateIndex;
 };
 
+/**
+ * VERSION-LOG: the target of a one-step move, stepping past every unit
+ * the moving elements don't overlap. A step past one of those changes
+ * nothing on screen, so upstream's one-unit step would have the log
+ * record moves nobody can see; this lands just past the first unit that
+ * does overlap, or returns -1 (stay put) when none does. Overlap is by
+ * axis-aligned bounds, so two crossing boxes count even where nothing is
+ * drawn in the crossing — two diagonal lines, say.
+ */
+const getOverlappingTargetIndex = (
+  appState: AppState,
+  elements: readonly ExcalidrawElement[],
+  leadingIndex: number,
+  trailingIndex: number,
+  direction: "left" | "right",
+  containingFrame: ExcalidrawFrameLikeElement["id"] | null,
+  scene: Scene,
+  elementsMap: ElementsMap,
+) => {
+  const movingBounds = elements
+    .slice(leadingIndex, trailingIndex + 1)
+    .filter((el) => !el.isDeleted)
+    .map((el) => getElementBounds(el, elementsMap));
+  const overlapsMoving = (el: ExcalidrawElement) =>
+    !el.isDeleted &&
+    movingBounds.some((bounds) =>
+      doBoundsIntersect(bounds, getElementBounds(el, elementsMap)),
+    );
+
+  const sourceIndex = direction === "left" ? leadingIndex : trailingIndex;
+  let cursor = sourceIndex;
+  for (;;) {
+    // Each step is upstream's, so groups, frames and a container with
+    // its text are still passed as one unit, judged by any member.
+    const target = getTargetIndex(
+      appState,
+      elements,
+      cursor,
+      direction,
+      containingFrame,
+      scene,
+      elements[sourceIndex],
+    );
+    if (
+      target === -1 ||
+      (direction === "left" ? target >= cursor : target <= cursor)
+    ) {
+      return -1;
+    }
+    const passed =
+      direction === "left"
+        ? elements.slice(target, cursor)
+        : elements.slice(cursor + 1, target + 1);
+    if (passed.some(overlapsMoving)) {
+      return target;
+    }
+    cursor = target;
+  }
+};
+
 const getTargetElementsMap = <T extends ExcalidrawElement>(
   elements: readonly T[],
   indices: number[],
@@ -349,6 +410,7 @@ const shiftElementsByOne = (
   scene: Scene,
 ) => {
   const originalElements = elements;
+  const elementsMap = arrayToMap(elements);
   const indicesToMove = getIndicesToMove(elements, appState);
   const targetElementsMap = getTargetElementsMap(elements, indicesToMove);
 
@@ -376,13 +438,15 @@ const shiftElementsByOne = (
       ? null
       : elements[boundaryIndex]?.frameId;
 
-    const targetIndex = getTargetIndex(
+    const targetIndex = getOverlappingTargetIndex(
       appState,
       elements,
-      boundaryIndex,
+      leadingIndex,
+      trailingIndex,
       direction,
       containingFrame,
       scene,
+      elementsMap,
     );
 
     if (targetIndex === -1 || boundaryIndex === targetIndex) {

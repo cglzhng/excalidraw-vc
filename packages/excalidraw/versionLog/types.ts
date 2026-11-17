@@ -19,6 +19,7 @@ import type {
   ElementAlignment,
   ElementGapAlignment,
   FixedPointBinding,
+  FractionalIndex,
 } from "@excalidraw/element/types";
 
 import type { TransformMatrix } from "./transform";
@@ -31,6 +32,19 @@ import type { TransformMatrix } from "./transform";
  * `null` represents "not bound"
  */
 export type ArrowBinding = FixedPointBinding | null;
+
+/**
+ * An arrow's own geometry on either side of an op. `x` / `y` is the
+ * points' origin, recorded only when it moved; `width` / `height` are
+ * derived from the points, so they aren't stored at all.
+ */
+export interface ArrowGeometryChange {
+  /** Local-space waypoints before the op. `[0,0]` is always the start. */
+  before: ReadonlyArray<readonly [number, number]>;
+  after: ReadonlyArray<readonly [number, number]>;
+  beforeOrigin: [number, number] | null;
+  afterOrigin: [number, number] | null;
+}
 
 export type LogEntryType = "create" | "update" | "delete";
 
@@ -254,16 +268,11 @@ export type LogOperation =
   // and `arrow-rotate` mirror the shapes of `resize` and `rotate` but
   // exist as distinct kinds so the classifier can permit `points`
   // residue without weakening the generic resize/rotate paths.
-  | {
+  | ({
       kind: "arrow-edit-points";
       elementId: string;
       elementType?: string;
-      /** Local-space waypoints before the edit. `[0,0]` is always the start. */
-      before: ReadonlyArray<readonly [number, number]>;
-      after: ReadonlyArray<readonly [number, number]>;
-      beforeOrigin: [number, number] | null;
-      afterOrigin: [number, number] | null;
-    }
+    } & ArrowGeometryChange)
   | {
       kind: "arrow-bind";
       elementId: string;
@@ -276,6 +285,13 @@ export type LogOperation =
        */
       start?: { before: ArrowBinding; after: ArrowBinding };
       end?: { before: ArrowBinding; after: ArrowBinding };
+      /**
+       * The arrow's own points and origin, when the same gesture moved
+       * them — binding drags an endpoint to the element's edge, and
+       * dragging a bound arrow away unbinds it. Absent when only the
+       * binding payload changed.
+       */
+      geometry?: ArrowGeometryChange;
     }
   | {
       kind: "arrow-move-binding";
@@ -299,6 +315,8 @@ export type LogOperation =
         before: FixedPointBinding;
         after: FixedPointBinding;
       };
+      /** As on `arrow-bind`: sliding the anchor slides the endpoint. */
+      geometry?: ArrowGeometryChange;
     }
   | {
       kind: "arrow-resize";
@@ -396,6 +414,28 @@ export type LogOperation =
       /** `true` = anchored (locked), `false` = released. */
       anchored: boolean;
     }
+  // Stacking order ----------------------------------------------------
+  //
+  // Every change to elements' fractional `index` in one increment,
+  // whichever gesture made it. The index is recorded absolutely, like
+  // `rotate`'s angles: it is a key between the neighbours it had, so it
+  // still sorts sensibly when a selective undo has changed them.
+  | {
+      kind: "reorder";
+      /** Elements whose `index` changed. */
+      elementIds: string[];
+      /** `index` before / after, keyed by element id. */
+      from: Record<string, FractionalIndex | null>;
+      to: Record<string, FractionalIndex | null>;
+      /**
+       * The reorder rode along with another op in the same Moment —
+       * binding lifts an arrow above its element, grouping gathers the
+       * members together — rather than being the gesture itself.
+       * Replayed all the same; the panel gives it no row of its own,
+       * since the gesture it belongs to already has one.
+       */
+      incidental: boolean;
+    }
   // Fallback ----------------------------------------------------------
   | {
       kind: "raw";
@@ -453,6 +493,7 @@ export const getOperationElementIds = (op: LogOperation): string[] => {
     case "ungroup":
       return collectElementIdsFromGroupNode(op.group);
     case "alignment":
+    case "reorder":
       return op.elementIds;
     case "raw":
       return [op.entry.elementId];

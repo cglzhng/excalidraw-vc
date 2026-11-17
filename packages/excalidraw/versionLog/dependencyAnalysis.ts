@@ -346,14 +346,18 @@ const getReadProperties = (
       }));
     case "arrow-edit-points":
       return [{ elementId: op.elementId, property: "points" }];
+    case "arrow-bind":
+    case "arrow-move-binding":
+      return op.geometry
+        ? [{ elementId: op.elementId, property: "points" }]
+        : [];
     case "delete":
       // `lastValues` is a captured before-state but isn't used as a
       // precondition by `applyOps` — delete just needs the element
       // to exist. Skip.
       return [];
     // The remaining ops either have no `from` snapshot (rotate-group
-    // / resize-group don't carry per-member snapshots yet),
-    // have a derived snapshot we skip (arrow-bind, arrow-move-binding),
+    // / resize-group don't carry per-member snapshots yet)
     // or are the fallback path (raw).
     default:
       return [];
@@ -373,7 +377,8 @@ const getReadProperties = (
  *   - `move`-family writes x, y. `rotate`-family writes angle.
  *     Resize-family writes x, y, width, height. Group-transforms
  *     also touch x, y on every member.
- *   - `arrow-edit-points` rewrites points + derived bbox.
+ *   - `arrow-edit-points` rewrites points + derived bbox, and so do
+ *     `arrow-bind` / `arrow-move-binding` when they carry `geometry`.
  *   - `group` / `ungroup` mutate `groupIds` on members.
  *   - `raw` falls back to whatever was in the entry's `after` map.
  */
@@ -437,16 +442,7 @@ const getWrittenProperties = (
         { elementId: op.elementId, property: "width" },
         { elementId: op.elementId, property: "height" },
       ];
-    case "arrow-bind": {
-      const props: Array<{ elementId: string; property: string }> = [];
-      if (op.start) {
-        props.push({ elementId: op.elementId, property: "startBinding" });
-      }
-      if (op.end) {
-        props.push({ elementId: op.elementId, property: "endBinding" });
-      }
-      return props;
-    }
+    case "arrow-bind":
     case "arrow-move-binding": {
       const props: Array<{ elementId: string; property: string }> = [];
       if (op.start) {
@@ -454,6 +450,11 @@ const getWrittenProperties = (
       }
       if (op.end) {
         props.push({ elementId: op.elementId, property: "endBinding" });
+      }
+      if (op.geometry) {
+        for (const property of ["points", "x", "y", "width", "height"]) {
+          props.push({ elementId: op.elementId, property });
+        }
       }
       return props;
     }
@@ -470,6 +471,8 @@ const getWrittenProperties = (
       }));
     case "alignment-anchor":
       return [{ elementId: op.elementId, property: "alignmentLocked" }];
+    case "reorder":
+      return op.elementIds.map((id) => ({ elementId: id, property: "index" }));
     case "raw": {
       const out: Array<{ elementId: string; property: string }> = [];
       for (const key of Object.keys(op.entry.after)) {

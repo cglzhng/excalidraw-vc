@@ -17,7 +17,7 @@ import { applyMatrixToPoint, inverseMatrix } from "./transform";
 import { collectElementIdsFromGroupNode } from "./types";
 
 import type { TransformMatrix } from "./transform";
-import type { LogOperation } from "./types";
+import type { ArrowGeometryChange, LogOperation } from "./types";
 
 /**
  * Mutable scene snapshot used during op application. Keyed by element
@@ -126,6 +126,25 @@ const bboxFromPoints = (
   return {
     width: maxX - minX,
     height: maxY - minY,
+  };
+};
+
+/**
+ * The writes that put an arrow on one side of a recorded geometry
+ * change. Its origin stays put when the change didn't record one.
+ */
+const arrowGeometryUpdates = (
+  el: OrderedExcalidrawElement,
+  change: ArrowGeometryChange,
+  forward: boolean,
+): Record<string, unknown> => {
+  const points = forward ? change.after : change.before;
+  const origin = forward ? change.afterOrigin : change.beforeOrigin;
+  return {
+    points,
+    x: origin ? origin[0] : el.x,
+    y: origin ? origin[1] : el.y,
+    ...bboxFromPoints(points),
   };
 };
 
@@ -388,50 +407,38 @@ const applyOpToScene = (
 
     // -------------------- arrow-specific --------------------
     case "arrow-edit-points": {
-      const points = forward ? op.after : op.before;
-      const origin = forward ? op.afterOrigin : op.beforeOrigin;
+      const el = scene.get(op.elementId);
+      if (el) {
+        updateElement(
+          scene,
+          op.elementId,
+          arrowGeometryUpdates(el, op, forward),
+        );
+      }
+      break;
+    }
+    case "arrow-bind":
+    case "arrow-move-binding": {
       const el = scene.get(op.elementId);
       if (!el) {
         break;
       }
-      const { width, height } = bboxFromPoints(points);
-      updateElement(scene, op.elementId, {
-        points,
-        x: origin ? origin[0] : el.x,
-        y: origin ? origin[1] : el.y,
-        width,
-        height,
-      } as Partial<OrderedExcalidrawElement>);
-      break;
-    }
-    case "arrow-bind": {
-      const updates: Partial<OrderedExcalidrawElement> = {};
+      // Binding and geometry in one write: the endpoint is where the
+      // binding says it is on either side.
+      const updates: Record<string, unknown> = op.geometry
+        ? arrowGeometryUpdates(el, op.geometry, forward)
+        : {};
       if (op.start) {
-        (updates as { startBinding: unknown }).startBinding = forward
-          ? op.start.after
-          : op.start.before;
+        updates.startBinding = forward ? op.start.after : op.start.before;
       }
       if (op.end) {
-        (updates as { endBinding: unknown }).endBinding = forward
-          ? op.end.after
-          : op.end.before;
+        updates.endBinding = forward ? op.end.after : op.end.before;
       }
-      updateElement(scene, op.elementId, updates);
-      break;
-    }
-    case "arrow-move-binding": {
-      const updates: Partial<OrderedExcalidrawElement> = {};
-      if (op.start) {
-        (updates as { startBinding: unknown }).startBinding = forward
-          ? op.start.after
-          : op.start.before;
-      }
-      if (op.end) {
-        (updates as { endBinding: unknown }).endBinding = forward
-          ? op.end.after
-          : op.end.before;
-      }
-      updateElement(scene, op.elementId, updates);
+      updateElement(
+        scene,
+        op.elementId,
+        updates as Partial<OrderedExcalidrawElement>,
+      );
       break;
     }
 
@@ -507,6 +514,20 @@ const applyOpToScene = (
       updateElement(scene, op.elementId, {
         alignmentLocked: forward ? op.anchored : !op.anchored,
       } as Partial<OrderedExcalidrawElement>);
+      break;
+    }
+
+    // -------------------- stacking order --------------------
+    //
+    // Writes the key only. The snapshot's own order is left alone; the
+    // replay sorts by `index` once it has applied everything.
+    case "reorder": {
+      const indices = forward ? op.to : op.from;
+      for (const id of op.elementIds) {
+        updateElement(scene, id, {
+          index: indices[id],
+        } as Partial<OrderedExcalidrawElement>);
+      }
       break;
     }
 
