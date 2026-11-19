@@ -153,7 +153,15 @@ rather than silently dropped.
 ### Pending conflict
 An unresolved hard conflict, grouped by the missing referent so the user
 resolves it once per referent rather than once per affected op
-(`PendingConflict`). Drives the conflict-resolution modal.
+(`PendingConflict`). Drives the conflict-resolution session.
+
+### Conflict-resolution session
+The interval between a toggle that strands ops and its Apply or Cancel
+(`AppState.versionLogResolution`). Each pending conflict carries a
+*tentative* decision — skip, or a stand-in — that the replay applies
+without writing it to the log, so the canvas shows the outcome of each
+choice as it is made. Apply turns the decisions into remaps; Cancel
+reverts the toggle and leaves no trace.
 
 ### Skipped (by replay)
 The set of operations the most recent replay couldn't apply because a
@@ -166,7 +174,8 @@ A user-supplied rewrite that redirects an operation from its original
 referent to a different live one — "apply this move-group to group G′
 instead of the missing G" — or explicitly skips it (`to: null`). Keyed
 by the *original* referent id, so one decision (G → G′) automatically
-rewrites every op that referenced G. Created via the conflict modal;
+rewrites every op that referenced G. Created when a conflict-resolution
+session is applied;
 read by replay before each referent check (`remap.ts`).
 
 ---

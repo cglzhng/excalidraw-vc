@@ -130,7 +130,7 @@ export class VersionLog {
   private skippedByReplay: Set<LogOperation> = new Set();
   /**
    * User-supplied referent remaps, keyed by ORIGINAL referent id.
-   * Populated when the conflict-resolution modal submits a decision
+   * Populated when a conflict-resolution session is applied
    * ("apply move-group X to group Y instead" / "skip everything that
    * touched element X"). Read by the replay engine before every
    * referent-presence check.
@@ -256,7 +256,7 @@ export class VersionLog {
 
   /**
    * Restore the redo target. It stays on the stack, now active, and is
-   * pruned on the next look — so a redo the conflict modal cancels
+   * pruned on the next look — so a redo whose conflict resolution is cancelled
    * (which skips the moment again) leaves it there to retry.
    */
   public redo(): string | null {
@@ -380,7 +380,7 @@ export class VersionLog {
   /**
    * Merge new remap entries into the map (overwriting existing keys).
    * Setting a value to `{ to: null, ... }` records an explicit "skip"
-   * for that referent. Callers pass the result of one modal submission.
+   * for that referent. Callers pass the decisions of one resolution session.
    */
   public addRemaps(entries: Iterable<[string, Remap]>): void {
     let changed = false;

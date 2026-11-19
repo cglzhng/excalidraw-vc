@@ -15,6 +15,7 @@ import {
   inverseMatrix,
   isPureTranslation,
   matricesEqual,
+  translationMatrix,
 } from "./transform";
 
 import { buildGroupNodeFromEntries, getParentGroupId } from "./groupTree";
@@ -290,7 +291,8 @@ type GeometryKey = "x" | "y" | "width" | "height" | "angle";
  * invertible affine map. Two cases:
  *   - the element isn't in the scene any more (deleted concurrently?),
  *   - the before-state has zero `width` or `height` (degenerate box;
- *     `M_before` is singular and has no inverse).
+ *     `M_before` is singular and has no inverse) and the change is more
+ *     than a translation.
  *
  * Returns the identity matrix when no geometry property changed —
  * that's distinct from `null` and is useful info for the caller
@@ -327,9 +329,13 @@ const buildEntryGeometryMatrix = (
     return identityMatrix();
   }
 
-  // Degenerate before-box → no invertible transform exists.
+  // Degenerate before-box → no invertible transform exists. A pure
+  // translation needs none, and a straight horizontal or vertical line
+  // or arrow has a zero side whenever it is dragged.
   if (w1 === 0 || h1 === 0) {
-    return null;
+    return w1 === w2 && h1 === h2 && a1 === a2
+      ? translationMatrix(x2 - x1, y2 - y1)
+      : null;
   }
 
   const before = elementBoxMatrix(x1, y1, w1, h1, a1);
@@ -375,7 +381,9 @@ const classifyEntry = (
   // If nothing matches, fall through
   // and let the generic paths handle simple cases like translation.
   if (current?.type === "arrow") {
-    const arrowOp = classifyArrowEntry(entry, current, changed);
+    // a copy: the arrow classifier strips the keys it accounts for, and
+    // when it gives up the generic paths below still need them
+    const arrowOp = classifyArrowEntry(entry, current, new Set(changed));
     if (arrowOp) {
       return arrowOp;
     }

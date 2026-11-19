@@ -248,6 +248,7 @@ export type InteractiveCanvasAppState = Readonly<
     elementsToHighlight: AppState["elementsToHighlight"];
     debugVersionLogHighlightedElementIds: AppState["debugVersionLogHighlightedElementIds"];
     versionLogHoverPreview: AppState["versionLogHoverPreview"];
+    versionLogResolution: AppState["versionLogResolution"];
     /** which sidebar is open — the element-id labels are drawn only
      * while the version log is, since that is what names them */
     openSidebar: AppState["openSidebar"];
@@ -472,18 +473,44 @@ export interface AppState {
     bboxes: { elementIds: string[] }[];
   } | null;
   /**
-   * Unresolved hard conflicts produced by the most recent selective-
-   * undo toggle. When non-null, the conflict-resolution modal is
-   * shown; the user picks Skip / Remap for each missing referent,
-   * the picks are written to `versionLog.remaps`, and replay re-runs.
+   * A conflict-resolution session, open while a toggle has left later
+   * ops without a referent. The canvas shows the replay under the
+   * session's decisions as they stand; nothing reaches the log until
+   * Apply, which writes `decisions` as remaps. Cancel reverts the toggle.
    *
-   * `pendingMomentId` is the moment whose toggle produced the
-   * conflicts — used by the modal's Cancel action to revert the
-   * toggle if the user backs out.
+   *  - `pendingMomentId`: the moment whose toggle opened the session.
+   *  - `conflicts`: every missing referent the latest replay reported,
+   *    decided or not.
+   *  - `decisions`: referent → the element or group standing in for it,
+   *    or `null` to skip its ops. Every conflict has one; a new one
+   *    starts as a skip.
+   *  - `reassigning`: referents switched to Reassign. Only those take a
+   *    pick from the canvas; until one is picked the referent's decision
+   *    is still `null`, so it replays as a skip, and Apply waits.
+   *  - `activeReferentId`: the conflict the canvas is picking for.
+   *  - `ghosts`: referent → what it looked like before the toggle (an
+   *    element, or a group's members), drawn where it was so the user can
+   *    see what lost its target.
+   *  - `hover`: what is under the pointer — a candidate a click would
+   *    pick, or an element that can't stand in and why — for the canvas
+   *    label. (A hovered candidate's outcome is drawn through
+   *    `versionLogHoverPreview`.)
+   *  - `showingBefore`: the switch is on Show before, for every conflict
+   *    at once: the canvas shows the scene as it was before the toggle,
+   *    and Apply keeps it, as Cancel does. Picking is off meanwhile.
+   *  - `viewModeBefore`: the session holds view mode on so nothing can be
+   *    edited; this is what to put back when it ends.
    */
-  versionLogPendingConflicts: {
+  versionLogResolution: {
     pendingMomentId: string;
     conflicts: import("./versionLog/types").PendingConflict[];
+    decisions: Readonly<Record<string, string | null>>;
+    reassigning: Readonly<Record<string, true>>;
+    activeReferentId: string | null;
+    ghosts: Readonly<Record<string, readonly ExcalidrawElement[]>>;
+    hover: import("./versionLog/conflictPicking").ConflictHover | null;
+    showingBefore: boolean;
+    viewModeBefore: boolean;
   } | null;
   /**
    * set when a new text is created or when an existing text is being edited
@@ -1437,6 +1464,11 @@ export type AppClassProperties = {
   toggleVersionLogMoment: App["toggleVersionLogMoment"];
   undoVersionLogMoment: App["undoVersionLogMoment"];
   redoVersionLogMoment: App["redoVersionLogMoment"];
+  decideVersionLogConflict: App["decideVersionLogConflict"];
+  setActiveVersionLogConflict: App["setActiveVersionLogConflict"];
+  applyVersionLogResolution: App["applyVersionLogResolution"];
+  cancelVersionLogResolution: App["cancelVersionLogResolution"];
+  setVersionLogConflictMode: App["setVersionLogConflictMode"];
 };
 
 export type PointerDownState = Readonly<{

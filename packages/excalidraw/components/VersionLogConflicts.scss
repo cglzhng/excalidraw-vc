@@ -1,0 +1,131 @@
+.excalidraw {
+  // Top left of the canvas pane, beside the main menu button: view mode,
+  // which a session holds on, empties the rest of that strip, and the
+  // pane's own wrapper already narrows for a docked sidebar.
+  .VersionLogConflicts {
+    --vlc-left: calc(
+      var(--editor-container-padding) + var(--lg-button-size) + 0.5rem
+    );
+
+    position: absolute;
+    top: var(--editor-container-padding);
+    left: var(--vlc-left);
+    width: calc(100% - var(--vlc-left) - var(--editor-container-padding));
+    pointer-events: none;
+
+    // --- theme hooks (Excalidraw global -> literal fallback) ---
+    --vlc-primary: var(--color-primary, #6965db);
+    --vlc-border: var(--default-border-color, #d0d0d0);
+    --vlc-active-bg: var(--color-primary-light, rgba(105, 101, 219, 0.12));
+  }
+
+  // Between the interactive canvas (2) and the UI layer (4) — the slot
+  // upstream gives its canvas buttons — and transparent to the pointer.
+  // Upstream's viewport status border would do but sits above the UI.
+  .VersionLogConflicts__frame {
+    --vlc-danger: var(--color-danger, #db6965);
+
+    position: absolute;
+    inset: 0;
+    box-sizing: border-box;
+    pointer-events: none;
+    z-index: var(--zIndex-canvasButtons);
+    border: 5px solid var(--vlc-danger);
+    background: color-mix(in srgb, var(--vlc-danger) 15%, transparent);
+  }
+
+  .VersionLogConflicts__island {
+    pointer-events: var(--ui-pointerEvents);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    line-height: 1.4;
+    color: var(--text-primary-color);
+  }
+
+  .VersionLogConflicts__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .VersionLogConflicts__chip {
+    all: unset;
+    cursor: pointer;
+    display: inline-flex;
+    gap: 4px;
+    align-items: baseline;
+    padding: 2px 8px;
+    font-weight: 600;
+    border: 1px solid var(--vlc-border);
+    border-radius: 999px;
+
+    &--active {
+      border-color: var(--vlc-primary);
+      background: var(--vlc-active-bg);
+    }
+  }
+
+  .VersionLogConflicts__chipState {
+    font-weight: 400;
+    opacity: 0.7;
+  }
+
+  .VersionLogConflicts__help {
+    font-size: 18px;
+    // `helpText` breaks its lines with "\n"
+    white-space: pre-line;
+  }
+
+  .VersionLogConflicts__buttons {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+  }
+
+  .VersionLogConflicts__spacer {
+    flex: 1 1 auto;
+  }
+
+  .VersionLogConflicts__button {
+    all: unset;
+    cursor: pointer;
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    border: 1px solid var(--vlc-border);
+    border-radius: 6px;
+
+    &:hover,
+    &:focus-visible {
+      color: var(--vlc-primary);
+      border-color: var(--vlc-primary);
+    }
+
+    &--chosen {
+      color: var(--vlc-primary);
+      border-color: var(--vlc-primary);
+      background: var(--vlc-active-bg);
+    }
+
+    &--primary,
+    &--primary:hover,
+    &--primary:focus-visible {
+      color: white;
+      background: var(--vlc-primary);
+      border-color: var(--vlc-primary);
+    }
+
+    // after the variants, so a disabled primary loses its colour too
+    &:disabled {
+      cursor: not-allowed;
+      opacity: 0.4;
+      color: var(--text-primary-color);
+      background: none;
+      border-color: var(--vlc-border);
+    }
+  }
+}

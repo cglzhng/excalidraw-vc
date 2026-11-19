@@ -122,7 +122,7 @@ export const getDefaultAppState = (): Omit<
     elementsToHighlight: null,
     debugVersionLogHighlightedElementIds: null,
     versionLogHoverPreview: null,
-    versionLogPendingConflicts: null,
+    versionLogResolution: null,
     toast: null,
     viewBackgroundColor: COLOR_PALETTE.white,
     zenModeEnabled: false,
@@ -297,7 +297,7 @@ const APP_STATE_STORAGE_CONF = (<
     server: false,
   },
   versionLogHoverPreview: { browser: false, export: false, server: false },
-  versionLogPendingConflicts: {
+  versionLogResolution: {
     browser: false,
     export: false,
     server: false,

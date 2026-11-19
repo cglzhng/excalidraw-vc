@@ -10,6 +10,8 @@ import { clamp, pointFrom, pointDistance } from "@excalidraw/math";
 import {
   COLOR_PALETTE,
   CODES,
+  DEFAULT_SIDEBAR,
+  VERSION_LOG_SIDEBAR_TAB,
   shouldResizeFromCenter,
   shouldMaintainAspectRatio,
   shouldRotateWithDiscreteAngle,
@@ -327,7 +329,18 @@ import {
 import { History } from "../history";
 import { VersionLog } from "../versionLog/VersionLog";
 import { replayActiveOps } from "../versionLog/replay";
-import { ConflictResolutionModal } from "./VersionControlConflictModal";
+import {
+  canApplyResolution,
+  drawsDifferently,
+  getConflictHover,
+  getPickingConflict,
+  toRemaps,
+} from "../versionLog/conflictPicking";
+import type {
+  ConflictHover,
+  ConflictMode,
+  ResolutionSession,
+} from "../versionLog/conflictPicking";
 import type { Remap } from "../versionLog/types";
 import { defaultLang, getLanguage, languages, setLanguage, t } from "../i18n";
 
@@ -669,6 +682,16 @@ class App extends React.Component<AppProps, AppState> {
   public store: Store;
   private history: History;
   public versionLog: VersionLog;
+  /** The scene as it was when the open conflict-resolution session
+   * began, before the toggle that opened it took effect. */
+  private versionLogResolutionBefore: Map<string, ExcalidrawElement> | null =
+    null;
+  /** Hover previews of the open session's candidates, keyed by
+   * `referent\0standIn`, for the decisions they were replayed under. */
+  private versionLogStandInPreviews: {
+    decisions: Readonly<Record<string, string | null>>;
+    previews: Map<string, AppState["versionLogHoverPreview"]>;
+  } | null = null;
   public excalidrawContainerValue: {
     container: HTMLDivElement | null;
     id: string;
@@ -2560,20 +2583,6 @@ class App extends React.Component<AppProps, AppState> {
                             }
                             currentUserControls={this.props.currentUserControls}
                           >
-                            {this.state.versionLogPendingConflicts && (
-                              <ConflictResolutionModal
-                                conflicts={
-                                  this.state.versionLogPendingConflicts
-                                    .conflicts
-                                }
-                                onSubmit={
-                                  this.applyVersionLogConflictResolutions
-                                }
-                                onCancel={
-                                  this.cancelVersionLogConflictResolution
-                                }
-                              />
-                            )}
                             {this.props.children}
                           </LayerUI>
                           <div className="excalidraw-textEditorContainer" />
@@ -5128,6 +5137,9 @@ class App extends React.Component<AppProps, AppState> {
    * as well as conflicting moments to be identified and dealt with.
    */
   public toggleVersionLogMoment = (momentId: string): void => {
+    if (this.state.versionLogResolution) {
+      return;
+    }
     this.versionLog.toggleMomentActive(momentId);
     this.runReplayAfterToggle(momentId);
   };
@@ -5135,9 +5147,12 @@ class App extends React.Component<AppProps, AppState> {
   /**
    * Undo and redo as skips in the version log, rather than Excalidraw's
    * own history: a change made outside the log would be lost on the
-   * next replay. Same path as a toggle, conflict modal included.
+   * next replay. Same path as a toggle, conflict resolution included.
    */
   public undoVersionLogMoment = (): boolean => {
+    if (this.state.versionLogResolution) {
+      return false;
+    }
     const momentId = this.versionLog.undo();
     if (momentId == null) {
       return false;
@@ -5147,6 +5162,9 @@ class App extends React.Component<AppProps, AppState> {
   };
 
   public redoVersionLogMoment = (): boolean => {
+    if (this.state.versionLogResolution) {
+      return false;
+    }
     const momentId = this.versionLog.redo();
     if (momentId == null) {
       return false;
@@ -5156,34 +5174,127 @@ class App extends React.Component<AppProps, AppState> {
   };
 
   /**
-   * Run a replay after a toggle or after the user resolves a previous conflict. 
-   * 
-   * If the replay produces unresolved hard conflicts, open the modal;
-   * otherwise commit the replay. 
-   * 
-   * The modal has a cancel button which can revert the original toggle.
+   * Run a replay after a toggle. If it leaves ops without a referent,
+   * open a conflict-resolution session instead of committing it as is.
    */
   private runReplayAfterToggle = (pendingMomentId: string): void => {
     const replay = replayActiveOps(this.versionLog);
     if (replay == null) {
       return;
     }
-
     if (replay.conflicts.length > 0) {
-      // Don't touch the scene yet — wait for user input. The canvas
-      // stays in its current state until the user either applies a
-      // resolution or cancels (which reverts the toggle).
-      this.setState({
-        versionLogPendingConflicts: {
-          pendingMomentId,
-          conflicts: replay.conflicts,
-        },
+      // the scene still holds every missing referent as it was — the
+      // session draws them from here
+      this.versionLogResolutionBefore = new Map(
+        this.scene.getElementsMapIncludingDeleted(),
+      );
+      this.refreshVersionLogResolution({
+        pendingMomentId,
+        decisions: {},
+        reassigning: {},
+        activeReferentId: null,
+        viewModeBefore: this.state.viewModeEnabled,
       });
       return;
     }
+    this.commitReplay(replay);
+  };
+
+  /**
+   * Replay under a session's decisions and show the result. A referent
+   * with no decision yet — the session's first, or one a remap has just
+   * exposed — starts as a skip, and the replay runs again until every
+   * conflict has one; each round decides at least one more referent, so
+   * it ends. Decisions for referents the latest replay no longer reports
+   * are dropped, so a cascade that a later choice undoes leaves nothing
+   * behind.
+   *
+   * The scene is committed as it would be after Apply, but with view
+   * mode held on, so nothing can be edited until the session ends.
+   */
+  private refreshVersionLogResolution = (session: {
+    pendingMomentId: string;
+    decisions: Readonly<Record<string, string | null>>;
+    reassigning: Readonly<Record<string, true>>;
+    activeReferentId: string | null;
+    viewModeBefore: boolean;
+  }): void => {
+    const decisions = { ...session.decisions };
+    const kinds = new Map<string, Remap["kind"]>(
+      (this.state.versionLogResolution?.conflicts ?? []).map((c) => [
+        c.referentId,
+        c.referentKind,
+      ]),
+    );
+    let replay = null;
+    for (;;) {
+      replay = replayActiveOps(this.versionLog, toRemaps(decisions, kinds));
+      if (replay == null) {
+        return;
+      }
+      const undecided = replay.conflicts.filter(
+        (c) => !(c.referentId in decisions),
+      );
+      for (const c of replay.conflicts) {
+        kinds.set(c.referentId, c.referentKind);
+      }
+      if (undecided.length === 0) {
+        break;
+      }
+      for (const c of undecided) {
+        decisions[c.referentId] = null;
+      }
+    }
+
+    const reported = new Set(replay.conflicts.map((c) => c.referentId));
+    for (const id of Object.keys(decisions)) {
+      if (!reported.has(id)) {
+        delete decisions[id];
+      }
+    }
+    const reassigning = { ...session.reassigning };
+    for (const id of Object.keys(reassigning)) {
+      if (!reported.has(id)) {
+        delete reassigning[id];
+      }
+    }
+    const activeReferentId =
+      session.activeReferentId && reported.has(session.activeReferentId)
+        ? session.activeReferentId
+        : replay.conflicts[0]?.referentId ?? null;
+
+    const before = Array.from(this.versionLogResolutionBefore?.values() ?? []);
+    const ghosts: Record<string, ExcalidrawElement[]> = {};
+    for (const c of replay.conflicts) {
+      ghosts[c.referentId] =
+        c.referentKind === "element"
+          ? // deleted later in the log or not, it is drawn where it last was
+            before.filter((el) => el.id === c.referentId)
+          : before.filter(
+              (el) => !el.isDeleted && el.groupIds.includes(c.referentId),
+            );
+    }
 
     this.commitReplay(replay);
-    this.setState({ versionLogPendingConflicts: null });
+    this.setState({
+      versionLogResolution: {
+        ...session,
+        conflicts: replay.conflicts,
+        decisions,
+        reassigning,
+        activeReferentId,
+        ghosts,
+        // the next pointer move asks again, of the scene as it now is
+        hover: null,
+        // the scene now shows the decisions' result
+        showingBefore: false,
+      },
+      versionLogHoverPreview: null,
+      viewModeEnabled: true,
+      // the decisions are made in the version-log sidebar, and the
+      // canvas names elements by short id only while it is open
+      openSidebar: { name: DEFAULT_SIDEBAR.name, tab: VERSION_LOG_SIDEBAR_TAB },
+    });
   };
 
   private commitReplay = (
@@ -5199,36 +5310,247 @@ class App extends React.Component<AppProps, AppState> {
     this.versionLog.setSkippedByReplay(replay.skipped);
   };
 
-  /**
-   * Modal callback. Writes the user's per-referent decisions into the
-   * log's remap map and re-runs the replay — which may itself surface
-   * new conflicts (cascading), in which case the modal stays open
-   * with the new conflict set.
-   */
-  public applyVersionLogConflictResolutions = (
-    decisions: Map<string, Remap>,
+  /** Decide one referent: stand `to` in for it, or `null` to skip its ops. */
+  public decideVersionLogConflict = (
+    referentId: string,
+    to: string | null,
   ): void => {
-    this.versionLog.addRemaps(decisions);
-    const pending = this.state.versionLogPendingConflicts;
-    if (pending == null) {
+    const session = this.state.versionLogResolution;
+    if (session == null) {
       return;
     }
-    this.runReplayAfterToggle(pending.pendingMomentId);
+    this.refreshVersionLogResolution({
+      ...session,
+      decisions: { ...session.decisions, [referentId]: to },
+      activeReferentId: referentId,
+    });
   };
 
   /**
-   * Modal callback. Reverts the original toggle that produced the
-   * pending conflicts and closes the modal. Any remaps the user added
-   * via earlier rounds of the same modal session are kept — those
-   * were explicit user decisions.
+   * Follow the pointer during a session. Over a candidate: the pointer
+   * cursor, and — unless it is already the stand-in — a preview of
+   * choosing it, as ghosts of everything that would change. Either way,
+   * what is under the pointer goes to the session for the help text.
+   * State is only written when the answer changes, so a still pointer
+   * costs nothing.
    */
-  public cancelVersionLogConflictResolution = (): void => {
-    const pending = this.state.versionLogPendingConflicts;
-    if (pending == null) {
+  private updateVersionLogResolutionHover = (x: number, y: number): void => {
+    const session = this.state.versionLogResolution;
+    // outside Reassign the canvas takes no pick
+    const conflict = session && getPickingConflict(session);
+    if (!session) {
       return;
     }
-    this.versionLog.toggleMomentActive(pending.pendingMomentId);
-    this.setState({ versionLogPendingConflicts: null });
+    const hover = conflict
+      ? getConflictHover(
+          conflict,
+          this.getElementsAtPosition(x, y, { includeLockedElements: true }),
+        )
+      : null;
+    this.cursor.set(
+      hover?.kind === "pick" ? CURSOR_TYPE.POINTER : CURSOR_TYPE.GRAB,
+    );
+
+    const preview =
+      conflict &&
+      hover?.kind === "pick" &&
+      hover.id !== session.decisions[conflict.referentId]
+        ? this.getVersionLogStandInPreview(conflict.referentId, hover.id)
+        : null;
+
+    const hoverKey = (h: ConflictHover | null) =>
+      h == null ? "" : h.kind === "pick" ? `pick:${h.id}` : `no:${h.elementId}`;
+    const hoverChanged = hoverKey(hover) !== hoverKey(session.hover);
+    if (hoverChanged || preview !== this.state.versionLogHoverPreview) {
+      this.setState({
+        versionLogResolution: hoverChanged ? { ...session, hover } : session,
+        versionLogHoverPreview: preview,
+      });
+    }
+  };
+
+  /**
+   * What choosing `standIn` for `referentId` would change, as ghosts:
+   * every element the replay under that choice draws differently from the
+   * scene as it stands. One replay per candidate, kept until a decision
+   * changes, so moving across a candidate and back doesn't replay again —
+   * and the same object comes back, which is how the hover tells it is
+   * showing the same thing.
+   */
+  private getVersionLogStandInPreview = (
+    referentId: string,
+    standIn: string,
+  ): AppState["versionLogHoverPreview"] => {
+    const session = this.state.versionLogResolution;
+    if (session == null) {
+      return null;
+    }
+    if (this.versionLogStandInPreviews?.decisions !== session.decisions) {
+      this.versionLogStandInPreviews = {
+        decisions: session.decisions,
+        previews: new Map(),
+      };
+    }
+    const key = `${referentId}\u0000${standIn}`;
+    const cached = this.versionLogStandInPreviews.previews.get(key);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const replay = replayActiveOps(
+      this.versionLog,
+      toRemaps(
+        { ...session.decisions, [referentId]: standIn },
+        new Map(session.conflicts.map((c) => [c.referentId, c.referentKind])),
+      ),
+    );
+    const current = this.scene.getElementsMapIncludingDeleted();
+    const ghosts = replay
+      ? Array.from(replay.snapshot.values()).filter((el) => {
+          const now = current.get(el.id);
+          return (
+            !el.isDeleted && (!now || now.isDeleted || drawsDifferently(now, el))
+          );
+        })
+      : [];
+    const preview = ghosts.length > 0 ? { ghosts, bboxes: [] } : null;
+    this.versionLogStandInPreviews.previews.set(key, preview);
+    return preview;
+  };
+
+  /** The candidate of the active conflict at a scene point, if any. */
+  private getVersionLogConflictPick = (x: number, y: number): string | null => {
+    const session = this.state.versionLogResolution;
+    const conflict = session && getPickingConflict(session);
+    if (!conflict) {
+      return null;
+    }
+    const hover = getConflictHover(
+      conflict,
+      this.getElementsAtPosition(x, y, { includeLockedElements: true }),
+    );
+    return hover?.kind === "pick" ? hover.id : null;
+  };
+
+  /** Which conflict the canvas picks for. */
+  public setActiveVersionLogConflict = (referentId: string): void => {
+    const session = this.state.versionLogResolution;
+    if (session == null) {
+      return;
+    }
+    this.setState({
+      versionLogResolution: {
+        ...session,
+        activeReferentId: referentId,
+        hover: null,
+      },
+      versionLogHoverPreview: null,
+    });
+  };
+
+  /**
+   * End the session by writing its decisions to the log as remaps. The
+   * scene already shows their result, so it is replayed only to commit
+   * it without the session's tentative layer.
+   */
+  public applyVersionLogResolution = (): void => {
+    const session = this.state.versionLogResolution;
+    if (session == null || !canApplyResolution(session)) {
+      return;
+    }
+    if (session.showingBefore) {
+      // keeping the scene as it was is reverting the toggle
+      this.cancelVersionLogResolution();
+      return;
+    }
+    this.versionLog.addRemaps(
+      toRemaps(
+        session.decisions,
+        new Map(session.conflicts.map((c) => [c.referentId, c.referentKind])),
+      ),
+    );
+    this.endVersionLogResolution(session.viewModeBefore);
+  };
+
+  /**
+   * Set the bar's switch for the active conflict. Skip drops its stand-in;
+   * Reassign keeps whatever stand-in it has and lets the canvas pick one.
+   * Show before is for the whole session: the scene as it was before the
+   * toggle, which Apply then keeps.
+   */
+  public setVersionLogConflictMode = (mode: ConflictMode): void => {
+    const session = this.state.versionLogResolution;
+    const referentId = session?.activeReferentId;
+    if (session == null || referentId == null) {
+      return;
+    }
+    if (mode === "before") {
+      this.showVersionLogStateBefore(session);
+      return;
+    }
+    const reassigning = { ...session.reassigning };
+    delete reassigning[referentId];
+    this.refreshVersionLogResolution(
+      mode === "skip"
+        ? {
+            ...session,
+            decisions: { ...session.decisions, [referentId]: null },
+            reassigning,
+          }
+        : {
+            ...session,
+            reassigning: { ...reassigning, [referentId]: true },
+          },
+    );
+  };
+
+  /**
+   * Commit the scene as it was before the toggle. A replay with the
+   * toggle reverted rather than the scene captured when the session
+   * opened: a replay stamps a version the store adopts, where the
+   * captured copies are older than what it has seen since.
+   */
+  private showVersionLogStateBefore = (session: ResolutionSession): void => {
+    if (session.showingBefore) {
+      return;
+    }
+    this.versionLog.toggleMomentActive(session.pendingMomentId);
+    const replay = replayActiveOps(this.versionLog);
+    this.versionLog.toggleMomentActive(session.pendingMomentId);
+    if (replay == null) {
+      return;
+    }
+    // the log's skipped marks stay the session's: this is only a look
+    this.updateScene({
+      elements: syncInvalidIndices(Array.from(replay.snapshot.values())),
+      captureUpdate: CaptureUpdateAction.NEVER,
+    });
+    this.setState({
+      versionLogResolution: { ...session, hover: null, showingBefore: true },
+      versionLogHoverPreview: null,
+    });
+  };
+
+  /** End the session without a trace: revert the toggle that opened it. */
+  public cancelVersionLogResolution = (): void => {
+    const session = this.state.versionLogResolution;
+    if (session == null) {
+      return;
+    }
+    this.versionLog.toggleMomentActive(session.pendingMomentId);
+    this.endVersionLogResolution(session.viewModeBefore);
+  };
+
+  private endVersionLogResolution = (viewModeBefore: boolean): void => {
+    this.versionLogResolutionBefore = null;
+    this.versionLogStandInPreviews = null;
+    // cleared first, so the host's autosave (paused for the session)
+    // sees the committed scene
+    this.setState({
+      versionLogResolution: null,
+      versionLogHoverPreview: null,
+      viewModeEnabled: viewModeBefore,
+    });
     const replay = replayActiveOps(this.versionLog);
     if (replay != null) {
       this.commitReplay(replay);
@@ -5243,6 +5565,9 @@ class App extends React.Component<AppProps, AppState> {
    * NOT re-enter the durable-increment emitter.
    */
   public jumpToVersionLogMoment = (targetMomentId: string): boolean => {
+    if (this.state.versionLogResolution) {
+      return false;
+    }
     const moments = this.versionLog.getMoments();
     if (!moments.some((m) => m.id === targetMomentId)) {
       return false;
@@ -5420,6 +5745,24 @@ class App extends React.Component<AppProps, AppState> {
               : value;
           },
         });
+      }
+
+      if (
+        this.state.versionLogResolution &&
+        !isInputLike(event.target) &&
+        // a focused button answers Enter itself
+        !(event.target instanceof HTMLButtonElement)
+      ) {
+        if (event.key === KEYS.ENTER) {
+          event.preventDefault();
+          this.applyVersionLogResolution();
+          return;
+        }
+        if (event.key === KEYS.ESCAPE) {
+          event.preventDefault();
+          this.cancelVersionLogResolution();
+          return;
+        }
       }
 
       if (!isInputLike(event.target)) {
@@ -7166,6 +7509,11 @@ class App extends React.Component<AppProps, AppState> {
       return;
     }
 
+    if (this.state.versionLogResolution) {
+      this.updateVersionLogResolutionHover(scenePointerX, scenePointerY);
+      return;
+    }
+
     const isPointerOverScrollBars = isOverScrollBars(
       currentScrollBars,
       event.clientX - this.state.offsetLeft,
@@ -8047,6 +8395,26 @@ class App extends React.Component<AppProps, AppState> {
 
     if (this.pan.isActive()) {
       return;
+    }
+
+    // During conflict resolution, in Reassign, a press on a candidate picks
+    // it as the stand-in — or, already picked, unpicks it, leaving
+    // Reassign waiting for another. Anywhere else, and in the other
+    // modes, falls through to view mode's pan.
+    if (
+      this.state.versionLogResolution &&
+      event.button === POINTER_BUTTON.MAIN &&
+      !this.pan.isSpaceHeld()
+    ) {
+      const session = this.state.versionLogResolution;
+      const pick = this.getVersionLogConflictPick(scenePointerX, scenePointerY);
+      if (pick != null && session.activeReferentId != null) {
+        this.decideVersionLogConflict(
+          session.activeReferentId,
+          session.decisions[session.activeReferentId] === pick ? null : pick,
+        );
+        return;
+      }
     }
 
     this.lastPointerDownEvent = event;

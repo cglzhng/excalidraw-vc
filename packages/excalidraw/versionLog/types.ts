@@ -656,8 +656,9 @@ export interface LogMoment {
  * that touches `X` is rewritten (or explicitly skipped if `to` is
  * null) before its referent-presence check runs.
  *
- * Created interactively via the conflict-resolution modal that pops up
- * when a selective-undo causes downstream ops to lose their referent.
+ * Created by the conflict-resolution session that opens when a
+ * selective-undo causes downstream ops to lose their referent; the
+ * session's own tentative decisions take the same shape.
  */
 export type Remap =
   | { kind: "group"; to: string | null }
@@ -666,7 +667,8 @@ export type Remap =
 /**
  * One unresolved hard conflict detected during replay, grouped by the
  * missing referent (so the user resolves once per referent rather than
- * once per affected op). The modal renders one section per conflict.
+ * once per affected op). The version-log panel shows one row per
+ * conflict while a resolution session is open.
  *
  * `candidates` is computed at the moment the conflict is hit — they're
  * live referents of the matching kind in the in-progress replay
@@ -684,7 +686,14 @@ export interface PendingConflict {
    * Live target ids the user can remap to: groups for a group, and for
    * an element whatever every affected op can carry over to — of any
    * type, unless an op's payload only describes one kind of geometry
-   * (`canStandIn` in `replay.ts`).
+   * (`standInRefusal` in `replay.ts`).
    */
   candidates: string[];
+  /**
+   * Why each element that isn't a candidate can't be one, phrased to
+   * follow its name ("is a line; …"). Element conflicts only, and only
+   * for elements that existed where the conflict arose — one created
+   * later has no entry, which is its own answer.
+   */
+  refusals: Record<string, string>;
 }

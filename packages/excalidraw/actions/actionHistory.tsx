@@ -85,8 +85,8 @@ const executeVersionLogStep = (
   step: () => void,
 ): ActionResult =>
   executeHistoryAction(app, appState, () => {
-    // a toggle is already waiting on the conflict modal
-    if (!appState.versionLogPendingConflicts) {
+    // a toggle is already waiting on conflict resolution
+    if (!appState.versionLogResolution) {
       step();
     }
   });

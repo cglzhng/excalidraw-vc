@@ -3,8 +3,9 @@
  *
  * Selective undo can leave a downstream op pointing at an element or
  * group that no longer exists (the create / group op that introduced
- * it has been deactivated). The user resolves these via the conflict
- * modal, which stores a `Map<originalId, Remap>` on the version log.
+ * it has been deactivated). The user resolves these in a conflict-
+ * resolution session, which stores a `Map<originalId, Remap>` on the
+ * version log when it is applied.
  *
  * This module is the single point where those rewrites are applied
  * during replay. The function returns either:

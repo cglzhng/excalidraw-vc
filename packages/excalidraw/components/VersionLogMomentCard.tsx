@@ -4,6 +4,7 @@ import {
   collectElementIdsFromGroupNode,
   getOperationElementIds,
   summarizeAlignmentOp,
+  type ArrowBinding,
   type ConsequenceReason,
   type ConsequentOp,
   type LogEntry,
@@ -497,18 +498,28 @@ export const renderOpContent = (
     }
     case "arrow-bind": {
       // Describe each affected side as bind / unbind / rebind based
-      // on the null-vs-value shape of before/after.
+      // on the null-vs-value shape of before/after, naming the element
+      // on whichever side has one.
+      const nameOf = (binding: NonNullable<ArrowBinding>) =>
+        shortIdOf?.(binding.elementId) ?? `${binding.elementId.slice(0, 6)}…`;
+      const arrow = formatElementLabel(op.elementType, shortId);
       const describe = (
         side: "start" | "end",
-        change: { before: unknown; after: unknown },
+        change: { before: ArrowBinding; after: ArrowBinding },
       ): string => {
+        const end = `${side} of ${arrow}`;
         if (change.before == null && change.after != null) {
-          return `Bound ${side}`;
+          return `Bound ${end} to ${nameOf(change.after)}`;
         }
         if (change.before != null && change.after == null) {
-          return `Unbound ${side}`;
+          return `Unbound ${end} from ${nameOf(change.before)}`;
         }
-        return `Rebound ${side}`;
+        if (change.before != null && change.after != null) {
+          return `Rebound ${end} from ${nameOf(change.before)} to ${nameOf(
+            change.after,
+          )}`;
+        }
+        return `Rebound ${end}`;
       };
       const parts: string[] = [];
       if (op.start) {
@@ -517,11 +528,7 @@ export const renderOpContent = (
       if (op.end) {
         parts.push(describe("end", op.end));
       }
-      return (
-        <>
-          <strong>{parts.join(" + ")}</strong> on arrow
-        </>
-      );
+      return <strong>{parts.join(" + ")}</strong>;
     }
     case "arrow-move-binding": {
       // List which sides had their anchor moved, with the bound

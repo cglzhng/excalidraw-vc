@@ -49,6 +49,10 @@ import { useAppProps, useEditorInterface, useStylesPanelMode } from "./App";
 import { OverwriteConfirmDialog } from "./OverwriteConfirm/OverwriteConfirm";
 import { sidebarRightIcon } from "./icons";
 import { DefaultSidebar } from "./DefaultSidebar";
+import {
+  VersionLogConflictFrame,
+  VersionLogConflicts,
+} from "./VersionLogConflicts";
 import { TTDDialog } from "./TTDDialog/TTDDialog";
 import { Stats } from "./Stats";
 import ElementLinkDialog from "./ElementLinkDialog";
@@ -665,6 +669,13 @@ const LayerUI = ({
               }
             />
           )}
+          <VersionLogConflictFrame
+            style={
+              isSidebarDockedAndFits
+                ? { right: `calc(var(--right-sidebar-width) - var(--space-factor) * 2)` }
+                : undefined
+            }
+          />
           <div
             className="layer-ui__wrapper"
             style={
@@ -675,6 +686,7 @@ const LayerUI = ({
           >
             {renderWelcomeScreen && <tunnels.WelcomeScreenCenterTunnel.Out />}
             {renderFixedSideContainer()}
+            <VersionLogConflicts />
             <Footer
               appState={appState}
               actionManager={actionManager}

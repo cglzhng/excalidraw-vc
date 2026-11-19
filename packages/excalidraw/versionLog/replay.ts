@@ -11,15 +11,16 @@
  *   3. For each remaining moment, walk its ops in chronological
  *      order. Apply user-supplied remaps; then before applying each
  *      op, check whether its (possibly-rewritten) referent actually
- *      exists. If any referent is missing, record the op as skipped
- *      AND emit a `PendingConflict` so the UI can let the user choose
- *      a resolution.
+ *      exists. If any referent is missing, emit a `PendingConflict` so
+ *      the UI can let the user choose a resolution, and apply the
+ *      session's tentative decision for it if there is one — otherwise
+ *      record the op as skipped.
  *   4. Return the resulting snapshot + skipped set + conflicts.
  *
  * The caller (App) hands the snapshot to `updateScene` with
- * `captureUpdate: NEVER`, stores the skipped set on the log, and — if
- * `conflicts` is non-empty — opens the conflict-resolution modal
- * INSTEAD of committing the snapshot.
+ * `captureUpdate: NEVER` and stores the skipped set on the log. If a
+ * toggle's replay reports conflicts, it opens a conflict-resolution
+ * session instead, which commits a replay under its own decisions.
  */
 
 import {
@@ -40,7 +41,12 @@ import { applyRemapsToOp } from "./remap";
 import { collectElementIdsFromGroupNode, getOperationElementIds } from "./types";
 
 import type { SceneSnapshot } from "./applyOps";
-import type { LogMoment, LogOperation, PendingConflict } from "./types";
+import type {
+  LogMoment,
+  LogOperation,
+  PendingConflict,
+  Remap,
+} from "./types";
 import type { VersionLog } from "./VersionLog";
 
 export interface ReplayResult {
@@ -55,7 +61,19 @@ export interface ReplayResult {
   conflicts: PendingConflict[];
 }
 
-export const replayActiveOps = (log: VersionLog): ReplayResult | null => {
+/**
+ * `tentative` holds decisions a conflict-resolution session hasn't
+ * committed yet, keyed by missing referent like the log's own remaps.
+ * Each applies only where the log's remaps leave that referent missing,
+ * and its conflict is still reported — with candidates and affected ops,
+ * so the session can offer the choice again — while the decision is
+ * applied. The caller tells the two apart by whether the referent has a
+ * tentative decision.
+ */
+export const replayActiveOps = (
+  log: VersionLog,
+  tentative: ReadonlyMap<string, Remap> = new Map(),
+): ReplayResult | null => {
   const baseline = log.getBaselineScene();
   if (baseline == null) {
     return null;
@@ -119,6 +137,7 @@ export const replayActiveOps = (log: VersionLog): ReplayResult | null => {
       moment,
       snapshot,
       remaps,
+      tentative,
       skipped,
       conflictMap,
       inPlay,
@@ -227,7 +246,8 @@ const syncBoundElements = (snapshot: SceneSnapshot): string[] => {
 const applyMomentTracked = (
   moment: LogMoment,
   snapshot: SceneSnapshot,
-  remaps: ReadonlyMap<string, import("./types").Remap>,
+  remaps: ReadonlyMap<string, Remap>,
+  tentative: ReadonlyMap<string, Remap>,
   skipped: Set<LogOperation>,
   conflictMap: Map<string, PendingConflict>,
   inPlay: Set<string>,
@@ -242,21 +262,33 @@ const applyMomentTracked = (
       continue;
     }
 
-    const rewritten = remap.op;
-
     // For group-keyed transforms, the captured `elementIds` is the
     // ORIGINAL member set. After a group remap (G1 → G2) those ids
     // are stale — apply the transform to the live members of G2 in
     // the current snapshot instead.
-    const finalOp = resolveLiveGroupMembers(rewritten, snapshot);
+    let finalOp = resolveLiveGroupMembers(remap.op, snapshot);
 
     const missing = enumerateMissingReferents(finalOp, snapshot);
     if (missing.length > 0) {
-      skipped.add(op);
       for (const ref of missing) {
         recordConflict(op, ref, snapshot, conflictMap);
       }
-      continue;
+      // A session's decision stands in for the user's answer only once
+      // it covers every referent this op is missing.
+      if (!missing.every((ref) => tentative.has(ref.id))) {
+        skipped.add(op);
+        continue;
+      }
+      const decided = applyRemapsToOp(finalOp, tentative);
+      if (decided.status === "skip") {
+        skipped.add(op);
+        continue;
+      }
+      finalOp = resolveLiveGroupMembers(decided.op, snapshot);
+      if (enumerateMissingReferents(finalOp, snapshot).length > 0) {
+        skipped.add(op);
+        continue;
+      }
     }
     // `applyOpsToScene` reverses ops for "backward" but applies in
     // order for "forward"; single-op call is the same either way. A
@@ -323,78 +355,109 @@ const recordConflict = (
       // one stand-in takes every op in the bucket, so it has to suit
       // each of them
       if (ref.kind === "element") {
-        existing.candidates = existing.candidates.filter((id) =>
-          canStandIn(op, ref.id, snapshot.get(id)),
-        );
+        existing.candidates = existing.candidates.filter((id) => {
+          const refusal = standInRefusal(op, ref.id, snapshot.get(id));
+          if (refusal != null) {
+            existing.refusals[id] = refusal;
+          }
+          return refusal == null;
+        });
       }
     }
     return;
   }
 
+  const candidates: string[] = [];
+  const refusals: Record<string, string> = {};
+  if (ref.kind === "element") {
+    for (const el of snapshot.values()) {
+      if (el.id === ref.id) {
+        continue;
+      }
+      const refusal = standInRefusal(op, ref.id, el);
+      if (refusal == null) {
+        candidates.push(el.id);
+      } else {
+        refusals[el.id] = refusal;
+      }
+    }
+  } else {
+    candidates.push(...collectGroupCandidates(ref.id, snapshot));
+  }
   conflictMap.set(ref.id, {
     referentKind: ref.kind,
     referentId: ref.id,
     elementType: ref.elementType,
     affectedOps: [op],
-    candidates:
-      ref.kind === "element"
-        ? Array.from(snapshot.values())
-            .filter((el) => canStandIn(op, ref.id, el))
-            .map((el) => el.id)
-        : collectGroupCandidates(ref.id, snapshot),
+    candidates,
+    refusals,
   });
 };
 
 /**
- * Whether `el` could take the place of the missing element `refId` in
- * `op`. Only what exists at this point in the replay is asked: an
- * element drawn later in the log isn't there yet to stand in.
+ * Why `el` can't take the place of the missing element `refId` in `op`,
+ * or `null` if it can. Only what exists at this point in the replay is
+ * asked: an element drawn later in the log isn't there yet to stand in,
+ * and gets no reason here at all (`PendingConflict.refusals`).
  *
  * Most ops carry over to any kind of element — a move is a
  * displacement, a restyle a set of style values, a rotation an angle.
  * The exceptions are payloads that only describe one kind of geometry.
+ * Each reason is phrased to follow the element's name.
  */
-const canStandIn = (
+const standInRefusal = (
   op: LogOperation,
   refId: string,
   el: ExcalidrawElement | undefined,
-): boolean => {
-  if (!el || el.isDeleted || el.id === refId) {
-    return false;
+): string | null => {
+  if (!el || el.id === refId) {
+    return "is the element that went missing";
+  }
+  if (el.isDeleted) {
+    return "is deleted at this point in the log";
   }
   switch (op.kind) {
     case "arrow-bind":
     case "arrow-move-binding":
       // the binding lives on the arrow; what it binds to only has to be
       // something an arrow can bind to, of any type
-      return refId === op.elementId
-        ? isArrowElement(el)
-        : el.id !== op.elementId &&
-            isBindableElement(el) &&
-            !isBoundToContainer(el);
+      if (refId === op.elementId) {
+        return isArrowElement(el) ? null : "isn't an arrow";
+      }
+      if (el.id === op.elementId) {
+        return "is the arrow itself";
+      }
+      if (isBoundToContainer(el)) {
+        return "is a label; it follows its container";
+      }
+      return isBindableElement(el) ? null : "can't have an arrow bound to it";
     case "resize":
       // Writes width and height alone. That is the whole shape only for
       // a box: a line's or a freedraw's points, or a text's wrapped
       // content, would be left disagreeing with its new size.
-      return (
-        !isLinearElement(el) &&
-        !isFreeDrawElement(el) &&
-        !isTextElement(el)
-      );
+      return isLinearElement(el) || isFreeDrawElement(el) || isTextElement(el)
+        ? `is a ${el.type}; a resize only carries over to a box`
+        : null;
     case "arrow-resize":
     case "arrow-edit-points":
       // points are the shape, so only something made of points
-      return isLinearElement(el);
+      return isLinearElement(el)
+        ? null
+        : "isn't a line or arrow, so it has no points to take";
     case "alignment":
       // a link is between two boxes' edges; the engine's own rule
-      return isAlignable(el);
+      return isAlignable(el) ? null : "can't be aligned";
     case "raw":
       // an arbitrary property map is only safe on its own kind
-      return el.type === op.entry.elementType;
+      return el.type === op.entry.elementType
+        ? null
+        : `isn't a ${op.entry.elementType}, which this change was written for`;
     default:
       // A container's label is never placed or styled on its own: it
       // follows its container, which would undo anything written to it.
-      return !isBoundToContainer(el);
+      return isBoundToContainer(el)
+        ? "is a label; it follows its container"
+        : null;
   }
 };
 
@@ -425,7 +488,7 @@ const collectGroupCandidates = (
  * For ops with multiple potential referents (notably `arrow-bind`,
  * which can fail because the arrow itself OR either bound-to element
  * is gone), every missing one is surfaced — each becomes its own
- * entry in the conflict modal so the user resolves them
+ * conflict of its own so the user resolves them
  * independently.
  *
  * `create` and `group` always return [] — they introduce referents

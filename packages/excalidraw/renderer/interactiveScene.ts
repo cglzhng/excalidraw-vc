@@ -109,6 +109,11 @@ import {
 import { renderSnaps } from "../renderer/renderSnaps";
 import { roundRect } from "../renderer/roundRect";
 import {
+  getActiveConflict,
+  getCandidateElements,
+  getPickingConflict,
+} from "../versionLog/conflictPicking";
+import {
   getScrollBars,
   SCROLLBAR_COLOR,
   SCROLLBAR_WIDTH,
@@ -134,6 +139,13 @@ import {
   getNarrowIndicatorLineDash,
   getWideIndicatorLineDash,
 } from "./indicatorHelpers";
+import {
+  renderConflictWash,
+  renderMissingOutline,
+  renderRefusalOutline,
+  renderStandInConnector,
+  renderStandInOutline,
+} from "./renderConflictResolution";
 
 import type {
   AppState,
@@ -2175,64 +2187,70 @@ const _renderInteractiveScene = ({
     }
   }
 
+  // Ghost elements: render each at low alpha using the same per-element
+  // renderer the static canvas uses. Shared by the hover preview and a
+  // conflict-resolution session's missing referents.
+  const renderGhosts = (ghosts: readonly ExcalidrawElement[]) => {
+    if (ghosts.length === 0) {
+      return;
+    }
+    const rc = rough.canvas(canvas);
+    const ghostRenderConfig = {
+      // Minimal config — most fields are only consulted by code
+      // paths that don't apply to hover (export, eraser tool, etc.).
+      canvasBackgroundColor: "#ffffff" as AppState["viewBackgroundColor"],
+      imageCache: app.imageCache,
+      renderGrid: false,
+      isExporting: false,
+      embedsValidationStatus: new Map(),
+      elementsPendingErasure: new Set<string>(),
+      pendingFlowchartNodes: null,
+      theme: appState.theme,
+      scale,
+    };
+
+    for (const ghost of ghosts) {
+      // Deleted ghost? We still want to draw them (e.g. the
+      // pre-delete preview), so force isDeleted: false on a clone.
+      const drawable =
+        ghost.isDeleted === false
+          ? ghost
+          : ({ ...ghost, isDeleted: false } as typeof ghost);
+      context.save();
+      // `globalAlpha` doesn't work here — `renderElement` resets it
+      // to 1 via `getRenderOpacity` before drawing. CSS-style
+      // `filter` composes at draw time and is not touched by that
+      // path, so the ghost actually comes out translucent.
+      context.filter = "opacity(0.35)";
+      try {
+        renderElement(
+          drawable as NonDeleted<ExcalidrawElement>,
+          elementsMap,
+          allElementsMap,
+          rc,
+          context,
+          ghostRenderConfig,
+          appState,
+        );
+      } catch (e) {
+        // Per-ghost render shouldn't be able to take down the
+        // whole interactive scene.
+        // eslint-disable-next-line no-console
+        console.warn("[version-log] ghost render failed", e);
+      }
+      context.restore();
+    }
+  };
+
   // version-log hover preview: ghosts (low-alpha element renders) +
   // group / ungroup bboxes. Driven by mousing over a row in the
   // version-log sidebar. See packages/excalidraw/versionLog/hoverPreview.ts.
-  if (appState.versionLogHoverPreview) {
+  // (During conflict resolution the preview is a stand-in's outcome, drawn
+  // with the session's own overlay below so the wash doesn't dim it.)
+  if (appState.versionLogHoverPreview && !appState.versionLogResolution) {
     const { ghosts, bboxes } = appState.versionLogHoverPreview;
 
-    // Ghost elements: render each at low alpha using the same
-    // per-element renderer the static canvas uses. We translate by
-    // (scrollX, scrollY) to match the canvas coords the static scene
-    // already uses for these renderers.
-    if (ghosts.length > 0) {
-      const rc = rough.canvas(canvas);
-      const ghostRenderConfig = {
-        // Minimal config — most fields are only consulted by code
-        // paths that don't apply to hover (export, eraser tool, etc.).
-        canvasBackgroundColor: "#ffffff" as AppState["viewBackgroundColor"],
-        imageCache: app.imageCache,
-        renderGrid: false,
-        isExporting: false,
-        embedsValidationStatus: new Map(),
-        elementsPendingErasure: new Set<string>(),
-        pendingFlowchartNodes: null,
-        theme: appState.theme,
-        scale,
-      };
-
-      for (const ghost of ghosts) {
-        // Deleted ghost? We still want to draw them (e.g. the
-        // pre-delete preview), so force isDeleted: false on a clone.
-        const drawable =
-          ghost.isDeleted === false
-            ? ghost
-            : ({ ...ghost, isDeleted: false } as typeof ghost);
-        context.save();
-        // `globalAlpha` doesn't work here — `renderElement` resets it
-        // to 1 via `getRenderOpacity` before drawing. CSS-style
-        // `filter` composes at draw time and is not touched by that
-        // path, so the ghost actually comes out translucent.
-        context.filter = "opacity(0.35)";
-        try {
-          renderElement(
-            drawable as NonDeleted<ExcalidrawElement>,
-            elementsMap,
-            allElementsMap,
-            rc,
-            context,
-            ghostRenderConfig,
-            appState,
-          );
-        } catch (e) {
-          // Per-ghost render shouldn't be able to take down the
-          // whole interactive scene.
-          // eslint-disable-next-line no-console
-          console.warn("[version-log] ghost render failed", e);
-        }
-        context.restore();
-      }
-    }
+    renderGhosts(ghosts);
 
     // Group / ungroup bboxes: one teal box per entry, enclosing every
     // element in its `elementIds` list.
@@ -2758,6 +2776,81 @@ const _renderInteractiveScene = ({
     anchorOverlays,
     refusalRuntime,
   );
+
+  // Conflict resolution: the element the active conflict lost is drawn
+  // where it was, and in Reassign its candidates stand out of a wash over
+  // everything else. Under the short ids, so the names stay legible on the
+  // wash.
+  const resolution = appState.versionLogResolution;
+  // showing the scene before the toggle, none of this applies to it
+  const activeConflict =
+    resolution && !resolution.showingBefore && getActiveConflict(resolution);
+  // and only Reassign offers candidates
+  const picking = resolution && getPickingConflict(resolution);
+  if (resolution && activeConflict) {
+    const candidates = getCandidateElements(
+      activeConflict,
+      allElementsMap.values(),
+    );
+    const candidateBounds = new Map(
+      Array.from(candidates, ([id, elements]) => [
+        id,
+        getCommonBounds(elements),
+      ]),
+    );
+    if (picking) {
+      renderConflictWash(
+        context,
+        appState,
+        normalizedWidth,
+        normalizedHeight,
+        Array.from(candidateBounds.values()),
+      );
+    }
+
+    const ghosts = resolution.ghosts[activeConflict.referentId] ?? [];
+    renderGhosts(ghosts);
+    // a hovered candidate's outcome
+    renderGhosts(appState.versionLogHoverPreview?.ghosts ?? []);
+    const ghostBounds = ghosts.length > 0 ? getCommonBounds(ghosts) : null;
+    // the candidates on offer need no mark of their own — the wash leaves
+    // them out — but the one chosen does
+    const chosen = resolution.decisions[activeConflict.referentId] ?? null;
+    const chosenBounds = chosen ? candidateBounds.get(chosen) : undefined;
+    if (chosen && chosenBounds) {
+      const chosenName =
+        activeConflict.referentKind === "group"
+          ? "group"
+          : allElementsMap.get(chosen)?.shortId ?? "element";
+      renderStandInOutline(
+        context,
+        appState,
+        chosenBounds,
+        `Moments applied to ${chosenName}`,
+      );
+    }
+    if (ghostBounds) {
+      if (chosenBounds) {
+        renderStandInConnector(context, appState, ghostBounds, chosenBounds);
+      }
+      const name =
+        activeConflict.referentKind === "group"
+          ? "group"
+          : ghosts[0]?.shortId ?? activeConflict.elementType ?? "element";
+      renderMissingOutline(context, appState, ghostBounds, `${name} missing`);
+    }
+    const hover = resolution.hover;
+    const refused =
+      hover?.kind === "refused" && allElementsMap.get(hover.elementId);
+    if (refused) {
+      renderRefusalOutline(
+        context,
+        appState,
+        getCommonBounds([refused]),
+        `${refused.shortId ?? refused.type} ${hover.reason}`,
+      );
+    }
+  }
 
   // Short ids, drawn only while the version log is open: the log names
   // elements by them, so the canvas has to answer "which one is R3?" at

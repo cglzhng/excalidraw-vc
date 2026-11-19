@@ -28,7 +28,9 @@ export const actionToggleViewMode = register({
   predicate: (elements, appState, appProps, app) => {
     return (
       typeof appProps.viewModeEnabled === "undefined" &&
-      app.isInteractionEnabled()
+      app.isInteractionEnabled() &&
+      // conflict resolution holds view mode on until it ends
+      !appState.versionLogResolution
     );
   },
   keyTest: (event) =>
