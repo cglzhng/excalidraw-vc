@@ -6872,6 +6872,42 @@ class App extends React.Component<AppProps, AppState> {
         this.actionManager.executeAction(actionToggleLinearEditor);
         return;
       } else if (
+        this.state.selectedLinearElement?.elementId ===
+          selectedLinearElement.id &&
+        isSimpleArrow(selectedLinearElement)
+      ) {
+        // a double-click on a point between the ends deletes it, editor or
+        // not — the counterpart of dragging a midpoint to add one. The ends
+        // stay: they are what the arrow is drawn between.
+        const pointIndex = LinearElementEditor.getPointIndexUnderCursor(
+          selectedLinearElement,
+          this.scene.getNonDeletedElementsMap(),
+          this.state.zoom,
+          sceneX,
+          sceneY,
+        );
+        if (
+          pointIndex > 0 &&
+          pointIndex < selectedLinearElement.points.length - 1
+        ) {
+          this.store.scheduleCapture();
+          LinearElementEditor.deletePoints(
+            // the selection holds only live elements
+            selectedLinearElement as NonDeleted<ExcalidrawLinearElement>,
+            this,
+            [pointIndex],
+          );
+          this.setState({
+            selectedLinearElement: {
+              ...this.state.selectedLinearElement,
+              selectedPointsIndices: null,
+              hoverPointIndex: -1,
+              segmentMidPointHoveredCoords: null,
+            },
+          });
+          return;
+        }
+      } else if (
         this.state.selectedLinearElement &&
         isElbowArrow(selectedElements[0])
       ) {

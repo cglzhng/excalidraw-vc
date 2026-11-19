@@ -65,6 +65,10 @@ Upstream's "move up" / "move down" step one element (or group, frame, container-
 
 The log records stacking order as a `reorder` op holding each moved element's fractional `index` before and after. `extractReorder` (`classify.ts`) lifts every `index` change in an increment into one, whatever gesture made it; one that rides along with another op — binding lifts an arrow above its element, grouping gathers the members — is `incidental` and gets no row of its own. Ops write the key only, and `replayActiveOps` orders the snapshot by `index` before returning it, since the commit's `syncInvalidIndices` treats array order as the truth.
 
+## Arrow editing without the editor
+
+Upstream bends a non-elbow arrow with more than two points only inside the linear editor. The fork treats every arrow the way upstream treats elbow arrows: a selected arrow shows its segment midpoints, dragging one adds a point, and double-clicking a point between the ends deletes it (`App.handleCanvasDoubleClick`). `LinearElementEditor.hasMidpointsOutsideEditor` is the one predicate the midpoint rendering and hit test consult. Lines keep upstream's rule, and Ctrl+double-click still opens the editor.
+
 ## Bound-text auto-fit
 
 Upstream grows a *container* when its bound text no longer fits — whether the text grew (typing) or the box shrank (resize). That turns a one-axis resize into a two-axis one and lets a label overrule a size the user set. This fork inverts it: the **text** is refitted instead, by font size.

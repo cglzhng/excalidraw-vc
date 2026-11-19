@@ -69,7 +69,12 @@ import {
 import { headingIsHorizontal, vectorToHeading } from "./heading";
 import { mutateElement } from "./mutateElement";
 import { getBoundTextElement, handleBindTextResize } from "./textElement";
-import { isArrowElement, isBindingElement, isElbowArrow } from "./typeChecks";
+import {
+  isArrowElement,
+  isBindingElement,
+  isElbowArrow,
+  isSimpleArrow,
+} from "./typeChecks";
 
 import { ShapeCache, toggleLinePolygonState } from "./shape";
 
@@ -813,6 +818,15 @@ export class LinearElementEditor {
     };
   }
 
+  /**
+   * Whether a merely selected element offers its segment midpoints — the
+   * handles that add a point when dragged — rather than only in the
+   * editor. Elbow arrows always did; every other arrow does too, so
+   * bending one never needs the editor. Lines keep upstream's rule.
+   */
+  static hasMidpointsOutsideEditor = (element: ExcalidrawLinearElement) =>
+    isElbowArrow(element) || isSimpleArrow(element);
+
   static getEditorMidPoints = (
     element: ExcalidrawLinearElement,
     elementsMap: ElementsMap,
@@ -822,7 +836,7 @@ export class LinearElementEditor {
 
     // Since its not needed outside editor unless 2 pointer lines or bound text
     if (
-      !isElbowArrow(element) &&
+      !LinearElementEditor.hasMidpointsOutsideEditor(element) &&
       !appState.selectedLinearElement?.isEditing &&
       element.points.length > 2 &&
       !boundText
@@ -892,7 +906,7 @@ export class LinearElementEditor {
     if (
       points.length >= 3 &&
       !appState.selectedLinearElement?.isEditing &&
-      !isElbowArrow(element)
+      !LinearElementEditor.hasMidpointsOutsideEditor(element)
     ) {
       return null;
     }

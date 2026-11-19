@@ -1269,7 +1269,11 @@ const renderLinearPointHandles = (
     );
 
     midPoints.forEach((segmentMidPoint) => {
-      if (appState.selectedLinearElement?.isEditing || points.length === 2) {
+      if (
+        appState.selectedLinearElement?.isEditing ||
+        points.length === 2 ||
+        LinearElementEditor.hasMidpointsOutsideEditor(element)
+      ) {
         renderSingleLinearPoint(
           context,
           appState,
