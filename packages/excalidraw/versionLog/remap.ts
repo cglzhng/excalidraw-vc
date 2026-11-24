@@ -23,7 +23,9 @@ import type {
   ElementGapAlignment,
 } from "@excalidraw/element/types";
 
-import type { LogOperation, Remap } from "./types";
+import { getOperationElementIds } from "./types";
+
+import type { ConsequentOp, LogOperation, Remap } from "./types";
 
 export type RemapResult =
   | { status: "ok"; op: LogOperation }
@@ -39,8 +41,66 @@ export type RemapResult =
  * op) any referent the user chose to skip. `arrow-bind` and
  * `arrow-move-binding` rewrite the arrow and the element each end is
  * bound to. `group` (create) and `reorder` are left unchanged in v1.
+ * The op's consequent ops are rewritten the same way.
  */
 export const applyRemapsToOp = (
+  op: LogOperation,
+  remaps: ReadonlyMap<string, Remap>,
+): RemapResult => {
+  const remapped = remapOwnReferents(op, remaps);
+  return remapped.status === "ok"
+    ? { status: "ok", op: remapConsequents(remapped.op, remaps) }
+    : remapped;
+};
+
+/**
+ * Hand an op's followers to their stand-ins: a partner dragged after the
+ * lock recorded the missing element following it, and the stand-in has to
+ * follow in its place. A follower whose referent is skipped is dropped
+ * alone, since the op that caused it still happened. So is one whose
+ * stand-in the op already moves, which would otherwise travel twice.
+ */
+export const remapConsequents = (
+  op: LogOperation,
+  remaps: ReadonlyMap<string, Remap>,
+): LogOperation => {
+  if (!("consequentOps" in op) || !op.consequentOps?.length) {
+    return op;
+  }
+  const consequents = op.consequentOps;
+  const results = consequents.map((c) => applyRemapsToOp(c, remaps));
+  const moved = new Set(
+    getOperationElementIds({
+      ...op,
+      consequentOps: consequents.filter((c, i) => {
+        const result = results[i];
+        return result.status === "ok" && result.op === c;
+      }),
+    }),
+  );
+  const next: ConsequentOp[] = [];
+  results.forEach((result, i) => {
+    if (result.status === "skip") {
+      return;
+    }
+    if (result.op === consequents[i]) {
+      next.push(consequents[i]);
+      return;
+    }
+    const ids = getOperationElementIds(result.op);
+    if (ids.some((id) => moved.has(id))) {
+      return;
+    }
+    ids.forEach((id) => moved.add(id));
+    next.push(result.op as ConsequentOp);
+  });
+  return next.length === consequents.length &&
+    next.every((c, i) => c === consequents[i])
+    ? op
+    : { ...op, consequentOps: next };
+};
+
+const remapOwnReferents = (
   op: LogOperation,
   remaps: ReadonlyMap<string, Remap>,
 ): RemapResult => {
@@ -69,6 +129,12 @@ export const applyRemapsToOp = (
         return {
           status: "ok",
           op: { ...op, entry: { ...op.entry, elementId: remap.to } },
+        };
+      }
+      if (op.kind === "resize") {
+        return {
+          status: "ok",
+          op: { ...op, elementId: remap.to, onStandIn: true },
         };
       }
       return { status: "ok", op: { ...op, elementId: remap.to } };

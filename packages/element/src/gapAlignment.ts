@@ -284,11 +284,13 @@ const measureChain = (
  * Soft chains are reported **maximal**: four evenly spaced elements
  * surface as one four-member guide rather than as the two overlapping
  * triples inside it, which is both what the arrangement looks like and
- * what the user would want a padlock to pin.
+ * what the user would want a padlock to pin. `hardOnly` stops at the
+ * persisted chains.
  */
 export const getGapAlignmentGuides = (
   selected: readonly NonDeletedExcalidrawElement[],
   elementsMap: ElementsMap,
+  hardOnly = false,
 ): GapAlignmentGuide[] => {
   const guides: GapAlignmentGuide[] = [];
   const seen = new Set<string>();
@@ -311,6 +313,9 @@ export const getGapAlignmentGuides = (
     for (const link of element.gapAlignments ?? []) {
       add(link.axis, link.ids, true);
     }
+  }
+  if (hardOnly) {
+    return guides;
   }
 
   const candidates: ExcalidrawElement[] = [];

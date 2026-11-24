@@ -19,6 +19,7 @@ import {
   getDraggedElementsBounds,
   getElementAbsoluteCoords,
   getElementBounds,
+  NO_CLAMP_BLAME,
 } from "@excalidraw/element";
 import { isBoundToContainer, isLinearElement } from "@excalidraw/element";
 
@@ -1109,6 +1110,7 @@ export const snapDraggedElements = (
         y: 0,
       },
       snapLines: [],
+      clampBlame: NO_CLAMP_BLAME,
     };
   }
   // An alignment anchor freezes its whole hard-aligned component on an
@@ -1157,7 +1159,11 @@ export const snapDraggedElements = (
   // object whether or not anything snapped.
   const sourceElements = getSnapSourceElements(selectedElements, grabbedElement);
   if (!sourceElements) {
-    return { snapOffset: { x: 0, y: 0 }, snapLines: [] };
+    return {
+      snapOffset: { x: 0, y: 0 },
+      snapLines: [],
+      clampBlame: gapClamped.blame,
+    };
   }
 
   // What each element travels by, as a multiple of the drag offset. The
@@ -1258,6 +1264,10 @@ export const snapDraggedElements = (
   return {
     snapOffset,
     snapLines: [...pointSnapLines, ...gapSnapLines],
+    // The drag clamps again, but only ever sees the offset clamped here: one
+    // held at a contact point of zero arrives as no offset at all, which
+    // can't say which way it was pushing. This clamp saw the pointer's.
+    clampBlame: gapClamped.blame,
   };
 };
 

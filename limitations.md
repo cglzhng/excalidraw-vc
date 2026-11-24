@@ -165,3 +165,20 @@ they land wherever the element ended up — a skip or a remap included. Elbow
 arrows are left out, since moving one needs the router, and replay their
 recorded follows; after a skip or remap those end where the element was when
 the follow was recorded.
+
+**A stand-in's own later moves leave its new partners behind.** Placement puts
+a stand-in where a reassigned alignment holds, and the moves its new partners
+recorded the missing element following are handed to it. The stand-in's *own*
+later moves were recorded while it was free, so they carry no followers: the
+first one pulls it off the link, and its existing partners likewise never
+recorded following the new one. Nothing repairs this. The fix is running the
+solver for every replayed move (`ALIGNMENT_REASSIGN_PLAN.md`, "Later").
+
+**Broken alignments are only reported during a resolution session.** While one
+is open, the bar counts the hard links and gap chains that no longer hold and
+the canvas flashes them (`findBrokenAlignments`). A skip that strands nothing
+opens no session, so it can break a link without a word: skipping a Moment
+that moved a locked element, or a move made before a lock, which then replays
+a coincidence that isn't there. After Apply the report is gone too. The check
+looks at the whole scene, so a session also counts links that were already
+broken when it opened.

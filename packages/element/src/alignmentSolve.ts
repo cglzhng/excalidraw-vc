@@ -342,7 +342,7 @@ export const applyAlignmentResponse = (
  * Expressed as a row (`δmin = δmax`) rather than a branch in the traversal, so
  * lifting either exclusion is a matter of not emitting the row.
  */
-const canStretch = (element: ExcalidrawElement): boolean =>
+export const canAlignmentStretch = (element: ExcalidrawElement): boolean =>
   element.angle === 0 && !isTextElement(element);
 
 /**
@@ -894,7 +894,7 @@ const solve = (
       continue;
     }
 
-    if (!canStretch(element)) {
+    if (!canAlignmentStretch(element)) {
       const row = blank();
       addEdgeTerm(row, slot, "min", 1);
       addEdgeTerm(row, slot, "max", -1);

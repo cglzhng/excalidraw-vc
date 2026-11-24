@@ -328,6 +328,7 @@ import {
 } from "../renderOverrides";
 import { History } from "../history";
 import { VersionLog } from "../versionLog/VersionLog";
+import { findBrokenAlignments } from "../versionLog/brokenAlignments";
 import { replayActiveOps } from "../versionLog/replay";
 import {
   canApplyResolution,
@@ -5288,6 +5289,10 @@ class App extends React.Component<AppProps, AppState> {
         hover: null,
         // the scene now shows the decisions' result
         showingBefore: false,
+        replayIssues: {
+          broken: findBrokenAlignments(replay.snapshot),
+          unplaced: replay.unplaced,
+        },
       },
       versionLogHoverPreview: null,
       viewModeEnabled: true,

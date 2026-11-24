@@ -1,0 +1,41 @@
+.excalidraw {
+  // Over the whole canvas pane and transparent to the pointer, so zooming
+  // carries on underneath it. A size container, so the text scales with the
+  // pane rather than the window — the pane narrows for a docked sidebar.
+  .ZoomOverlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    container-type: size;
+    pointer-events: none;
+    z-index: var(--zIndex-canvasButtons);
+    opacity: 0;
+    // appears at once, fades on the way out
+    transition: opacity 300ms ease-out;
+
+    &--visible {
+      opacity: 1;
+      transition: none;
+    }
+  }
+
+  .ZoomOverlay__value {
+    // "100%" is about 2.4em wide, so this keeps it within the pane
+    font-size: min(28cqw, 60cqh);
+    font-weight: 700;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    // A halo in the background colour, so the text reads over dark elements
+    // as well as light ones. Not a blend mode: the UI layer's z-index makes
+    // it an isolated stacking context, so nothing in it can blend with the
+    // canvas underneath.
+    color: var(--text-primary-color);
+    -webkit-text-stroke: 0.06em var(--default-bg-color);
+    // the stroke under the fill, so it widens the glyph outward only
+    paint-order: stroke fill;
+    opacity: 0.35;
+    user-select: none;
+  }
+}

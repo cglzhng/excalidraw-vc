@@ -133,7 +133,7 @@ export type AlignmentGuideLine = {
  * Paired over the lines actually visible, so a drag that shows only one
  * of the two draws that one's own padlock rather than half a crosshair.
  */
-const pairCentredGuides = (
+export const pairCentredGuides = (
   lines: AlignmentGuideLine[],
 ): AlignmentGuideLine[] => {
   const isCentred = (guide: AlignmentGuide) =>
@@ -190,9 +190,14 @@ const isEnclosedBy = (inner: Bounds, outer: Bounds): boolean =>
 export const getAlignmentGuideLines = (
   selectedElements: readonly NonDeletedExcalidrawElement[],
   elementsMap: NonDeletedSceneElementsMap,
+  hardOnly = false,
 ): AlignmentGuideLine[] => {
   const lines: AlignmentGuideLine[] = [];
-  for (const guide of getAlignmentGuides(selectedElements, elementsMap)) {
+  for (const guide of getAlignmentGuides(
+    selectedElements,
+    elementsMap,
+    hardOnly,
+  )) {
     const self = elementsMap.get(guide.selfId);
     const partner = elementsMap.get(guide.elementId);
     if (!self || !partner) {
@@ -728,8 +733,9 @@ const ZERO_GAP_EPSILON = 1;
 export const getGapAlignmentGuideLines = (
   selectedElements: readonly NonDeletedExcalidrawElement[],
   elementsMap: NonDeletedSceneElementsMap,
+  hardOnly = false,
 ): GapAlignmentGuideLine[] => {
-  const guides = getGapAlignmentGuides(selectedElements, elementsMap);
+  const guides = getGapAlignmentGuides(selectedElements, elementsMap, hardOnly);
 
   // A soft chain may run through gaps a hard chain already holds — that
   // is exactly the case where locking it would extend the hard one — but

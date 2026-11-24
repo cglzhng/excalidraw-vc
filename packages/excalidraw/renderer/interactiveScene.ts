@@ -140,9 +140,11 @@ import {
   getWideIndicatorLineDash,
 } from "./indicatorHelpers";
 import {
+  renderBrokenAlignments,
   renderConflictWash,
+  renderHeldAlignments,
   renderMissingOutline,
-  renderRefusalOutline,
+  renderRefusalLabel,
   renderStandInConnector,
   renderStandInOutline,
 } from "./renderConflictResolution";
@@ -2722,11 +2724,19 @@ const _renderInteractiveScene = ({
   // frames — the gesture is usually held still against the constraint that
   // refused it, and nothing else would be repainting.
   const clampedExtentIds = getClampedExtentIds(alignmentDragMovers);
+  // what a conflict-resolution session's choices leave not holding flashes
+  // on the same beat
+  const brokenAlignments =
+    appState.versionLogResolution &&
+    !appState.versionLogResolution.showingBefore
+      ? appState.versionLogResolution.replayIssues.broken
+      : [];
   const refusing =
     badgeLayout.edgeLines.some((line) => line.blocked) ||
     badgeLayout.gapLines.some((line) => line.blocked) ||
     (anchorOverlays?.flashing.size ?? 0) > 0 ||
-    clampedExtentIds.size > 0;
+    clampedExtentIds.size > 0 ||
+    brokenAlignments.length > 0;
   const refusalRuntime = refusing
     ? (animationState?.alignmentRefusal?.runtime ?? 0) + deltaTime
     : null;
@@ -2816,10 +2826,34 @@ const _renderInteractiveScene = ({
     renderGhosts(ghosts);
     // a hovered candidate's outcome
     renderGhosts(appState.versionLogHoverPreview?.ghosts ?? []);
+    const chosen = resolution.decisions[activeConflict.referentId] ?? null;
+    if (picking) {
+      const hoveredPick =
+        resolution.hover?.kind === "pick" ? resolution.hover.id : null;
+      renderHeldAlignments(
+        context,
+        appState,
+        allElementsMap,
+        brokenAlignments,
+        // once something stands in, it holds these links itself
+        chosen ? [] : ghosts,
+        [chosen, hoveredPick].flatMap((id) =>
+          id ? candidates.get(id) ?? [] : [],
+        ),
+      );
+    }
+    if (refusalRuntime !== null) {
+      renderBrokenAlignments(
+        context,
+        appState,
+        brokenAlignments,
+        allElementsMap,
+        refusalRuntime,
+      );
+    }
     const ghostBounds = ghosts.length > 0 ? getCommonBounds(ghosts) : null;
     // the candidates on offer need no mark of their own — the wash leaves
     // them out — but the one chosen does
-    const chosen = resolution.decisions[activeConflict.referentId] ?? null;
     const chosenBounds = chosen ? candidateBounds.get(chosen) : undefined;
     if (chosen && chosenBounds) {
       const chosenName =
@@ -2847,7 +2881,7 @@ const _renderInteractiveScene = ({
     const refused =
       hover?.kind === "refused" && allElementsMap.get(hover.elementId);
     if (refused) {
-      renderRefusalOutline(
+      renderRefusalLabel(
         context,
         appState,
         getCommonBounds([refused]),

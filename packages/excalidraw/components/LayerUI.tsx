@@ -53,6 +53,7 @@ import {
   VersionLogConflictFrame,
   VersionLogConflicts,
 } from "./VersionLogConflicts";
+import { ZoomOverlay } from "./ZoomOverlay";
 import { TTDDialog } from "./TTDDialog/TTDDialog";
 import { Stats } from "./Stats";
 import ElementLinkDialog from "./ElementLinkDialog";
@@ -687,6 +688,7 @@ const LayerUI = ({
             {renderWelcomeScreen && <tunnels.WelcomeScreenCenterTunnel.Out />}
             {renderFixedSideContainer()}
             <VersionLogConflicts />
+            <ZoomOverlay />
             <Footer
               appState={appState}
               actionManager={actionManager}

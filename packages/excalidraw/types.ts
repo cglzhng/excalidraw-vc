@@ -498,6 +498,9 @@ export interface AppState {
    *  - `showingBefore`: the switch is on Show before, for every conflict
    *    at once: the canvas shows the scene as it was before the toggle,
    *    and Apply keeps it, as Cancel does. Picking is off meanwhile.
+   *  - `replayIssues`: what the replay under these decisions couldn't
+   *    keep: hard alignments that no longer hold, and stand-ins that
+   *    couldn't be placed. Reported only; nothing repairs them.
    *  - `viewModeBefore`: the session holds view mode on so nothing can be
    *    edited; this is what to put back when it ends.
    */
@@ -510,6 +513,10 @@ export interface AppState {
     ghosts: Readonly<Record<string, readonly ExcalidrawElement[]>>;
     hover: import("./versionLog/conflictPicking").ConflictHover | null;
     showingBefore: boolean;
+    replayIssues: {
+      broken: readonly import("./versionLog/brokenAlignments").BrokenAlignment[];
+      unplaced: readonly import("./versionLog/placement").UnplacedStandIn[];
+    };
     viewModeBefore: boolean;
   } | null;
   /**

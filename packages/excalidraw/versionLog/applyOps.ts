@@ -12,7 +12,11 @@
 
 import { isElbowArrow } from "@excalidraw/element";
 
-import type { OrderedExcalidrawElement } from "@excalidraw/element/types";
+import type {
+  ElementAlignment,
+  ElementGapAlignment,
+  OrderedExcalidrawElement,
+} from "@excalidraw/element/types";
 import type { Radians } from "@excalidraw/math";
 
 import { followBindings } from "./followBindings";
@@ -68,7 +72,7 @@ export const applyOpsToScene = (
  * Always increment `version` because Excalidraw checks the version number
  * to decide when to update its internal snapshot. 
  */
-const updateElement = (
+export const updateElement = (
   scene: SceneSnapshot,
   id: string,
   updates: Partial<OrderedExcalidrawElement>,
@@ -116,8 +120,50 @@ const upsertElement = (
   }
 };
 
+export type Link = ElementAlignment | ElementGapAlignment;
+export type LinkMap = Record<string, readonly Link[]>;
+
+/** A link's identity: an edge link is one coincidence with one partner, so
+ * a pair linked at two places on an axis holds two; a gap chain is its
+ * members in order. */
+export const alignmentLinkKey = (link: Link): string =>
+  "ids" in link
+    ? `gap:${link.axis}:${link.ids.join(",")}`
+    : `edge:${link.elementId}:${link.axis}:${link.selfEdge}:${link.otherEdge}`;
+
 /**
- * Recompute the bounding box (width, height) from a `points` array. 
+ * `current` with the change from `from` to `to` applied: what `from` had and
+ * `to` doesn't is removed, what `to` has and `from` didn't is added, and
+ * every other link in `current` is left alone. `null` when that changes
+ * nothing.
+ */
+const applyLinkDiff = (
+  current: readonly Link[],
+  from: readonly Link[],
+  to: readonly Link[],
+): Link[] | null => {
+  const fromKeys = new Set(from.map(alignmentLinkKey));
+  const toKeys = new Set(to.map(alignmentLinkKey));
+  const kept = current.filter((link) => {
+    const key = alignmentLinkKey(link);
+    return !fromKeys.has(key) || toKeys.has(key);
+  });
+  const present = new Set(kept.map(alignmentLinkKey));
+  const gained: Link[] = [];
+  for (const link of to) {
+    const key = alignmentLinkKey(link);
+    if (!fromKeys.has(key) && !present.has(key)) {
+      present.add(key);
+      gained.push(link);
+    }
+  }
+  return kept.length === current.length && gained.length === 0
+    ? null
+    : [...kept, ...gained];
+};
+
+/**
+ * Recompute the bounding box (width, height) from a `points` array.
  */
 const bboxFromPoints = (
   points: ReadonlyArray<readonly [number, number]>,
@@ -371,8 +417,19 @@ const applyOpToScene = (
     // -------------------- resize --------------------
     case "resize":
     case "arrow-resize": {
-      const dims = forward ? op.to : op.from;
       const el = scene.get(op.elementId);
+      // Scaled by the same matrix that places it, a stand-in's edges land
+      // wherever that matrix sends them, so any edge it shares with a
+      // partner stays shared. Taking the recorded size would not.
+      const dims =
+        el && op.kind === "resize" && op.onStandIn
+          ? {
+              width: el.width * (forward ? op.scaleX : 1 / op.scaleX),
+              height: el.height * (forward ? op.scaleY : 1 / op.scaleY),
+            }
+          : forward
+          ? op.to
+          : op.from;
       if (el) {
         let position: { x: number; y: number };
         let points: { points: [number, number][] } | undefined;
@@ -546,13 +603,29 @@ const applyOpToScene = (
 
     // -------------------- hard alignment --------------------
     case "alignment": {
-      // Forward: set each member's link field to the after-state;
-      // backward: to the before-state. Missing members are no-ops.
-      const map = forward ? op.after : op.before;
+      // Applied as the change it made — the links it added, the links it
+      // removed — to each member's *current* field. The recorded fields
+      // are snapshots of every link a member had at the time: written
+      // back whole, they would restore a link whose Moment is skipped,
+      // and on a stand-in replace its own links with the missing
+      // element's. Missing members are no-ops.
+      const from = (forward ? op.before : op.after) as LinkMap;
+      const to = (forward ? op.after : op.before) as LinkMap;
       for (const id of op.elementIds) {
-        updateElement(scene, id, {
-          [op.field]: map[id],
-        } as Partial<OrderedExcalidrawElement>);
+        const el = scene.get(id);
+        if (!el) {
+          continue;
+        }
+        const next = applyLinkDiff(
+          (el[op.field] ?? []) as readonly Link[],
+          from[id] ?? [],
+          to[id] ?? [],
+        );
+        if (next) {
+          updateElement(scene, id, {
+            [op.field]: next,
+          } as Partial<OrderedExcalidrawElement>);
+        }
       }
       break;
     }

@@ -207,6 +207,11 @@ export type LogOperation =
        */
       center: readonly [number, number] | null;
       transform: TransformMatrix;
+      /**
+       * Set by a remap: `from` / `to` are the sizes of the element this
+       * replaced, so the stand-in scales by `scaleX` / `scaleY` instead.
+       */
+      onStandIn?: boolean;
       consequentOps?: ConsequentOp[];
     }
   | {

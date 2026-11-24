@@ -1129,7 +1129,7 @@ export class AppSelectionTool {
         this.app.maybeCacheVisibleGaps(event, selectedElements);
         this.app.maybeCacheReferenceSnapPoints(event, selectedElements);
 
-        const { snapOffset, snapLines } = snapDraggedElements(
+        const { snapOffset, snapLines, clampBlame } = snapDraggedElements(
           originalElements,
           dragOffset,
           this.app,
@@ -1147,17 +1147,21 @@ export class AppSelectionTool {
         // when we're editing the name of a frame, we want the user to be
         // able to select and interact with the text input
         if (!this.app.state.editingFrame) {
-          this.updateAlignmentClampBlame(
-            dragSelectedElements(
-              pointerDownState,
-              selectedElements,
-              dragOffset,
-              this.app.scene,
-              snapOffset,
-              event[KEYS.CTRL_OR_CMD] ? null : this.app.getEffectiveGridSize(),
-              this.app.renderEnvironment,
-            ),
+          const dragBlame = dragSelectedElements(
+            pointerDownState,
+            selectedElements,
+            dragOffset,
+            this.app.scene,
+            snapOffset,
+            event[KEYS.CTRL_OR_CMD] ? null : this.app.getEffectiveGridSize(),
+            this.app.renderEnvironment,
           );
+          // snapping clamped first, against the pointer's own offset — see
+          // `snapDraggedElements`
+          this.updateAlignmentClampBlame({
+            x: dragBlame.x ?? clampBlame.x,
+            y: dragBlame.y ?? clampBlame.y,
+          });
         }
 
         this.app.setState({

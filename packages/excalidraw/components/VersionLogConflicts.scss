@@ -79,15 +79,16 @@
     white-space: pre-line;
   }
 
+  .VersionLogConflicts__warning {
+    font-size: 16px;
+    font-weight: 600;
+  }
+
   .VersionLogConflicts__buttons {
     display: flex;
     align-items: center;
     gap: 6px;
     margin-top: 2px;
-  }
-
-  .VersionLogConflicts__spacer {
-    flex: 1 1 auto;
   }
 
   .VersionLogConflicts__button {

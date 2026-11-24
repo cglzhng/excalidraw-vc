@@ -303,11 +303,13 @@ const guideKey = (g: {
  * `getAlignedLinks` geometry hard links use, so the two are defined
  * consistently; a coincidence already stored as hard is not re-emitted
  * as soft. Linear elements and container-bound labels are never
- * partners (they aren't snap targets either).
+ * partners (they aren't snap targets either). `hardOnly` stops at the
+ * persisted links, which is linear where the soft pass is quadratic.
  */
 export const getAlignmentGuides = (
   selected: readonly NonDeletedExcalidrawElement[],
   elementsMap: ElementsMap,
+  hardOnly = false,
 ): AlignmentGuide[] => {
   const guides: AlignmentGuide[] = [];
   const seen = new Set<string>();
@@ -332,6 +334,10 @@ export const getAlignmentGuides = (
         guides.push(guide);
       }
     }
+  }
+
+  if (hardOnly) {
+    return guides;
   }
 
   // Soft coincidences: any current alignment not already stored as hard.

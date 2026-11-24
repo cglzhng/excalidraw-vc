@@ -178,6 +178,16 @@ rewrites every op that referenced G. Created when a conflict-resolution
 session is applied;
 read by replay before each referent check (`remap.ts`).
 
+### Placement
+Moving a stand-in to where the alignment it has taken over holds, since
+a link is only true of edges that coincide. Runs at replay, just before
+a remapped `alignment` op writes its links, and is derived from the
+remap each time, so nothing is stored. The stand-in's new partners are
+held still and the alignment solver carries along whatever is coupled to
+the stand-in. A stand-in that can't get there is refused, with the
+reason (`versionLog/placement.ts`). This is the one place replay uses
+the solver.
+
 ---
 
 ## Dependencies & filtering

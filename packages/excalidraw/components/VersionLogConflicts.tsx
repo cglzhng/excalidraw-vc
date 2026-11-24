@@ -23,7 +23,10 @@ import {
   getActiveConflict,
   getConflictMode,
 } from "../versionLog/conflictPicking";
-import type { ConflictMode } from "../versionLog/conflictPicking";
+import type {
+  ConflictMode,
+  ResolutionSession,
+} from "../versionLog/conflictPicking";
 import type { PendingConflict } from "../versionLog/types";
 
 import "./VersionLogConflicts.scss";
@@ -66,6 +69,10 @@ export const VersionLogConflicts: React.FC = () => {
         session.ghosts[c.referentId]?.[0]?.shortId ??
         c.elementType ??
         "element";
+  // about the scene these decisions produce, which Show before isn't
+  const warnings = session.showingBefore
+    ? []
+    : replayWarnings(session.replayIssues, nameOf);
 
   return (
     <div className="VersionLogConflicts">
@@ -102,9 +109,14 @@ export const VersionLogConflicts: React.FC = () => {
             {helpText(referentName(conflict))}
           </div>
         )}
-        <div className="VersionLogConflicts__buttons">
-          {conflict &&
-            MODES.map(({ mode, label, title }) => {
+        {warnings.map((warning) => (
+          <div key={warning} className="VersionLogConflicts__warning">
+            {warning}
+          </div>
+        ))}
+        {conflict && (
+          <div className="VersionLogConflicts__buttons">
+            {MODES.map(({ mode, label, title }) => {
               const chosen = getConflictMode(session, conflict.referentId);
               return (
                 <button
@@ -114,10 +126,8 @@ export const VersionLogConflicts: React.FC = () => {
                     "VersionLogConflicts__button--chosen": chosen === mode,
                   })}
                   aria-pressed={chosen === mode}
-                  // nothing on the canvas can take the moments
-                  disabled={
-                    mode === "reassign" && conflict.candidates.length === 0
-                  }
+                  // open even with no candidates: hovering an element in
+                  // Reassign is what says why it can't stand in
                   onClick={() => app.setVersionLogConflictMode(mode)}
                   title={title}
                 >
@@ -125,7 +135,9 @@ export const VersionLogConflicts: React.FC = () => {
                 </button>
               );
             })}
-          <div className="VersionLogConflicts__spacer" />
+          </div>
+        )}
+        <div className="VersionLogConflicts__buttons">
           <button
             type="button"
             className="VersionLogConflicts__button"
@@ -174,6 +186,28 @@ export const VersionLogConflictFrame: React.FC<{
  */
 const helpText = (missing: string): string =>
   `${missing} is missing. Moments that depend on ${missing} could not be applied.\nYou can choose to skip them or re-assign those moments to another element.`;
+
+/** What the replay under these decisions couldn't keep, one line each. A
+ * stand-in refused the same way by several ops is said once. */
+const replayWarnings = (
+  { broken, unplaced }: ResolutionSession["replayIssues"],
+  nameOf: (id: string) => string,
+): string[] => {
+  const lines = new Set(
+    unplaced.map(
+      ({ standInId, reason }) =>
+        `${nameOf(standInId)} ${reason}, so that alignment wasn't applied.`,
+    ),
+  );
+  if (broken.length > 0) {
+    lines.add(
+      broken.length === 1
+        ? "1 alignment no longer holds after later Moments."
+        : `${broken.length} alignments no longer hold after later Moments.`,
+    );
+  }
+  return Array.from(lines);
+};
 
 const truncateId = (id: string): string =>
   id.length <= 10 ? id : `${id.slice(0, 8)}…`;
