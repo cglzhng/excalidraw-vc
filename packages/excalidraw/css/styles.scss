@@ -278,6 +278,19 @@ body.excalidraw-cursor-resize * {
     }
   }
 
+  // the font size picker: a native dropdown dressed as the outline buttons
+  // around it, wide enough for a two-digit size and the arrow
+  select.font-size-select {
+    @include outlineButtonStyles;
+
+    & {
+      --button-width: 5rem;
+      justify-content: flex-start;
+      padding: 0 0.5rem;
+      font-size: 0.875rem;
+    }
+  }
+
   // an icon button rendered outside a .buttonList context (e.g. the font
   // picker trigger)
   button.standalone {

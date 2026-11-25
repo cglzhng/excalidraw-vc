@@ -880,6 +880,20 @@ export class AppText {
     }
   };
 
+  /** Where a container's label goes: an arrow's label position, any other
+   * container's center. */
+  getContainerLabelCenter(container: ExcalidrawTextContainer): {
+    x: number;
+    y: number;
+  } {
+    return (
+      getContainerCenter(container, this.app.scene.getNonDeletedElementsMap()) ?? {
+        x: container.x + container.width / 2,
+        y: container.y + container.height / 2,
+      }
+    );
+  }
+
   getTextWysiwygSnappedToCenterPosition(
     x: number,
     y: number,
@@ -887,17 +901,8 @@ export class AppText {
     container?: ExcalidrawTextContainer | null,
   ) {
     if (container) {
-      let elementCenterX = container.x + container.width / 2;
-      let elementCenterY = container.y + container.height / 2;
-
-      const elementCenter = getContainerCenter(
-        container,
-        this.app.scene.getNonDeletedElementsMap(),
-      );
-      if (elementCenter) {
-        elementCenterX = elementCenter.x;
-        elementCenterY = elementCenter.y;
-      }
+      const { x: elementCenterX, y: elementCenterY } =
+        this.getContainerLabelCenter(container);
       const distanceToCenter = Math.hypot(
         x - elementCenterX,
         y - elementCenterY,

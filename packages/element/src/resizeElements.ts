@@ -359,24 +359,13 @@ export const transformElements = (
           origElement,
           originalElements,
           elementsMap,
-          { handle: transformHandleType, shouldResizeFromCenter },
+          {
+            handle: transformHandleType,
+            shouldResizeFromCenter,
+            minDriverExtent: MIN_RESIZE_EXTENT,
+          },
         );
-        // The floor is blamed only where it is what the size ended at — a
-        // frozen axis puts the size back to where it started instead, and
-        // the refusal says why.
-        const floorBlame = (
-          axis: "x" | "y",
-          requested: number,
-          held: number,
-        ): ClampBlame | null =>
-          requested < MIN_RESIZE_EXTENT && held === MIN_RESIZE_EXTENT
-            ? { kind: "extent", axis, elementId }
-            : null;
-        onClampBlame?.({
-          x: blame.x ?? floorBlame("x", proposed.nextWidth, nextWidth),
-          y: blame.y ?? floorBlame("y", proposed.nextHeight, nextHeight),
-        });
-
+        let heldAtMinimum = { x: false, y: false };
         resizeSingleElement(
           nextWidth,
           nextHeight,
@@ -389,8 +378,28 @@ export const transformElements = (
             shouldMaintainAspectRatio,
             shouldResizeFromCenter,
             renderEnvironment,
+            onHeldAtMinimum: (held) => {
+              heldAtMinimum = held;
+            },
           },
         );
+        // A floor is blamed only where it is what the size ended at — a
+        // frozen axis puts the size back to where it started instead, and
+        // the refusal says why. The element's own minimum is checked after
+        // `MIN_RESIZE_EXTENT`, so where it holds, it is the one that did.
+        const floorBlame = (
+          axis: "x" | "y",
+          requested: number,
+          held: number,
+        ): ClampBlame | null =>
+          heldAtMinimum[axis] ||
+          (requested < MIN_RESIZE_EXTENT && held === MIN_RESIZE_EXTENT)
+            ? { kind: "extent", axis, elementId }
+            : null;
+        onClampBlame?.({
+          x: blame.x ?? floorBlame("x", proposed.nextWidth, nextWidth),
+          y: blame.y ?? floorBlame("y", proposed.nextHeight, nextHeight),
+        });
 
         // Hard alignment: drag partners aligned to this element so the
         // shared edge follows the resize, and restore any equal gaps the
@@ -1166,11 +1175,15 @@ export const resizeSingleElement = (
     shouldMaintainAspectRatio = false,
     shouldResizeFromCenter = false,
     renderEnvironment,
+    onHeldAtMinimum,
   }: {
     shouldMaintainAspectRatio?: boolean;
     shouldResizeFromCenter?: boolean;
     shouldInformMutation?: boolean;
     renderEnvironment?: RenderEnvironment;
+    /** told which dimensions the element's own minimum — its label's, or a
+     * sticky note's — held above the size asked for */
+    onHeldAtMinimum?: (held: { x: boolean; y: boolean }) => void;
   } = {},
 ) => {
   if (isTextElement(latestElement) && isTextElement(origElement)) {
@@ -1192,6 +1205,8 @@ export const resizeSingleElement = (
   const flipFactorY = nextHeight < 0 ? -1 : 1;
   nextWidth = Math.abs(nextWidth);
   nextHeight = Math.abs(nextHeight);
+  const requestedWidth = nextWidth;
+  const requestedHeight = nextHeight;
 
   const elementsMap = scene.getNonDeletedElementsMap();
   const boundTextElement = getBoundTextElement(latestElement, elementsMap);
@@ -1281,6 +1296,10 @@ export const resizeSingleElement = (
       }
     }
   }
+  onHeldAtMinimum?.({
+    x: nextWidth > requestedWidth,
+    y: nextHeight > requestedHeight,
+  });
 
   nextWidth *= flipFactorX;
   nextHeight *= flipFactorY;

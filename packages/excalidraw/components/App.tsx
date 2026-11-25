@@ -12367,24 +12367,28 @@ class App extends React.Component<AppProps, AppState> {
 
     this.maybeCacheReferenceSnapPoints(event, [newElement]);
 
-    const { snapOffset, snapLines } = snapNewElement(
-      newElement,
-      this,
-      event,
-      {
-        x:
-          pointerDownState.originInGrid.x +
-          (this.state.originSnapOffset?.x ?? 0),
-        y:
-          pointerDownState.originInGrid.y +
-          (this.state.originSnapOffset?.y ?? 0),
-      },
-      {
-        x: gridX - pointerDownState.originInGrid.x,
-        y: gridY - pointerDownState.originInGrid.y,
-      },
-      this.scene.getNonDeletedElementsMap(),
-    );
+    // the text tool doesn't snap: a text's box is its content, so an edge
+    // snapped while it is being dragged out lines up nothing once it's typed
+    const { snapOffset, snapLines } = isTextElement(newElement)
+      ? { snapOffset: { x: 0, y: 0 }, snapLines: [] }
+      : snapNewElement(
+          newElement,
+          this,
+          event,
+          {
+            x:
+              pointerDownState.originInGrid.x +
+              (this.state.originSnapOffset?.x ?? 0),
+            y:
+              pointerDownState.originInGrid.y +
+              (this.state.originSnapOffset?.y ?? 0),
+          },
+          {
+            x: gridX - pointerDownState.originInGrid.x,
+            y: gridY - pointerDownState.originInGrid.y,
+          },
+          this.scene.getNonDeletedElementsMap(),
+        );
 
     gridX += snapOffset.x;
     gridY += snapOffset.y;

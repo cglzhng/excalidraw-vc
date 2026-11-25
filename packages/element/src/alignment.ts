@@ -13,7 +13,7 @@ import { updateBoundElements } from "./binding";
 import { getElementBounds } from "./bounds";
 import { newElementWith } from "./mutateElement";
 import { getBoundTextElement, handleBindTextResize } from "./textElement";
-import { isBoundToContainer, isLinearElement } from "./typeChecks";
+import { isLinearElement, isTextElement } from "./typeChecks";
 
 import type { PointerDownState } from "@excalidraw/excalidraw/types";
 
@@ -94,11 +94,13 @@ const EDGE_PAIRS: readonly (readonly [Edge, Edge])[] = [
  * points happen to sit rather than a drawn edge, so aligning to one
  * couples elements along a line nobody can see — and an arrow bound to a
  * shape is already moved by its binding, which would fight the
- * propagator. Container-bound labels are excluded for the same reason
- * they aren't snap targets: they move with their container.
+ * propagator. Text is excluded too: its box is its wrapped content, which
+ * any edit to the words or the font changes, so an edge on it is not one
+ * anybody placed. That covers container-bound labels, which move with
+ * their container in any case.
  */
 export const isAlignable = (element: ExcalidrawElement | null): boolean =>
-  element != null && !isLinearElement(element) && !isBoundToContainer(element);
+  element != null && !isLinearElement(element) && !isTextElement(element);
 
 const EDGE_EPSILON = 1;
 
@@ -302,8 +304,8 @@ const guideKey = (g: {
  * convertible guide. Soft guides are detected with the same
  * `getAlignedLinks` geometry hard links use, so the two are defined
  * consistently; a coincidence already stored as hard is not re-emitted
- * as soft. Linear elements and container-bound labels are never
- * partners (they aren't snap targets either). `hardOnly` stops at the
+ * as soft. Linear elements and text are never partners (see
+ * `isAlignable`). `hardOnly` stops at the
  * persisted links, which is linear where the soft pass is quadratic.
  */
 export const getAlignmentGuides = (

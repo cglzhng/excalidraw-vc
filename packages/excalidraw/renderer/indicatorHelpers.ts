@@ -96,11 +96,6 @@ export const getRefusalFlashColor = (
  * size reads as movement long before it reads as a change of size. */
 const REFUSAL_PULSE_AMPLITUDE = 0.20;
 
-/** The same for a flashing anvil. Its own constant because the anvil is
- * scaled to its element rather than fixed on screen, so the swell that
- * reads well on a badge may be too much or too little on it. */
-const ANCHOR_REFUSAL_PULSE_AMPLITUDE = 0.04;
-
 /**
  * The size a flashing badge is drawn at, as a multiple of its usual radius.
  * On the same phase as {@link getRefusalFlashColor}, so a badge swells and
@@ -181,6 +176,15 @@ const MIN_SIZE_WARNING_FILL_OPACITY = 0.5;
  * pulse is: the element is squeezed on one axis only, and a proportional
  * swell would balloon its long side while barely moving the short one. */
 const MIN_SIZE_WARNING_PULSE = 2;
+
+/** The border round an anchor named in a refusal or a release. Stroked on
+ * the bounds themselves, straddling the edge as the alignment highlight
+ * does. Screen pixels, except the opacity. */
+const ANCHOR_WARNING_BORDER_WIDTH = 4;
+const ANCHOR_WARNING_BORDER_OPACITY = 0.5;
+/** How much thicker the border gets at the peak of its pulse. It thickens
+ * rather than grows, so the edge it marks stays put. */
+const ANCHOR_WARNING_BORDER_PULSE = 4;
 
 /** The padlock silhouette, in fractions of the badge radius (or, where
  * noted, of another part of the lock). */
@@ -894,6 +898,42 @@ export const drawMinimumSizeWarning = (
   context.restore();
 };
 
+/**
+ * The border drawn on an anchor named in a refusal or a release. It
+ * flashes and thickens on the refusal beat, as {@link drawMinimumSizeWarning}
+ * does: the anvil over the element stays steady and says *that* it is an
+ * anchor in the way, and the border is what pulses with the lines naming it.
+ * A translucent border rather than a block, so the anvil inside it stays
+ * legible.
+ */
+export const drawAnchorWarningBorder = (
+  context: CanvasRenderingContext2D,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  zoom: number,
+  theme: AppState["theme"],
+  zenModeEnabled: boolean,
+  flashRuntime: number,
+) => {
+  context.save();
+  context.globalAlpha = ANCHOR_WARNING_BORDER_OPACITY;
+  context.strokeStyle = getRefusalFlashColor(
+    theme,
+    zenModeEnabled,
+    flashRuntime,
+  );
+  context.lineWidth =
+    (ANCHOR_WARNING_BORDER_WIDTH +
+      ANCHOR_WARNING_BORDER_PULSE * flashPhase(flashRuntime)) /
+    zoom;
+  context.lineJoin = "round";
+  context.setLineDash([]);
+  context.strokeRect(x1, y1, x2 - x1, y2 - y1);
+  context.restore();
+};
+
 // ---------------------------------------------------------------------------
 // Line marks
 // ---------------------------------------------------------------------------
@@ -1125,21 +1165,16 @@ export const drawAnchorOverlayButton = (
 // The anchor warning shown mid-gesture on an anchored element that is
 // standing in the way of the drag or resize the user is attempting.
 //
-// Always thick, and at full overlay strength either way: the element is
-// anchored in both cases, and that is what the anvil is reporting. Only
-// the *fill* carries the difference — solid when the anchor is refusing
-// the gesture outright, hollow when it is merely the reason a partner had
-// to stretch rather than move, which is a thing to know rather than a
-// thing to fix.
+// Always thick, filled, and at full overlay strength, whether the anchor is
+// refusing the gesture outright or merely the reason a partner had to
+// stretch rather than move: the element is anchored in both cases, and
+// that is what the anvil is reporting. The flashing border on the element
+// (`drawAnchorWarningBorder`) is what marks a refusal.
 //
 // Hence this doesn't route through `drawAnchorOverlay`, whose `anchored`
 // flag ties the fill to the opacity. That pairing is right for the
 // button, where hollow means "not anchored"; here it would fade an anchor
 // that is very much anchored.
-//
-// With a `flashRuntime` it flashes and pulses on the same beat as the
-// lines it is named alongside — from its own warning red to the shade they
-// deepen to, so the two peak together.
 export const drawAnchorOverlayWarning = (
   context: CanvasRenderingContext2D,
   cx: number,
@@ -1147,24 +1182,8 @@ export const drawAnchorOverlayWarning = (
   size: number,
   theme: AppState["theme"],
   zenModeEnabled: boolean,
-  blocking = true,
-  flashRuntime: number | null = null,
 ) => {
   const light = theme === THEME.LIGHT || zenModeEnabled;
-  const base = light ? ANCHOR_WARNING_COLOR_LIGHT : ANCHOR_WARNING_COLOR_DARK;
-  const color =
-    flashRuntime === null
-      ? base
-      : mixHex(
-          base,
-          light ? REFUSAL_FLASH_COLOR_LIGHT : REFUSAL_FLASH_COLOR_DARK,
-          flashPhase(flashRuntime),
-        );
-  const drawnSize =
-    flashRuntime === null
-      ? size
-      : size *
-        getRefusalFlashScale(flashRuntime, ANCHOR_REFUSAL_PULSE_AMPLITUDE);
 
   context.save();
   context.globalAlpha = ANCHOR_OVERLAY_OPACITY;
@@ -1172,10 +1191,10 @@ export const drawAnchorOverlayWarning = (
     context,
     cx,
     cy,
-    drawnSize,
-    color,
-    Math.max(drawnSize * ANCHOR_LINE_RATIO_HOVER, 1),
-    blocking,
+    size,
+    light ? ANCHOR_WARNING_COLOR_LIGHT : ANCHOR_WARNING_COLOR_DARK,
+    Math.max(size * ANCHOR_LINE_RATIO_HOVER, 1),
+    true,
   );
   context.restore();
 };

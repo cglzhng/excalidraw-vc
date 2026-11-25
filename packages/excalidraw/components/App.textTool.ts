@@ -86,7 +86,7 @@ const isSameHover = (
  * (`appState.textToolHover`), the cursor and the pointerdown itself, so the
  * affordance can never promise something the click won't deliver.
  *
- * A click on an empty container's center is armed on pointerdown and
+ * A click on an empty container is armed on pointerdown and
  * committed on pointerup as a bound label; dragging past the autowrap
  * threshold first turns it into a free fixed-width text at the origin
  * instead.
@@ -98,7 +98,7 @@ export class AppTextTool {
   constructor(private app: App) {}
 
   /**
-   * A click on an empty container's center, armed on pointerdown and decided
+   * A click on an empty container, armed on pointerdown and decided
    * on the pointer's way out: a click binds a label, a drag creates free
    * text instead. Deferring is what keeps the drag from first binding to
    * (and provisionally enlarging) the container.
@@ -118,7 +118,7 @@ export class AppTextTool {
    * What a click at this position would do, in the order the click resolves
    * it: a free arrow endpoint (the smaller, more deliberate target; z-aware,
    * and off while ctrl/cmd disables binding) → the text under the pointer,
-   * which the click edits → an empty container near its center, which gets
+   * which the click edits → an empty container under the pointer, which gets
    * a label unless ctrl/cmd opts out → free text at the pointer.
    *
    * Ctrl/cmd is "no binding" throughout the tool, as elsewhere in the
@@ -143,16 +143,12 @@ export class AppTextTool {
 
     if (!modifiers[KEYS.CTRL_OR_CMD]) {
       const container = this.app.text.getTextBindableContainerAtPosition(x, y);
+      // anywhere inside it, not just near its center: free text inside a
+      // shape is still a drag or a ctrl/cmd-click away
       if (
         container &&
         // an existing label is edited by hitting the text itself (above)
-        !hasBoundTextElement(container) &&
-        this.app.text.getTextWysiwygSnappedToCenterPosition(
-          x,
-          y,
-          this.app.state,
-          container,
-        )
+        !hasBoundTextElement(container)
       ) {
         return { type: "container", element: container };
       }
@@ -177,9 +173,9 @@ export class AppTextTool {
     if (state.activeTool.type !== "text") {
       return null;
     }
-    // a pending center click keeps the affordance it was armed with until
-    // it resolves (the pointer may leave the snap radius before the drag
-    // threshold, and a release would still bind)
+    // a pending container click keeps the affordance it was armed with
+    // until it resolves (the pointer may leave the container before the
+    // drag threshold, and a release would still bind)
     if (this.pending) {
       return null;
     }
@@ -233,7 +229,7 @@ export class AppTextTool {
   };
 
   /**
-   * Drops a pending center click without acting on it — the tool was left,
+   * Drops a pending container click without acting on it — the tool was left,
    * the browser took the pointer (pointercancel), or a second finger turned
    * the press into a pinch/pan — so no pointerup of ours will decide it. The
    * outline it armed goes with it: while pending, the hover is that click's.
@@ -336,7 +332,7 @@ export class AppTextTool {
   };
 
   /**
-   * The pointer-move half of a pending center click. Once the pointer has
+   * The pointer-move half of a pending container click. Once the pointer has
    * moved past the autowrap threshold the click is a drag: free text is
    * created at the origin and sized by the drag from here on. Horizontal
    * only (a text is only ever sized that way) and in screen space, and
@@ -413,9 +409,15 @@ export class AppTextTool {
     // flushed so the drag below reads the created element off the state
     flushSync(() => {
       if (created) {
+        // A label is placed at the container's center, and `startTextEditing`
+        // only binds a click that lands near it — so a click anywhere inside
+        // is handed over as one at the center.
+        const at = isDrag
+          ? origin
+          : this.app.text.getContainerLabelCenter(container);
         this.app.text.startTextEditing({
-          sceneX: origin.x,
-          sceneY: origin.y,
+          sceneX: at.x,
+          sceneY: at.y,
           container: isDrag ? null : container,
           textElement: null,
           insertAtParentCenter: !isDrag,

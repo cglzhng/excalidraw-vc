@@ -9,7 +9,7 @@ import { getElementBounds } from "./bounds";
 import { MIN_ALIGNED_SIZE, isAlignable } from "./alignment";
 import {
   alignmentDragDriver,
-  alignmentResizeDriver,
+  alignmentDriverFromEdgeDeltas,
   applyAlignmentResponse,
   solveAlignmentResponse,
 } from "./alignmentSolve";
@@ -839,7 +839,13 @@ export const clampSizeToAlignments = (
   driver: ExcalidrawElement,
   originalElements: ReadonlyMap<string, ExcalidrawElement>,
   elementsMap: ElementsMap,
-  opts: { handle: string | false; shouldResizeFromCenter: boolean },
+  opts: {
+    handle: string | false;
+    shouldResizeFromCenter: boolean;
+    /** the smallest the driver itself may get — `MIN_RESIZE_EXTENT`,
+     * which lives with the resize code that imports this */
+    minDriverExtent: number;
+  },
 ): {
   nextWidth: number;
   nextHeight: number;
@@ -852,7 +858,6 @@ export const clampSizeToAlignments = (
   }
 
   const chains = collectHardChains(elementsMap);
-  const resizeDriver = alignmentResizeDriver([driver.id]);
 
   const origRangeOf = (id: string, axis: Axis): InclusiveRange | null => {
     const element = originalElements.get(id) ?? elementsMap.get(id);
@@ -865,9 +870,8 @@ export const clampSizeToAlignments = (
     axis: Axis,
     length: number,
   ): { value: number; blame: ClampBlame | null } => {
-    const response = solveAlignmentResponse(resizeDriver, axis, elementsMap);
     const origDriver = origRangeOf(driver.id, axis);
-    if (!response.feasible || !origDriver) {
+    if (!origDriver) {
       return { value: length, blame: null };
     }
     const originalLength = origDriver[1] - origDriver[0];
@@ -875,18 +879,27 @@ export const clampSizeToAlignments = (
       return { value: length, blame: null };
     }
 
-    /** How far the driver's two edges have travelled at a proposed length. */
-    const driverEdgesAt = (at: number): number[] => {
-      if (opts.shouldResizeFromCenter) {
-        // both bounds grow outward, the centre stays put
-        const grew = (at - originalLength) / 2;
-        return [-grew, grew];
-      }
-      // "nw" / "w" hold the right edge and move the left, and so on
-      return handle.includes(axis === "x" ? "w" : "n")
-        ? [originalLength - at, 0]
-        : [0, at - originalLength];
-    };
+    // How far each of the driver's edges travels per unit the length grows.
+    // The same seeds the resize itself is solved from (`intendedResizeSeeds`):
+    // the edge the handle holds is 0, which the solve offers rather than
+    // imposes, so an element centred on an anchor answers here as it does
+    // there — by letting that edge go and resizing about its centre — rather
+    // than reading as a refusal and going uncapped.
+    const perUnit = opts.shouldResizeFromCenter
+      ? // both bounds grow outward, the centre stays put
+        { min: -0.5, max: 0.5 }
+      : // "nw" / "w" hold the right edge and move the left, and so on
+      handle.includes(axis === "x" ? "w" : "n")
+      ? { min: -1, max: 0 }
+      : { min: 0, max: 1 };
+    const response = solveAlignmentResponse(
+      alignmentDriverFromEdgeDeltas(new Map([[driver.id, perUnit]])),
+      axis,
+      elementsMap,
+    );
+    if (!response.feasible) {
+      return { value: length, blame: null };
+    }
 
     const NO_MOVEMENT = { min: 0, max: 0 };
 
@@ -899,7 +912,7 @@ export const clampSizeToAlignments = (
     const marginsAt = (
       at: number,
     ): { value: number; blame: ClampBlame }[] => {
-      const deltas = applyAlignmentResponse(response, driverEdgesAt(at));
+      const deltas = applyAlignmentResponse(response, [at - originalLength]);
       const deltaOf = (id: string) => deltas.get(id) ?? NO_MOVEMENT;
       const margins: { value: number; blame: ClampBlame }[] = [];
 
@@ -922,9 +935,23 @@ export const clampSizeToAlignments = (
         }
       }
 
+      // The driver's own extent. `clampSizeToMinimumExtent` has already
+      // floored the length the pointer asks for, but where the solve lets
+      // the held edge go, that edge closes in too and the driver shrinks
+      // faster than the length says.
+      const driverDelta = deltaOf(driver.id);
+      margins.push({
+        value:
+          origDriver[1] -
+          origDriver[0] +
+          driverDelta.max -
+          driverDelta.min -
+          opts.minDriverExtent,
+        blame: { kind: "extent", axis, elementId: driver.id },
+      });
+
       // Only the elements the solve changes the size of: everything else
-      // keeps the extent it had, and the driver's own is floored by
-      // `clampSizeToMinimumExtent` before this ever sees it.
+      // keeps the extent it had.
       for (const id of response.stretchers) {
         const range = origRangeOf(id, axis);
         const delta = deltaOf(id);

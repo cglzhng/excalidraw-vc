@@ -1864,6 +1864,9 @@ export const getSnapLinesAtPointer = (
   };
 };
 
+// Not the text tool: a click there binds to whatever container is under the
+// pointer, and a snap line drawn at the cursor would claim a position the
+// click doesn't use (see `App.maybeDragNewGenericElement` for the drag-out).
 export const isActiveToolNonLinearSnappable = (
   activeToolType: AppState["activeTool"]["type"],
 ) => {
@@ -1873,7 +1876,6 @@ export const isActiveToolNonLinearSnappable = (
     activeToolType === TOOL_TYPE.diamond ||
     activeToolType === TOOL_TYPE.frame ||
     activeToolType === TOOL_TYPE.magicframe ||
-    activeToolType === TOOL_TYPE.image ||
-    activeToolType === TOOL_TYPE.text
+    activeToolType === TOOL_TYPE.image
   );
 };

@@ -15,6 +15,7 @@ import {
   drawAlignmentHighlight,
   drawAnchorOverlayButton,
   drawAnchorOverlayWarning,
+  drawAnchorWarningBorder,
   drawEqualsBadge,
   drawGapEndCap,
   drawGapMidpointTicks,
@@ -364,8 +365,8 @@ const namesLine = (
  * centred on an anchor growing both ways, say.
  *
  * Both flash, because both say "this constraint is why what you asked for
- * isn't what you got". The anvils still tell the two apart: filled for a
- * refusal, outlined for one that shaped a gesture it allowed.
+ * isn't what you got". The anchors still tell the two apart: only a refusing
+ * one's element takes the flashing border.
  */
 const isRefusedLine = (
   movers: AlignmentDragMovers,
@@ -1467,8 +1468,8 @@ export const renderElementAlignmentLocks = (
  * them are read off here.
  *
  * A drag also names the anchors that pinned a gap chain in place of its
- * default (`AlignmentMovers.pinAnchors`): outlined while the chain
- * re-spaces around them, filled when two pins leave no solution.
+ * default (`AlignmentMovers.pinAnchors`): permitting while the chain
+ * re-spaces around them, refusing when two pins leave no solution.
  *
  * Drawn as the *warning* anvil rather than the toggle's button form — see
  * {@link drawAnchorOverlayWarning} for why the two look different.
@@ -1476,9 +1477,10 @@ export const renderElementAlignmentLocks = (
 export type AnchorOverlays = {
   refusing: ReadonlySet<string>;
   permitting: ReadonlySet<string>;
-  /** the ones named in a refusal or a release, which flash with the lines
-   * naming them: every refusing anchor, and any permitting one that forced
-   * a resize to give up its held edge */
+  /** the ones whose elements take a border that flashes with the lines
+   * naming them: the refusing anchors only. One that forced a resize to give
+   * up its held edge is left steady, though its lines still flash — the
+   * gesture went through, and a flashing border reads as a refusal. */
   flashing: ReadonlySet<string>;
 };
 
@@ -1519,9 +1521,9 @@ export const getAnchorOverlays = (
   }
   // An anchor that is only reshaping the gesture, not refusing it —
   // forcing a partner to stretch during a resize, or a gap chain to
-  // re-space around it during a drag — shown for the same reason, in the
-  // lighter form. If one is somehow both, refusing wins: that is the more
-  // urgent thing to say.
+  // re-space around it during a drag — shown for the same reason, without
+  // the flashing border unless it forced a release. If one is somehow both,
+  // refusing wins: that is the more urgent thing to say.
   const stretchAnchors = new Set(
     [
       ...appState.alignmentResizeStretchAnchorIds,
@@ -1532,19 +1534,7 @@ export const getAnchorOverlays = (
     return null;
   }
 
-  const flashing = new Set(anchors);
-  const released = [
-    ...appState.alignmentResizeConstraints.releasedBy.x,
-    ...appState.alignmentResizeConstraints.releasedBy.y,
-    ...(movers?.releasedBy.x ?? []),
-    ...(movers?.releasedBy.y ?? []),
-  ];
-  for (const ref of released) {
-    if (ref.kind === "anchor" && stretchAnchors.has(ref.elementId)) {
-      flashing.add(ref.elementId);
-    }
-  }
-  return { refusing: anchors, permitting: stretchAnchors, flashing };
+  return { refusing: anchors, permitting: stretchAnchors, flashing: anchors };
 };
 
 export const renderAnchorLockOverlays = (
@@ -1561,27 +1551,41 @@ export const renderAnchorLockOverlays = (
   const zoom = appState.zoom.value;
   context.save();
   context.translate(appState.scrollX, appState.scrollY);
-  for (const [ids, blocking] of [
-    [overlays.refusing, true],
-    [overlays.permitting, false],
-  ] as const) {
-    for (const id of ids) {
+  // under the anvils, so a border round a small element doesn't cross one
+  if (flashRuntime !== null) {
+    for (const id of overlays.flashing) {
       const el = elementsMap.get(id);
       if (!el) {
         continue;
       }
-      const center = anchorIconCenter(el, elementsMap);
-      drawAnchorOverlayWarning(
+      const b = getElementBounds(el, elementsMap);
+      drawAnchorWarningBorder(
         context,
-        center[0],
-        center[1],
-        anchorIconSize(el, elementsMap, zoom),
+        b[0],
+        b[1],
+        b[2],
+        b[3],
+        zoom,
         appState.theme,
         appState.zenModeEnabled,
-        blocking,
-        overlays.flashing.has(id) ? flashRuntime : null,
+        flashRuntime,
       );
     }
+  }
+  for (const id of [...overlays.refusing, ...overlays.permitting]) {
+    const el = elementsMap.get(id);
+    if (!el) {
+      continue;
+    }
+    const center = anchorIconCenter(el, elementsMap);
+    drawAnchorOverlayWarning(
+      context,
+      center[0],
+      center[1],
+      anchorIconSize(el, elementsMap, zoom),
+      appState.theme,
+      appState.zenModeEnabled,
+    );
   }
   context.restore();
 };

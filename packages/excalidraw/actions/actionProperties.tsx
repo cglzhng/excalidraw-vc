@@ -22,7 +22,6 @@ import {
   getStrokeWidthByKey,
   reduceToCommonValue,
   invariant,
-  FONT_SIZES,
   type StrokeWidthKey,
 } from "@excalidraw/common";
 
@@ -128,10 +127,6 @@ import {
   StrokeWidthBaseIcon,
   StrokeWidthBoldIcon,
   StrokeWidthExtraBoldIcon,
-  FontSizeSmallIcon,
-  FontSizeMediumIcon,
-  FontSizeLargeIcon,
-  FontSizeExtraLargeIcon,
   EdgeSharpIcon,
   EdgeRoundIcon,
   TextAlignLeftIcon,
@@ -1004,6 +999,13 @@ export const actionChangeOpacity = register<ExcalidrawElement["opacity"]>({
   },
 });
 
+/** The sizes the font size dropdown offers. Includes upstream's four
+ * presets (`FONT_SIZES`: 16, 20, 28, 36), so text drawn at those still
+ * matches an entry. */
+const COMMON_FONT_SIZES: readonly number[] = [
+  8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 64, 72, 96,
+];
+
 export const actionChangeFontSize = register<ExcalidrawTextElement["fontSize"]>(
   {
     name: "changeFontSize",
@@ -1023,77 +1025,60 @@ export const actionChangeFontSize = register<ExcalidrawTextElement["fontSize"]>(
     },
     PanelComponent: ({ elements, appState, updateData, app, data }) => {
       const { isCompact } = getStylesPanelInfo(app);
+      const value = getFormValue(
+        elements,
+        app,
+        (element) => {
+          const elementsMap = app.scene.getNonDeletedElementsMap();
+          if (isTextElement(element)) {
+            return getBaseFontSize(element, elementsMap);
+          }
+          const boundTextElement = getBoundTextElement(element, elementsMap);
+          if (boundTextElement) {
+            return getBaseFontSize(boundTextElement, elementsMap);
+          }
+          return null;
+        },
+        (element) =>
+          isTextElement(element) ||
+          getBoundTextElement(element, app.scene.getNonDeletedElementsMap()) !==
+            null,
+        (hasSelection) =>
+          hasSelection ? null : appState.currentItemFontSize || DEFAULT_FONT_SIZE,
+      );
+      // a size set some other way — the Stats panel, Ctrl+Shift+< / > — is
+      // listed too, so the dropdown can show what the text actually has
+      const sizes =
+        value === null || COMMON_FONT_SIZES.includes(value)
+          ? COMMON_FONT_SIZES
+          : [...COMMON_FONT_SIZES, value].sort((a, b) => a - b);
 
       return (
         <fieldset>
           <legend>{t("labels.fontSize")}</legend>
-          <div className="buttonList">
-            <RadioSelection
-              group="font-size"
-              options={[
-                {
-                  value: FONT_SIZES.sm,
-                  text: t("labels.small"),
-                  icon: FontSizeSmallIcon,
-                  testId: "fontSize-small",
-                },
-                {
-                  value: FONT_SIZES.md,
-                  text: t("labels.medium"),
-                  icon: FontSizeMediumIcon,
-                  testId: "fontSize-medium",
-                },
-                {
-                  value: FONT_SIZES.lg,
-                  text: t("labels.large"),
-                  icon: FontSizeLargeIcon,
-                  testId: "fontSize-large",
-                },
-                {
-                  value: FONT_SIZES.xl,
-                  text: t("labels.veryLarge"),
-                  icon: FontSizeExtraLargeIcon,
-                  testId: "fontSize-veryLarge",
-                },
-              ]}
-              value={getFormValue(
-                elements,
-                app,
-                (element) => {
-                  const elementsMap = app.scene.getNonDeletedElementsMap();
-                  if (isTextElement(element)) {
-                    return getBaseFontSize(element, elementsMap);
-                  }
-                  const boundTextElement = getBoundTextElement(
-                    element,
-                    elementsMap,
-                  );
-                  if (boundTextElement) {
-                    return getBaseFontSize(boundTextElement, elementsMap);
-                  }
-                  return null;
-                },
-                (element) =>
-                  isTextElement(element) ||
-                  getBoundTextElement(
-                    element,
-                    app.scene.getNonDeletedElementsMap(),
-                  ) !== null,
-                (hasSelection) =>
-                  hasSelection
-                    ? null
-                    : appState.currentItemFontSize || DEFAULT_FONT_SIZE,
-              )}
-              onChange={(value) => {
-                withCaretPositionPreservation(
-                  () => updateData(value),
-                  isCompact,
-                  !!appState.editingTextElement,
-                  data?.onPreventClose,
-                );
-              }}
-            />
-          </div>
+          <select
+            className="font-size-select"
+            data-testid="fontSize-select"
+            aria-label={t("labels.fontSize")}
+            // a mixed selection shows a blank until a size is picked
+            value={value === null ? "" : String(value)}
+            onChange={(event) => {
+              const next = Number(event.target.value);
+              withCaretPositionPreservation(
+                () => updateData(next),
+                isCompact,
+                !!appState.editingTextElement,
+                data?.onPreventClose,
+              );
+            }}
+          >
+            {value === null && <option value="" disabled hidden />}
+            {sizes.map((size) => (
+              <option key={size} value={String(size)}>
+                {Number.isInteger(size) ? size : size.toFixed(1)}
+              </option>
+            ))}
+          </select>
         </fieldset>
       );
     },
