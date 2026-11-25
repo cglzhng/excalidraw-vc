@@ -12,6 +12,7 @@ import type {
 } from "@excalidraw/element/types";
 
 import type { AppState } from "../types";
+import type { DroppedAlignment } from "./placement";
 import type { PendingConflict, Remap } from "./types";
 
 export type ResolutionSession = NonNullable<AppState["versionLogResolution"]>;
@@ -153,7 +154,13 @@ export const getCandidateElements = (
 };
 
 export type ConflictHover =
-  | { kind: "pick"; id: string }
+  | {
+      kind: "pick";
+      id: string;
+      /** what choosing it would leave out, from the hover preview's replay
+       * (`App.updateVersionLogResolutionHover`) */
+      dropped?: readonly DroppedAlignment[];
+    }
   | { kind: "refused"; elementId: string; reason: string };
 
 /**

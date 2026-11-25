@@ -208,13 +208,20 @@ so each can be tried on its own:
 ```ts
 export const ALIGNMENT_FEEL_ROWS = {
   /** Dragging an end member holds the far end still. */
-  endDragHoldsFarEnd: true,
+  endDragHoldsFarEnd: false,
   /** Dragging an interior member travels the whole chain rigidly. */
   interiorDragTravelsRigidly: true,
+  /** A resize holds the edge its handle isn't moving. */
+  resizeHoldsItsOtherEdge: true,
 };
 ```
 
-Only the feel-row block in `solve()` reads them, so flipping a flag changes
+The far-end rule is currently off, so an end drag takes the minimum-disturbance
+answer and the far end drifts back against the drag. The third flag came later,
+with resize: it offers the handle's held edge the same way rather than imposing
+it.
+
+Only the row building in `solve()` reads them, so flipping a flag changes
 which rows are offered and nothing else — no dead code paths, no commented-out
 blocks. Exported (and mutable) so `alignmentSolve.test.ts` can assert both sets
 of numbers; no production caller should be choosing per gesture which behaviour

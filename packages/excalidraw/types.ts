@@ -492,15 +492,16 @@ export interface AppState {
    *    element, or a group's members), drawn where it was so the user can
    *    see what lost its target.
    *  - `hover`: what is under the pointer — a candidate a click would
-   *    pick, or an element that can't stand in and why — for the canvas
-   *    label. (A hovered candidate's outcome is drawn through
-   *    `versionLogHoverPreview`.)
+   *    pick, with what choosing it would drop, or an element that can't
+   *    stand in and why — for the canvas label. (A hovered candidate's
+   *    outcome is drawn through `versionLogHoverPreview`.)
    *  - `showingBefore`: the switch is on Show before, for every conflict
    *    at once: the canvas shows the scene as it was before the toggle,
    *    and Apply keeps it, as Cancel does. Picking is off meanwhile.
    *  - `replayIssues`: what the replay under these decisions couldn't
-   *    keep: hard alignments that no longer hold, and stand-ins that
-   *    couldn't be placed. Reported only; nothing repairs them.
+   *    keep: hard alignments that no longer hold, and alignments a
+   *    stand-in was handed but couldn't be placed for, which the replay
+   *    dropped. Reported only; nothing repairs them.
    *  - `viewModeBefore`: the session holds view mode on so nothing can be
    *    edited; this is what to put back when it ends.
    */
@@ -515,7 +516,7 @@ export interface AppState {
     showingBefore: boolean;
     replayIssues: {
       broken: readonly import("./versionLog/brokenAlignments").BrokenAlignment[];
-      unplaced: readonly import("./versionLog/placement").UnplacedStandIn[];
+      dropped: readonly import("./versionLog/placement").DroppedAlignment[];
     };
     viewModeBefore: boolean;
   } | null;

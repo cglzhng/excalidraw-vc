@@ -113,6 +113,7 @@ import {
   getCandidateElements,
   getPickingConflict,
 } from "../versionLog/conflictPicking";
+import { describeDroppedAlignment } from "../versionLog/placement";
 import {
   getScrollBars,
   SCROLLBAR_COLOR,
@@ -2886,6 +2887,25 @@ const _renderInteractiveScene = ({
         appState,
         getCommonBounds([refused]),
         `${refused.shortId ?? refused.type} ${hover.reason}`,
+      );
+    }
+    // a candidate that can stand in, but only by leaving something out
+    const dropped = hover?.kind === "pick" ? hover.dropped ?? [] : [];
+    const droppingBounds =
+      hover?.kind === "pick" ? candidateBounds.get(hover.id) : undefined;
+    if (dropped.length > 0 && droppingBounds) {
+      const nameOf = (id: string) => {
+        const el = allElementsMap.get(id);
+        return el ? el.shortId ?? el.type : "element";
+      };
+      const more = dropped.length - 1;
+      renderRefusalLabel(
+        context,
+        appState,
+        droppingBounds,
+        `${describeDroppedAlignment(dropped[0], nameOf, "predicted")}${
+          more > 0 ? ` (+${more} more)` : ""
+        }`,
       );
     }
   }

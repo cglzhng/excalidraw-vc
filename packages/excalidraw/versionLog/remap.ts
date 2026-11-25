@@ -23,6 +23,7 @@ import type {
   ElementGapAlignment,
 } from "@excalidraw/element/types";
 
+import { alignmentLinkKey } from "./applyOps";
 import { getOperationElementIds } from "./types";
 
 import type { ConsequentOp, LogOperation, Remap } from "./types";
@@ -54,11 +55,11 @@ export const applyRemapsToOp = (
 };
 
 /**
- * Hand an op's followers to their stand-ins: a partner dragged after the
- * lock recorded the missing element following it, and the stand-in has to
- * follow in its place. A follower whose referent is skipped is dropped
- * alone, since the op that caused it still happened. So is one whose
- * stand-in the op already moves, which would otherwise travel twice.
+ * Hand an op's followers to their stand-ins. A follower whose referent is
+ * skipped is dropped alone, since the op that caused it still happened. So
+ * is one whose stand-in the op already moves, which would otherwise travel
+ * twice. Replay derives alignment followers instead of replaying them
+ * (`followAlignments.ts`), so what this reaches there is bound arrows.
  */
 export const remapConsequents = (
   op: LogOperation,
@@ -302,20 +303,26 @@ const remapOwnReferents = (
         return remap.to;
       };
 
-      const remapOwners = <T>(
+      // A stand-in that was already one of the op's own members receives
+      // the missing element's links on top of its own, rather than in
+      // place of them. Any link between the two now names the stand-in at
+      // both ends; the replay drops those (`placeStandInsDropping`).
+      const remapOwners = <T extends ElementAlignment | ElementGapAlignment>(
         map: Record<string, readonly T[]>,
         remapLink: (link: T) => T | null,
       ): Record<string, readonly T[]> => {
-        const next: Record<string, readonly T[]> = {};
+        const next: Record<string, T[]> = {};
         for (const [ownerId, links] of Object.entries(map)) {
           const nextOwner = resolve(ownerId);
           if (nextOwner == null) {
             continue;
           }
-          const nextLinks: T[] = [];
+          const nextLinks = next[nextOwner] ?? [];
+          const seen = new Set(nextLinks.map(alignmentLinkKey));
           for (const link of links) {
             const remapped = remapLink(link);
-            if (remapped != null) {
+            if (remapped != null && !seen.has(alignmentLinkKey(remapped))) {
+              seen.add(alignmentLinkKey(remapped));
               nextLinks.push(remapped);
             }
           }
@@ -345,9 +352,13 @@ const remapOwnReferents = (
         return ids.length < 3 ? null : { ...link, ids };
       };
 
-      const elementIds = op.elementIds
-        .map(resolve)
-        .filter((id): id is string => id != null);
+      const elementIds = [
+        ...new Set(
+          op.elementIds
+            .map(resolve)
+            .filter((id): id is string => id != null),
+        ),
+      ];
 
       if (elementIds.length === 0) {
         return { status: "skip" };

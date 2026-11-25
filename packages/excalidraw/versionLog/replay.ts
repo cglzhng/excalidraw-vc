@@ -24,7 +24,6 @@
  */
 
 import {
-  canAlignmentStretch,
   isAlignable,
   isArrowElement,
   isBindableElement,
@@ -38,17 +37,19 @@ import {
 import type { BoundElement, ExcalidrawElement } from "@excalidraw/element/types";
 
 import { applyOpsToScene } from "./applyOps";
-import { followBindings } from "./followBindings";
 import {
-  alignmentReferences,
-  placeStandIns,
-  rigidRefusal,
-} from "./placement";
-import { applyRemapsToOp, remapConsequents } from "./remap";
+  followAlignments,
+  isFollowedOp,
+  ownElementIds,
+  withoutAlignmentFollowers,
+} from "./followAlignments";
+import { followBindings } from "./followBindings";
+import { alignmentReferences, placeStandInsDropping } from "./placement";
+import { applyRemapsToOp } from "./remap";
 import { collectElementIdsFromGroupNode, getOperationElementIds } from "./types";
 
 import type { SceneSnapshot } from "./applyOps";
-import type { UnplacedStandIn } from "./placement";
+import type { DroppedAlignment } from "./placement";
 import type {
   LogMoment,
   LogOperation,
@@ -67,8 +68,8 @@ export interface ReplayResult {
    * to `null`) or there were no missing referents in the first place.
    */
   conflicts: PendingConflict[];
-  /** Stand-ins that couldn't be placed, whose alignment ops were skipped. */
-  unplaced: UnplacedStandIn[];
+  /** What stand-ins were handed but couldn't take, and so went without. */
+  dropped: DroppedAlignment[];
 }
 
 /**
@@ -119,7 +120,7 @@ export const replayActiveOps = (
   // multiple ops referencing the same dead group/element collapse
   // into a single user decision.
   const conflictMap = new Map<string, PendingConflict>();
-  const unplaced: UnplacedStandIn[] = [];
+  const dropped: DroppedAlignment[] = [];
 
   // Elements any walked moment touches — active OR skipped. These are
   // the only ones whose state can differ from the store's snapshot, so
@@ -151,7 +152,7 @@ export const replayActiveOps = (
       tentative,
       skipped,
       conflictMap,
-      unplaced,
+      dropped,
       inPlay,
     );
   }
@@ -191,7 +192,7 @@ export const replayActiveOps = (
     snapshot: ordered,
     skipped,
     conflicts: Array.from(conflictMap.values()),
-    unplaced,
+    dropped,
   };
 };
 
@@ -263,9 +264,18 @@ const applyMomentTracked = (
   tentative: ReadonlyMap<string, Remap>,
   skipped: Set<LogOperation>,
   conflictMap: Map<string, PendingConflict>,
-  unplaced: UnplacedStandIn[],
+  dropped: DroppedAlignment[],
   inPlay: Set<string>,
 ): void => {
+  // The scene as the Moment found it, which its alignment followers are
+  // solved against once its ops have run (`followAlignments.ts`), and the
+  // elements those ops moved themselves.
+  const before = moment.operations.some(isFollowedOp)
+    ? new Map(snapshot)
+    : null;
+  const drivers = new Set<string>();
+  const strippedFollowers = new Set<string>();
+
   for (const op of moment.operations) {
     const remap = applyRemapsToOp(op, remaps);
     if (remap.status === "skip") {
@@ -281,7 +291,6 @@ const applyMomentTracked = (
     // are stale — apply the transform to the live members of G2 in
     // the current snapshot instead.
     let finalOp = resolveLiveGroupMembers(remap.op, snapshot);
-    refuseUnstretchableFollowers(finalOp, snapshot, conflictMap);
 
     const missing = enumerateMissingReferents(finalOp, snapshot);
     if (missing.length > 0) {
@@ -305,20 +314,14 @@ const applyMomentTracked = (
         continue;
       }
     }
-    // An op with nothing missing of its own can still carry a follower
-    // that is: a partner dragged after the lock, with the missing element
-    // recorded following it. A session's decision reaches that follower
-    // here, and only while its referent really is gone.
-    if (tentative.size > 0) {
-      finalOp = remapConsequents(
-        finalOp,
-        new Map(
-          Array.from(tentative).filter(([id]) => {
-            const el = snapshot.get(id);
-            return !el || el.isDeleted;
-          }),
-        ),
-      );
+    // Alignment followers are derived after the Moment's ops rather than
+    // replayed, so a stand-in follows the links it took over and a skip
+    // that moved a partner is followed from where the partner now is.
+    if (isFollowedOp(finalOp)) {
+      ownElementIds(finalOp).forEach((id) => drivers.add(id));
+      const derived = withoutAlignmentFollowers(finalOp, snapshot);
+      finalOp = derived.op;
+      derived.stripped.forEach((id) => strippedFollowers.add(id));
     }
     // the ids the op names now, which a remap may have changed: a stand-in
     // has to out-version the store's snapshot like anything else it moves
@@ -328,25 +331,15 @@ const applyMomentTracked = (
 
     // A reassigned alignment names a stand-in in links that were true of
     // the missing element, so the stand-in is moved to where they hold
-    // before they're written (`placement.ts`). The stand-ins are what the
-    // remaps brought in: ids the op names now and didn't as recorded. A
-    // placement that can't be made skips the op, as a missing referent
-    // would — its links wouldn't hold.
+    // before they're written (`placement.ts`). Whatever it can't be placed
+    // for is dropped and the rest kept: nothing an alignment asks of a
+    // stand-in stops it being chosen.
     if (op.kind === "alignment" && finalOp.kind === "alignment") {
-      const recorded = alignmentReferences(op);
-      const standIns = [...alignmentReferences(finalOp)].filter(
-        (id) => !recorded.has(id),
-      );
+      const standIns = alignmentStandIns(op, finalOp, remaps, tentative);
       if (standIns.length > 0) {
-        const placed = placeStandIns(finalOp, standIns, snapshot, true);
-        if (placed.status === "refused") {
-          unplaced.push({
-            standInId: placed.standInId,
-            reason: placed.reason,
-          });
-          skipped.add(op);
-          continue;
-        }
+        const placed = placeStandInsDropping(finalOp, standIns, snapshot);
+        finalOp = placed.op;
+        dropped.push(...placed.dropped);
         for (const id of placed.changed) {
           inPlay.add(id);
         }
@@ -366,39 +359,52 @@ const applyMomentTracked = (
       inPlay.add(id);
     }
   }
+
+  if (before && drivers.size > 0) {
+    const followed = followAlignments(
+      before,
+      snapshot,
+      drivers,
+      strippedFollowers,
+    );
+    for (const id of followed) {
+      inPlay.add(id);
+    }
+    for (const id of followBindings(snapshot, followed)) {
+      inPlay.add(id);
+    }
+  }
 };
 
 /**
- * A missing element stretched as a follower hands that resize to its
- * stand-in, so the stand-in has to be something alignment may stretch. A
- * follower isn't an op of the conflict, so `recordConflict` never asks.
- * The conflict is already open by here: a follower needs the link that
- * made it follow, and locking that link is what reported the element
- * missing.
+ * The stand-ins a remapped alignment op names: where the recorded op named
+ * an element the remaps — the log's, then the session's — carried somewhere
+ * else, the element it went to. Read off the remaps rather than off which
+ * ids are new, since a stand-in may already have been one of the op's own
+ * partners.
  */
-const refuseUnstretchableFollowers = (
-  op: LogOperation,
-  snapshot: SceneSnapshot,
-  conflictMap: Map<string, PendingConflict>,
-): void => {
-  if (!("consequentOps" in op)) {
-    return;
-  }
-  for (const follower of op.consequentOps ?? []) {
-    const conflict =
-      follower.kind === "resize" ? conflictMap.get(follower.elementId) : null;
-    if (conflict?.referentKind !== "element") {
-      continue;
-    }
-    conflict.candidates = conflict.candidates.filter((id) => {
-      const el = snapshot.get(id);
-      if (!el || canAlignmentStretch(el)) {
-        return true;
+const alignmentStandIns = (
+  op: LogOperation & { kind: "alignment" },
+  finalOp: LogOperation & { kind: "alignment" },
+  ...maps: ReadonlyMap<string, Remap>[]
+): string[] => {
+  const named = alignmentReferences(finalOp);
+  const standIns = new Set<string>();
+  for (const id of alignmentReferences(op)) {
+    let to = id;
+    for (const map of maps) {
+      const remap = map.get(to);
+      if (remap?.kind === "element" && remap.to) {
+        to = remap.to;
       }
-      conflict.refusals[id] = rigidRefusal(el);
-      return false;
-    });
+    }
+    // a session's decision applies only where its referent is gone, so
+    // one the op still names wasn't remapped here
+    if (to !== id && !named.has(id) && named.has(to)) {
+      standIns.add(to);
+    }
   }
+  return [...standIns];
 };
 
 /**
@@ -458,12 +464,7 @@ const recordConflict = (
       // each of them
       if (ref.kind === "element") {
         existing.candidates = existing.candidates.filter((id) => {
-          const refusal = standInRefusal(
-            resolved,
-            ref.id,
-            snapshot.get(id),
-            snapshot,
-          );
+          const refusal = standInRefusal(resolved, ref.id, snapshot.get(id));
           if (refusal != null) {
             existing.refusals[id] = refusal;
           }
@@ -481,7 +482,7 @@ const recordConflict = (
       if (el.id === ref.id) {
         continue;
       }
-      const refusal = standInRefusal(resolved, ref.id, el, snapshot);
+      const refusal = standInRefusal(resolved, ref.id, el);
       if (refusal == null) {
         candidates.push(el.id);
       } else {
@@ -516,13 +517,16 @@ const standInRefusal = (
   op: LogOperation,
   refId: string,
   el: ExcalidrawElement | undefined,
-  snapshot: SceneSnapshot,
 ): string | null => {
   if (!el || el.id === refId) {
     return "is the element that went missing";
   }
   if (el.isDeleted) {
     return "is deleted at this point in the log";
+  }
+  // locked means nothing may change it, a stand-in's placement included
+  if (el.locked) {
+    return "is locked";
   }
   switch (op.kind) {
     case "arrow-bind":
@@ -552,26 +556,13 @@ const standInRefusal = (
       return isLinearElement(el)
         ? null
         : "isn't a line or arrow, so it has no points to take";
-    case "alignment": {
-      // a link is between two boxes' edges; the engine's own rule
-      if (!isAlignable(el)) {
-        return "can't be aligned";
-      }
-      if (alignmentReferences(op).has(el.id)) {
-        return "is already a partner in these alignments";
-      }
-      // and it has to be able to get to where the links hold — asked by
-      // placing it on a copy, exactly as the replay would
-      const joined = applyRemapsToOp(
-        op,
-        new Map([[refId, { kind: "element", to: el.id }]]),
-      );
-      if (joined.status !== "ok" || joined.op.kind !== "alignment") {
-        return null;
-      }
-      const placed = placeStandIns(joined.op, [el.id], snapshot, false);
-      return placed.status === "refused" ? placed.reason : null;
-    }
+    case "alignment":
+      // A link is between two boxes' edges; the engine's own rule. Nothing
+      // else an alignment asks of a stand-in — where it has to go, what it
+      // would carry along, whether it was already a partner — stops it
+      // being chosen: the replay keeps the alignments it can be given and
+      // drops the rest (`placeStandInsDropping`).
+      return isAlignable(el) ? null : "can't be aligned";
     case "raw":
       // an arbitrary property map is only safe on its own kind
       return el.type === op.entry.elementType

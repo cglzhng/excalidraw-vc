@@ -184,9 +184,10 @@ a link is only true of edges that coincide. Runs at replay, just before
 a remapped `alignment` op writes its links, and is derived from the
 remap each time, so nothing is stored. The stand-in's new partners are
 held still and the alignment solver carries along whatever is coupled to
-the stand-in. A stand-in that can't get there is refused, with the
-reason (`versionLog/placement.ts`). This is the one place replay uses
-the solver.
+the stand-in. Where it can't get to every link, the alignments it can't
+hold alongside the ones kept before them are dropped, each with the
+reason, and the rest written (`versionLog/placement.ts`). Replay also uses
+the solver to derive alignment followers (`versionLog/followAlignments.ts`).
 
 ---
 

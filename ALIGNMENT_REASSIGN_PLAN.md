@@ -180,6 +180,12 @@ recorded alignment consequents are ignored at replay (as binding consequents
 with absolute points are now). That reaches across `applyOps` and every
 move-like op kind, and is a project of its own.
 
+*Done* (`followAlignments.ts`), per Moment rather than per op: the Moment's
+own moved elements are one gesture, seeded by their measured edge
+displacements, solved against the links as the Moment found them. Where the
+scene no longer allows the follow, the moved elements stay as their ops put
+them and nothing follows on that axis — the post-replay check reports it.
+
 Nothing above is thrown away by it. Following propagates a displacement; it
 does not repair a link that doesn't hold, so placement remains a separate step,
 and the post-replay check becomes a safety net instead of the only notice.
@@ -238,6 +244,16 @@ general case separately.
    `limitations.md` (the drift, until the solver runs in replay), and
    `terminology.md` if *placement* earns a glossary entry. *Done*, with an
    entry for placement.
+7. **Drop, don't refuse** — superseding 4 and 5's refusals. A refusal was
+   asked at the conflict's point, but later ops in the bucket asked it again
+   of a scene that already held the placed stand-in, so a candidate could be
+   pickable and then refused once picked. Now nothing about placement
+   refuses: `placeStandInsDropping` tries the stand-in's alignments in
+   recorded order and drops each one that can't hold alongside those kept,
+   and a follower resize onto a rigid stand-in is dropped the same way. The
+   drops are reported as `replayIssues.dropped` and, per candidate, on the
+   hover. Stand-ins are read off the remaps, so one already a partner
+   counts. Only kind and upstream's `locked` still refuse.
 
 ## Checking it
 

@@ -12,7 +12,7 @@
  *  - a dashed line from the ghost to the chosen stand-in, reading "this
  *    one now plays that one's part";
  *  - a label on a dimmed element under the pointer, saying why it can't
- *    stand in;
+ *    stand in, or on a candidate, saying what choosing it would drop;
  *  - in Reassign, the alignments that bear on the pick, with their badges:
  *    the missing element's until something stands in for it, the stand-in's,
  *    and those of the candidate under the pointer;
@@ -191,8 +191,8 @@ export const renderMissingOutline = (
   labelAbove(context, appState, bounds, label);
 };
 
-/** A dimmed element under the pointer, answering for itself: why it can't
- * stand in, labelled above it. */
+/** An element under the pointer, answering for itself above it: a dimmed
+ * one, why it can't stand in; a candidate, what choosing it would drop. */
 export const renderRefusalLabel = (
   context: CanvasRenderingContext2D,
   appState: InteractiveCanvasAppState,

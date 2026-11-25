@@ -690,8 +690,10 @@ export interface PendingConflict {
   /**
    * Live target ids the user can remap to: groups for a group, and for
    * an element whatever every affected op can carry over to — of any
-   * type, unless an op's payload only describes one kind of geometry
-   * (`standInRefusal` in `replay.ts`).
+   * type and not locked, unless an op's payload only describes one kind
+   * of geometry (`standInRefusal` in `replay.ts`). Where a stand-in would
+   * have to go for an alignment isn't asked here: the replay drops the
+   * alignments it can't be placed for (`ReplayResult.dropped`).
    */
   candidates: string[];
   /**

@@ -37,6 +37,27 @@ scale, so the driver's edges are not affine in one proposed length the way
 `clampSizeToAlignments` needs them to be. A multi-element resize can therefore
 close a gap past contact or squash a partner below `MIN_ALIGNED_SIZE`.
 
+**A gesture stops at the first contact, even where the rest could be
+absorbed.** The solve has equality rows only, so its answer is one linear
+response for the whole gesture; "a gap can't go below zero" and "an extent
+can't go below its minimum" are inequalities, which the clamps
+(`clampDragToGapAlignments`, `clampSizeToAlignments`) apply by walking that
+one response forward and stopping where the first bound is reached. Nothing
+re-solves with the closed gap held shut, so freedom elsewhere goes unused.
+Example: chains A–B–C–D and D–E–F share D, with `endDragHoldsFarEnd` off.
+Dragging F away lets D drift back against the drag, which the minimum-
+disturbance answer spreads across the first chain by shrinking its gaps; when
+they reach zero the drag stops, though the second chain's gaps could have kept
+growing. The fix is an active set: at each contact, add a hard row holding
+that gap (or extent) where it is for the rest of the gesture, re-solve, and
+continue until the gesture is used up or the rows contradict. The response
+then becomes piecewise linear in the gesture, which the symbolic-seed
+questions (movers, anchor overlays, guides) assume it isn't, and the resize
+cap needs the same treatment so the two gestures still agree. Even then the
+closed chain would keep drifting slowly as a block, since nothing holds it;
+stopping it outright needs a separate rule, such as a feel row holding a chain
+that the gesture doesn't drive.
+
 **Rotated driver escapes the resize cap.** Resize a *rotated* member of a hard
 gap chain and its gaps run straight past zero into negative; every unrotated
 member stops at contact. `clampSizeToAlignments` bails out at the top
@@ -155,24 +176,36 @@ runs once, after the solve, so that second hop no longer happens.
 
 ## Version control
 
-**Replay does not run the alignment solver.** Alignment followers are
-reproduced by the recorded `consequentOps`, so a follow recorded while a link
-held still replays after the Moment that locked it is skipped, and an op whose
-followers weren't captured at record time will not grow them at replay time.
-Bound arrow ends are the exception: they are re-placed from their bindings
-after every op (`followBindings.ts`), with upstream's `updateBoundPoint`, so
-they land wherever the element ended up — a skip or a remap included. Elbow
-arrows are left out, since moving one needs the router, and replay their
-recorded follows; after a skip or remap those end where the element was when
-the follow was recorded.
+**Replayed followers answer to today's solver, not the one that recorded
+them.** Replay re-derives alignment followers (`followAlignments.ts`) rather
+than replaying the recorded `consequentOps`, using `ALIGNMENT_FEEL_ROWS` and the
+solver as they stand. Change either and a replay with nothing skipped can put
+partners somewhere other than where they went — history re-read under new
+rules. The recorded consequents are still what the panel shows.
 
-**A stand-in's own later moves leave its new partners behind.** Placement puts
-a stand-in where a reassigned alignment holds, and the moves its new partners
-recorded the missing element following are handed to it. The stand-in's *own*
-later moves were recorded while it was free, so they carry no followers: the
-first one pulls it off the link, and its existing partners likewise never
-recorded following the new one. Nothing repairs this. The fix is running the
-solver for every replayed move (`ALIGNMENT_REASSIGN_PLAN.md`, "Later").
+**A follow the scene no longer allows is all or nothing, per axis.** Live, a
+gesture that would close a gap through zero or squash a partner stops at the
+contact. Replay can't stop the recorded move short — its op already placed
+the elements the user moved — so where the solve contradicts, would let go of
+an edge an op placed, or would cross a clamp, nothing follows on that axis at
+all, and the links it leaves broken are only what `findBrokenAlignments`
+reports. A partial follow up to the contact would be closer to what the
+gesture would have done.
+
+**Rotation and elbow arrows still replay what was recorded.** A rotate's
+consequent ops are replayed, not derived — rotation doesn't move partners
+live, so there is nothing to derive, but anything that did follow one was
+recorded against the old scene. Bound arrow ends are re-placed from their
+bindings after every op (`followBindings.ts`), with upstream's
+`updateBoundPoint`, so they land wherever the element ended up. Elbow arrows
+are left out, since moving one needs the router, and replay their recorded
+follows; after a skip or remap those end where the element was when the
+follow was recorded.
+
+**A follower's label is re-centred, not refitted.** A container that followed
+has its label moved by how far the container's centre went. Live, a
+container the solve stretched refits its label; replay keeps the label's
+recorded size and font.
 
 **Broken alignments are only reported during a resolution session.** While one
 is open, the bar counts the hard links and gap chains that no longer hold and

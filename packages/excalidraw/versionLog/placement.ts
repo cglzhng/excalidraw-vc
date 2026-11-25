@@ -79,11 +79,40 @@ export const rigidRefusal = (el: ExcalidrawElement) =>
     ? "is text, which alignment can't resize to fit"
     : "is rotated, which alignment can't resize to fit";
 
-/** A stand-in that couldn't be placed, so its alignment op was skipped. */
-export type UnplacedStandIn = {
+/**
+ * An alignment a stand-in was handed but couldn't be placed for, so the
+ * replay left it out and kept the rest.
+ */
+export type DroppedAlignment = {
   readonly standInId: string;
   /** phrased to follow the stand-in's name */
   readonly reason: string;
+  readonly what:
+    | { readonly kind: "edge"; readonly partnerId: string }
+    | { readonly kind: "chain"; readonly ids: readonly string[] }
+    /** a link between the missing element and the stand-in itself */
+    | { readonly kind: "own-partner" };
+};
+
+/**
+ * One sentence for a dropped alignment: the bar's account of what the
+ * decisions cost (`"applied"`), or the hover's prediction (`"predicted"`).
+ */
+export const describeDroppedAlignment = (
+  dropped: DroppedAlignment,
+  nameOfId: (id: string) => string,
+  tense: "applied" | "predicted",
+): string => {
+  const { what } = dropped;
+  const thing =
+    what.kind === "edge"
+      ? `its alignment to ${nameOfId(what.partnerId)}`
+      : what.kind === "chain"
+      ? `its place in the ${what.ids.map(nameOfId).join("–")} spacing`
+      : "that alignment";
+  return `${nameOfId(dropped.standInId)} ${dropped.reason}, so ${thing} ${
+    tense === "applied" ? "wasn't applied." : "would be dropped"
+  }`;
 };
 
 const nameOf = (el: ExcalidrawElement) => el.shortId ?? el.type;
@@ -523,13 +552,18 @@ const blame = (
  * pushed through zero (past it the chain reorders), or an element squashed
  * below the alignment minimum. A placement has no pointer to stop short, so
  * it either fits or doesn't.
+ *
+ * `unsquashed` are elements whose size change was the user's own rather
+ * than the solve's — a replayed resize — so the alignment minimum isn't
+ * theirs to meet; their extents still count toward every gap.
  */
-const checkGeometry = (
+export const checkGeometry = (
   axis: Axis,
   position: ReadonlyMap<string, number>,
   size: ReadonlyMap<string, number>,
   live: ElementsMap,
   nameOfId: (id: string) => string,
+  unsquashed: ReadonlySet<string> = new Set(),
 ): string | null => {
   const rangeOf = (id: string) => {
     const [minX, minY, maxX, maxY] = getElementBounds(live.get(id)!, live);
@@ -542,8 +576,12 @@ const checkGeometry = (
   };
 
   for (const id of size.keys()) {
+    if (unsquashed.has(id)) {
+      continue;
+    }
     const [min, max] = movedRange(id);
-    if (max - min < MIN_ALIGNED_SIZE) {
+    // a partner the clamp stopped exactly at the minimum is still at it
+    if (max - min < MIN_ALIGNED_SIZE - EPSILON) {
       return `would squash ${nameOfId(id)}`;
     }
   }
@@ -614,7 +652,12 @@ export const placeStandIns = (
   commit: boolean,
 ):
   | { readonly status: "placed"; readonly changed: ReadonlySet<string> }
-  | ({ readonly status: "refused" } & UnplacedStandIn) => {
+  | {
+      readonly status: "refused";
+      readonly standInId: string;
+      /** phrased to follow the stand-in's name */
+      readonly reason: string;
+    } => {
   const trial: SceneSnapshot = new Map(snapshot);
   const changed = new Set<string>();
   for (const standInId of standInIds) {
@@ -636,6 +679,168 @@ export const placeStandIns = (
     }
   }
   return { status: "placed", changed };
+};
+
+/** One alignment `op` adds that names a stand-in, as the unit it is kept
+ * or dropped by. */
+type StandInAlignment = {
+  readonly key: string;
+  readonly standInId: string;
+  readonly what: DroppedAlignment["what"];
+};
+
+/** An edge link's identity whichever partner it is read from — the op
+ * stores it on both. Chains carry the same record on every member, so
+ * their own key already is. */
+const unitKey = (ownerId: string, link: Link): string =>
+  "ids" in link
+    ? alignmentLinkKey(link)
+    : `edge:${link.axis}:${[
+        `${ownerId}:${link.selfEdge}`,
+        `${link.elementId}:${link.otherEdge}`,
+      ]
+        .sort()
+        .join("|")}`;
+
+/** Whether `ownerId`'s `link` is one `op` adds rather than one it keeps. */
+const isAdded = (op: AlignmentOp, ownerId: string, link: Link) =>
+  !((op.before as LinkMap)[ownerId] ?? []).some(
+    (kept) => alignmentLinkKey(kept) === alignmentLinkKey(link),
+  );
+
+/** The alignments `op` adds that name one of `standIns`, in the order the op
+ * records them. */
+const standInAlignments = (
+  op: AlignmentOp,
+  standIns: ReadonlySet<string>,
+): StandInAlignment[] => {
+  const units = new Map<string, StandInAlignment>();
+  for (const [ownerId, links] of Object.entries(op.after as LinkMap)) {
+    for (const link of links) {
+      if (!isAdded(op, ownerId, link)) {
+        continue;
+      }
+      const key = unitKey(ownerId, link);
+      if (units.has(key)) {
+        continue;
+      }
+      if ("ids" in link) {
+        const standInId = link.ids.find((id) => standIns.has(id));
+        if (standInId) {
+          units.set(key, {
+            key,
+            standInId,
+            // the missing element and the stand-in were both in the chain
+            what:
+              new Set(link.ids).size < link.ids.length
+                ? { kind: "own-partner" }
+                : { kind: "chain", ids: link.ids },
+          });
+        }
+        continue;
+      }
+      const standInId = standIns.has(ownerId)
+        ? ownerId
+        : standIns.has(link.elementId)
+        ? link.elementId
+        : null;
+      if (standInId) {
+        units.set(key, {
+          key,
+          standInId,
+          what:
+            link.elementId === ownerId
+              ? { kind: "own-partner" }
+              : {
+                  kind: "edge",
+                  partnerId: standInId === ownerId ? link.elementId : ownerId,
+                },
+        });
+      }
+    }
+  }
+  return [...units.values()];
+};
+
+/** `op` without the added links whose unit is in `keys`. */
+const withoutAlignments = (
+  op: AlignmentOp,
+  keys: ReadonlySet<string>,
+): AlignmentOp => {
+  if (keys.size === 0) {
+    return op;
+  }
+  const after: Record<string, readonly Link[]> = {};
+  for (const [ownerId, links] of Object.entries(op.after as LinkMap)) {
+    after[ownerId] = links.filter(
+      (link) => !isAdded(op, ownerId, link) || !keys.has(unitKey(ownerId, link)),
+    );
+  }
+  return { ...op, after } as AlignmentOp;
+};
+
+/**
+ * Place the stand-ins for `op`, keeping every alignment they can be given
+ * and dropping the rest — the replay's answer to a reassigned alignment,
+ * where nothing the stand-in is handed stops it being chosen.
+ *
+ * The alignments are tried in the order the op records them, each with the
+ * ones kept before it, and one that can't hold alongside them is dropped
+ * with the reason the placement gave — as the solver itself declines a row
+ * that contradicts the rows before it. A link between the missing element
+ * and the stand-in names the stand-in at both ends once remapped, so it is
+ * dropped without being tried.
+ */
+export const placeStandInsDropping = (
+  op: AlignmentOp,
+  standInIds: readonly string[],
+  snapshot: SceneSnapshot,
+): {
+  /** `op` with only what was kept */
+  readonly op: AlignmentOp;
+  readonly changed: ReadonlySet<string>;
+  readonly dropped: readonly DroppedAlignment[];
+} => {
+  const units = standInAlignments(op, new Set(standInIds));
+  const left = new Set<string>();
+  const dropped: DroppedAlignment[] = [];
+  for (const unit of units) {
+    if (unit.what.kind === "own-partner") {
+      left.add(unit.key);
+      dropped.push({
+        standInId: unit.standInId,
+        reason: "was the missing element's own partner",
+        what: unit.what,
+      });
+    }
+  }
+  const tried = units.filter((unit) => !left.has(unit.key));
+  tried.forEach((unit, i) => {
+    const untried = tried.slice(i + 1).map((later) => later.key);
+    const placed = placeStandIns(
+      withoutAlignments(op, new Set([...left, ...untried])),
+      standInIds,
+      snapshot,
+      false,
+    );
+    if (placed.status === "refused") {
+      left.add(unit.key);
+      dropped.push({
+        standInId: placed.standInId,
+        reason: placed.reason,
+        what: unit.what,
+      });
+    }
+  });
+
+  // the same set the last alignment kept was tried with, so it places
+  const kept = withoutAlignments(op, left);
+  const placed = placeStandIns(kept, standInIds, snapshot, true);
+  return {
+    op: kept,
+    changed: placed.status === "placed" ? placed.changed : new Set(),
+    dropped,
+  };
 };
 
 /**

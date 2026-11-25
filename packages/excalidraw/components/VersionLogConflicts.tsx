@@ -23,6 +23,7 @@ import {
   getActiveConflict,
   getConflictMode,
 } from "../versionLog/conflictPicking";
+import { describeDroppedAlignment } from "../versionLog/placement";
 import type {
   ConflictMode,
   ResolutionSession,
@@ -187,17 +188,14 @@ export const VersionLogConflictFrame: React.FC<{
 const helpText = (missing: string): string =>
   `${missing} is missing. Moments that depend on ${missing} could not be applied.\nYou can choose to skip them or re-assign those moments to another element.`;
 
-/** What the replay under these decisions couldn't keep, one line each. A
- * stand-in refused the same way by several ops is said once. */
+/** What the replay under these decisions couldn't keep, one line each. An
+ * alignment dropped the same way by several ops is said once. */
 const replayWarnings = (
-  { broken, unplaced }: ResolutionSession["replayIssues"],
+  { broken, dropped }: ResolutionSession["replayIssues"],
   nameOf: (id: string) => string,
 ): string[] => {
   const lines = new Set(
-    unplaced.map(
-      ({ standInId, reason }) =>
-        `${nameOf(standInId)} ${reason}, so that alignment wasn't applied.`,
-    ),
+    dropped.map((d) => describeDroppedAlignment(d, nameOf, "applied")),
   );
   if (broken.length > 0) {
     lines.add(

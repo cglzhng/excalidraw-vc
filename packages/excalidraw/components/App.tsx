@@ -342,6 +342,7 @@ import type {
   ConflictMode,
   ResolutionSession,
 } from "../versionLog/conflictPicking";
+import type { DroppedAlignment } from "../versionLog/placement";
 import type { Remap } from "../versionLog/types";
 import { defaultLang, getLanguage, languages, setLanguage, t } from "../i18n";
 
@@ -622,6 +623,13 @@ const GOOGLE_DRIVE_AUTOPLAYED = new WeakSet<HTMLIFrameElement>();
 
 const MAX_EMBEDDABLE_VIEWPORT_SCALE = 4;
 
+/** A conflict candidate's hover preview: the ghosts of choosing it, and
+ * what the replay under that choice dropped for it. */
+type StandInPreview = {
+  preview: AppState["versionLogHoverPreview"];
+  dropped: readonly DroppedAlignment[];
+};
+
 const gesture: Gesture = {
   pointers: new Map(),
   lastCenter: null,
@@ -691,7 +699,7 @@ class App extends React.Component<AppProps, AppState> {
    * `referent\0standIn`, for the decisions they were replayed under. */
   private versionLogStandInPreviews: {
     decisions: Readonly<Record<string, string | null>>;
-    previews: Map<string, AppState["versionLogHoverPreview"]>;
+    previews: Map<string, StandInPreview>;
   } | null = null;
   public excalidrawContainerValue: {
     container: HTMLDivElement | null;
@@ -5291,7 +5299,7 @@ class App extends React.Component<AppProps, AppState> {
         showingBefore: false,
         replayIssues: {
           broken: findBrokenAlignments(replay.snapshot),
-          unplaced: replay.unplaced,
+          dropped: replay.dropped,
         },
       },
       versionLogHoverPreview: null,
@@ -5356,12 +5364,16 @@ class App extends React.Component<AppProps, AppState> {
       hover?.kind === "pick" ? CURSOR_TYPE.POINTER : CURSOR_TYPE.GRAB,
     );
 
-    const preview =
+    const standIn =
       conflict &&
       hover?.kind === "pick" &&
       hover.id !== session.decisions[conflict.referentId]
         ? this.getVersionLogStandInPreview(conflict.referentId, hover.id)
         : null;
+    const preview = standIn?.preview ?? null;
+    if (hover?.kind === "pick" && standIn && standIn.dropped.length > 0) {
+      hover.dropped = standIn.dropped;
+    }
 
     const hoverKey = (h: ConflictHover | null) =>
       h == null ? "" : h.kind === "pick" ? `pick:${h.id}` : `no:${h.elementId}`;
@@ -5377,15 +5389,16 @@ class App extends React.Component<AppProps, AppState> {
   /**
    * What choosing `standIn` for `referentId` would change, as ghosts:
    * every element the replay under that choice draws differently from the
-   * scene as it stands. One replay per candidate, kept until a decision
-   * changes, so moving across a candidate and back doesn't replay again —
-   * and the same object comes back, which is how the hover tells it is
-   * showing the same thing.
+   * scene as it stands — and what that replay had to leave out for it,
+   * which the hover labels. One replay per candidate, kept until a
+   * decision changes, so moving across a candidate and back doesn't
+   * replay again — and the same object comes back, which is how the hover
+   * tells it is showing the same thing.
    */
   private getVersionLogStandInPreview = (
     referentId: string,
     standIn: string,
-  ): AppState["versionLogHoverPreview"] => {
+  ): StandInPreview | null => {
     const session = this.state.versionLogResolution;
     if (session == null) {
       return null;
@@ -5418,7 +5431,10 @@ class App extends React.Component<AppProps, AppState> {
           );
         })
       : [];
-    const preview = ghosts.length > 0 ? { ghosts, bboxes: [] } : null;
+    const preview: StandInPreview = {
+      preview: ghosts.length > 0 ? { ghosts, bboxes: [] } : null,
+      dropped: replay?.dropped.filter((d) => d.standInId === standIn) ?? [],
+    };
     this.versionLogStandInPreviews.previews.set(key, preview);
     return preview;
   };
